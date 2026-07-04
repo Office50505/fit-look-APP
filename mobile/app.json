@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "FitLook",
+    "slug": "fitlook",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "assets/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fitlook.app"
+    },
+    "android": {
+      "package": "com.fitlook.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#101820"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
