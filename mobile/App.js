@@ -30,7 +30,7 @@ const sortOptions = [
   ['price-asc', 'Price low'],
   ['price-desc', 'Price high']
 ];
-const validRoutes = new Set(['home', 'shop', 'tryon', 'custom', 'vto', 'stylebot', 'tokens', 'product', 'signup', 'login', 'how', 'info']);
+const validRoutes = new Set(['auth', 'home', 'shop', 'tryon', 'custom', 'vto', 'stylebot', 'tokens', 'product', 'signup', 'login', 'how', 'info']);
 
 function normalizeRoute(name, params = {}) {
   const routeName = typeof name === 'string' && validRoutes.has(name) ? name : 'home';
@@ -778,8 +778,35 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   );
 }
 
+function AuthEntryScreen({ onNavigate }) {
+  return (
+    <ScrollView contentContainerStyle={[styles.scrollContent, styles.authEntryContent]}>
+      <View style={styles.authEntryHero}>
+        <Image source={images.hero} style={styles.authEntryImage} resizeMode="cover" />
+        <View style={styles.authEntryOverlay} />
+        <View style={styles.authEntryBrand}>
+          <Text style={styles.authEntryLogo}>FitLook</Text>
+          <Text style={styles.authEntryTagline}>AI fitting room</Text>
+        </View>
+      </View>
+      <View style={styles.authEntryPanel}>
+        <Text style={styles.kicker}>Start Here</Text>
+        <Text style={styles.authEntryTitle}>Log in or create your FitLook account.</Text>
+        <Text style={styles.description}>
+          Save your profile photo, unlock AI try-ons, and preview outfits before you shop.
+        </Text>
+        <View style={styles.authEntryActions}>
+          <AppButton label="Sign Up" icon="person-add-outline" onPress={() => onNavigate('signup')} />
+          <AppButton label="Log In" icon="log-in-outline" variant="secondary" onPress={() => onNavigate('login')} />
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
 function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
   const [garment, setGarment] = useState(null);
+  const [tryOnModel, setTryOnModel] = useState('gpt-image');
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -798,6 +825,7 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
     try {
       const form = new FormData();
       form.append('garment', filePart(garment, 'garment.jpg'));
+      form.append('tryOnModel', tryOnModel);
       const data = await api('/tryons/custom', { method: 'POST', body: form });
       setResult(data.tryOn);
       if (data.user) setUser(data.user);
@@ -823,6 +851,30 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
         <Pressable style={styles.previewBox} onPress={() => result?.imageUrl && setLightbox(imageUrl(result.imageUrl))}>
           {loading ? <TryOnLoading text="Generating" large /> : result?.imageUrl ? <Image source={{ uri: imageUrl(result.imageUrl) }} style={styles.previewImage} /> : <Text style={styles.previewPlaceholder}>Generated try-on</Text>}
         </Pressable>
+      </View>
+      <View style={styles.customModelPanel}>
+        <Text style={styles.customModelTitle}>What are you trying on?</Text>
+        <View style={styles.customModelOptions}>
+          {[
+            ['gpt-image', 'Regular clothing', 'Tops, pants, jackets'],
+            ['vto-trial', 'Swimwear / full dress', 'Bikini, swimsuit, dress']
+          ].map(([value, label, help]) => {
+            const selected = tryOnModel === value;
+            return (
+              <Pressable
+                key={value}
+                onPress={() => setTryOnModel(value)}
+                style={[styles.customModelOption, selected && styles.customModelOptionActive]}
+              >
+                <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={18} color={selected ? '#0f766e' : '#64748b'} />
+                <View style={styles.customModelText}>
+                  <Text style={[styles.customModelLabel, selected && styles.customModelLabelActive]}>{label}</Text>
+                  <Text style={styles.customModelHelp}>{help}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
       <AppButton
         label={loading ? 'Generating...' : 'Generate Custom Try-On'}
@@ -978,6 +1030,7 @@ function StyleBotScreen({ user, setUser, setToken, onNavigate }) {
                     </View>
                     <Text style={styles.productTitle}>{product.name}</Text>
                     <Text style={styles.productBrand}>{product.brand} | {product.category}</Text>
+                    <Text style={styles.styleModelBadge}>{product.tryOnModel === 'vto-unrestricted' ? 'VTO model' : 'GPT image'}</Text>
                     <Text style={styles.price}>{formatMoney(product.price, product.currency)}</Text>
                     {run.errors[product.id] ? <Text style={styles.errorText}>{run.errors[product.id]}</Text> : null}
                     {product.affiliateLink ? <AppButton label="Shop" variant="secondary" icon="open-outline" onPress={() => Linking.openURL(product.affiliateLink)} /> : null}
@@ -1131,7 +1184,7 @@ function ImageLightbox({ uri, onClose }) {
 }
 
 export default function App() {
-  const [route, setRoute] = useState({ name: 'home', params: {} });
+  const [route, setRoute] = useState({ name: 'auth', params: {} });
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [ready, setReady] = useState(false);
@@ -1146,6 +1199,7 @@ export default function App() {
         if (!alive) return;
         setUser(data.user);
         setToken(await getToken());
+        setRoute((current) => (current?.name === 'auth' ? normalizeRoute('shop') : current));
       })
       .catch(() => {})
       .finally(() => alive && setReady(true));
@@ -1158,7 +1212,7 @@ export default function App() {
     await clearToken();
     setToken(null);
     setUser(null);
-    navigate('home');
+    navigate('auth');
   };
 
   const logout = () => {
@@ -1171,6 +1225,8 @@ export default function App() {
   const screen = useMemo(() => {
     const routeParams = currentRoute.params || {};
     switch (currentRoute.name) {
+      case 'auth':
+        return user ? <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={navigate} /> : <AuthEntryScreen onNavigate={navigate} />;
       case 'home':
         return <HomeScreen onNavigate={navigate} user={user} token={token} />;
       case 'shop':
@@ -1211,16 +1267,18 @@ export default function App() {
     );
   }
 
+  const authOnlyRoute = !user && ['auth', 'login', 'signup'].includes(currentRoute.name);
+
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar style="dark" />
-      <Header user={user} onNavigate={navigate} onLogout={logout} />
+      {authOnlyRoute ? null : <Header user={user} onNavigate={navigate} onLogout={logout} />}
       <View style={styles.content}>
         <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
           {screen}
         </ScreenErrorBoundary>
       </View>
-      <BottomNav route={currentRoute} onNavigate={navigate} />
+      {authOnlyRoute ? null : <BottomNav route={currentRoute} onNavigate={navigate} />}
     </SafeAreaView>
   );
 }
@@ -1814,6 +1872,64 @@ const styles = StyleSheet.create({
   detailActions: {
     gap: 10
   },
+  authEntryContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingBottom: 28
+  },
+  authEntryHero: {
+    margin: 16,
+    height: 350,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#e5e7eb'
+  },
+  authEntryImage: {
+    width: '100%',
+    height: '100%'
+  },
+  authEntryOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(17, 24, 39, 0.28)'
+  },
+  authEntryBrand: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 20
+  },
+  authEntryLogo: {
+    color: '#fff',
+    fontSize: 42,
+    lineHeight: 46,
+    fontWeight: '900',
+    letterSpacing: 0
+  },
+  authEntryTagline: {
+    marginTop: 4,
+    color: '#ecfeff',
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  authEntryPanel: {
+    marginHorizontal: 16,
+    padding: 18,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    gap: 12
+  },
+  authEntryTitle: {
+    color: '#111827',
+    fontSize: 31,
+    lineHeight: 36,
+    fontWeight: '900',
+    letterSpacing: 0
+  },
+  authEntryActions: {
+    gap: 10
+  },
   authCard: {
     margin: 16,
     padding: 18,
@@ -1943,6 +2059,52 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     textAlign: 'center'
   },
+  customModelPanel: {
+    marginTop: 14,
+    marginHorizontal: 16,
+    gap: 10
+  },
+  customModelTitle: {
+    color: '#111827',
+    fontSize: 13,
+    fontWeight: '900'
+  },
+  customModelOptions: {
+    gap: 8
+  },
+  customModelOption: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff'
+  },
+  customModelOptionActive: {
+    borderColor: '#0f766e',
+    backgroundColor: '#ecfdf5'
+  },
+  customModelText: {
+    flex: 1
+  },
+  customModelLabel: {
+    color: '#111827',
+    fontSize: 13,
+    fontWeight: '900'
+  },
+  customModelLabelActive: {
+    color: '#0f766e'
+  },
+  customModelHelp: {
+    marginTop: 2,
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '700'
+  },
   customGenerateButton: {
     marginTop: 16
   },
@@ -2036,6 +2198,17 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: 8
+  },
+  styleModelBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#ecfdf5',
+    color: '#0f766e',
+    fontSize: 11,
+    fontWeight: '900'
   },
   balanceCard: {
     padding: 16,

@@ -19,7 +19,6 @@ const rootDir = path.resolve(__dirname, '..');
 function allowedOrigins() {
   return [
     process.env.CLIENT_ORIGIN || 'http://localhost:5173',
-    process.env.ADMIN_ORIGIN || 'http://localhost:5174',
     ...(process.env.ALLOWED_ORIGINS || '').split(',')
   ]
     .map((origin) => origin.trim())

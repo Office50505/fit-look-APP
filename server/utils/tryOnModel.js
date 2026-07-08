@@ -2,6 +2,7 @@ const VTO_RESTRICTED_TERMS = [
   /\bbikini(?:s)?\b/i,
   /\btwo[-\s]?piece\s+swim/i,
   /\bswim\s?suit(?:s)?\b/i,
+  /\bswimming\s+sui(?:t|te)(?:s)?\b/i,
   /\bswimwear\b/i,
   /\bbeachwear\b/i,
   /\bswim\s+trunks?\b/i,
@@ -21,22 +22,39 @@ const VTO_RESTRICTED_TERMS = [
   /\bshapewear\b/i,
   /\bnight(?:wear|ie|dress|gown)\b/i,
   /\bbabydoll\b/i,
-  /\bchemise\b/i
+  /\bchemise\b/i,
+  /\bdresses\b/i,
+  /\bfull\s+(?:body\s+)?dress(?:es)?\b/i,
+  /\b(?:maxi|midi|mini|bodycon|wrap|party|cocktail|evening|wedding|summer)\s+dress(?:es)?\b/i,
+  /\bgowns?\b/i,
+  /\blehenga(?:s)?\b/i,
+  /\bsarees?|saris?\b/i
 ];
 
 function normalizeTryOnModel(value) {
-  return value === 'vto-unrestricted' ? 'vto-unrestricted' : 'gpt-image-2';
+  const model = String(value || '').trim().toLowerCase();
+  return ['vto-unrestricted', 'vto-trial', 'second', 'virtual-try-on'].includes(model) ? 'vto-unrestricted' : 'gpt-image-2';
 }
 
 function textForTryOnClassification(product = {}) {
+  const facts = product.facts instanceof Map
+    ? [...product.facts.values()].join(' ')
+    : product.facts && typeof product.facts === 'object'
+      ? Object.values(product.facts).join(' ')
+      : product.facts;
   return [
+    product.title,
     product.name,
     product.brand,
     product.category,
     product.gender,
     product.description,
+    product.query,
+    product.searchQuery,
     Array.isArray(product.tags) ? product.tags.join(' ') : product.tags,
-    Array.isArray(product.bullets) ? product.bullets.join(' ') : product.bullets
+    Array.isArray(product.colors) ? product.colors.join(' ') : product.colors,
+    Array.isArray(product.bullets) ? product.bullets.join(' ') : product.bullets,
+    facts
   ]
     .filter(Boolean)
     .join(' ')

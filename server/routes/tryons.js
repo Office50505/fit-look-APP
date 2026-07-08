@@ -97,6 +97,10 @@ function virtualTryOnTrialModel() {
   return process.env.FAL_VTO_TRIAL_MODEL || 'fal-ai/image-apps-v2/virtual-try-on';
 }
 
+function customTryOnModel(value) {
+  return String(value || '').trim() === 'vto-trial' ? 'vto-trial' : 'gpt-image';
+}
+
 function tryOnModelForProduct(product) {
   return inferTryOnModel(product);
 }
@@ -237,17 +241,20 @@ async function dataUriFromUpload(image, label, timer) {
 }
 
 async function dataUriFromProduct(product, timer) {
+  if (product.image?.remoteUrl) return dataUriFromRemoteImage(product.image.remoteUrl, timer);
   if (product.image?.path) return dataUriFromUpload(product.image, 'product', timer);
-  if (!product.image?.remoteUrl) throw new Error('Product image is missing');
+  throw new Error('Product image is missing');
+}
 
-  const key = `remote:${product.image.remoteUrl}`;
+async function dataUriFromRemoteImage(remoteUrl, timer) {
+  const key = `remote:${remoteUrl}`;
   return cachedDataUri({
     cache: remoteImageDataUriCache,
     key,
     timer,
     label: 'product',
     load: async () => {
-      const response = await fetch(product.image.remoteUrl, {
+      const response = await fetch(remoteUrl, {
         headers: {
           accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
           'user-agent': 'Mozilla/5.0 FitLook image fetcher'
@@ -778,26 +785,63 @@ async function saveUploadFile(file, prefix, user) {
   };
 }
 
-async function saveGeneratedCustomTryOn({ user, garmentFile, timer }) {
+async function saveGeneratedCustomTryOn({ user, garmentFile, tryOnModel, timer }) {
+  const selectedModel = customTryOnModel(tryOnModel);
   const garmentDataUri = dataUriFromBuffer(garmentFile, 'garment');
-  timer?.mark('custom garment prepared', { garmentKb: Math.round(garmentDataUri.length / 1024) });
-  const { bytes, prompt } = await callFalImageEdit({
-    user,
-    garmentDataUri,
-    prompt: customTryOnPrompt(),
-    timer
+  timer?.mark('custom garment prepared', {
+    garmentKb: Math.round(garmentDataUri.length / 1024),
+    selectedModel
   });
-  const filename = `tryon-custom-${Date.now()}-${Math.round(Math.random() * 1e9)}.png`;
-  const image = await saveUserCacheFile({ user, bytes, filename, mimetype: 'image/png' });
+
+  let generated;
+  if (selectedModel === 'vto-trial') {
+    const personDataUri = await dataUriFromUpload(user.bodyPhoto, 'person', timer);
+    const prompt = virtualTryOnTrialPrompt('Custom user selected swimwear, bikini, full dress, or VTO-specific clothing mode.');
+    const trial = await callFalVirtualTryOnTrial({ personDataUri, garmentDataUri, prompt, timer });
+    const { bytes, mimetype } = await generatedBytesFromUrl(trial.generatedUrl, timer);
+    timer?.mark('custom vto image downloaded', {
+      outputKb: Math.round(bytes.length / 1024),
+      aspectRatio: trial.aspectRatio
+    });
+    generated = {
+      bytes,
+      mimetype,
+      prompt,
+      model: virtualTryOnTrialModel(),
+      quality: `vto ${trial.aspectRatio}`
+    };
+  } else {
+    const { bytes, prompt } = await callFalImageEdit({
+      user,
+      garmentDataUri,
+      prompt: customTryOnPrompt(),
+      timer
+    });
+    generated = {
+      bytes,
+      mimetype: 'image/png',
+      prompt,
+      model: imageModel(),
+      quality: imageQuality()
+    };
+  }
+
+  const filename = `tryon-custom-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
+  const image = await saveUserCacheFile({
+    user,
+    bytes: generated.bytes,
+    filename,
+    mimetype: generated.mimetype || 'image/png'
+  });
   const garment = await saveUploadFile(garmentFile, 'garment', user);
   timer?.mark('custom try-on saved', { path: image.path });
 
   const tryOn = await CustomTryOn.create({
     user: user._id,
     provider: 'fal',
-    model: imageModel(),
-    quality: imageQuality(),
-    prompt,
+    model: generated.model,
+    quality: generated.quality,
+    prompt: generated.prompt,
     tokenCost: chargedTokenCost(),
     garment,
     image
@@ -871,7 +915,12 @@ router.post('/custom', requireUser, upload.single('garment'), async (req, res) =
     reserved = true;
     req.user = chargedUser;
 
-    const tryOn = await saveGeneratedCustomTryOn({ user: req.user, garmentFile: req.file, timer });
+    const tryOn = await saveGeneratedCustomTryOn({
+      user: req.user,
+      garmentFile: req.file,
+      tryOnModel: req.body?.tryOnModel,
+      timer
+    });
     timer.end({ tokensRemaining: req.user.tokens });
     res.status(201).json({ tryOn: tryOn.toClient(), user: req.user.toClient() });
   } catch (error) {

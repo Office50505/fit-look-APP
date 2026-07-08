@@ -2,7 +2,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
 const localApi = Platform.OS === 'android' ? 'http://10.0.2.2:5050/api' : 'http://localhost:5050/api';
-export const API_URL = (process.env.EXPO_PUBLIC_API_URL || localApi).replace(/\/$/, '');
+function normalizeApiUrl(url) {
+  return String(url || '').trim().replace(/\/$/, '');
+}
+
+export const API_URL = normalizeApiUrl(process.env.EXPO_PUBLIC_API_URL || localApi);
+const fallbackApiUrls = String(process.env.EXPO_PUBLIC_API_FALLBACK_URLS || '')
+  .split(',')
+  .map(normalizeApiUrl)
+  .filter(Boolean);
+const apiUrls = [...new Set([API_URL, ...fallbackApiUrls, localApi].map(normalizeApiUrl).filter(Boolean))];
+let activeApiUrl = API_URL;
+
 export const API_ORIGIN = API_URL.replace(/\/api\/?$/, '');
 const TOKEN_KEY = 'fitlook_token';
 
@@ -22,7 +33,8 @@ export async function clearToken() {
 export function imageUrl(url) {
   if (!url) return '';
   if (/^(?:https?:|data:image)/i.test(url)) return url;
-  return `${API_ORIGIN}${url.startsWith('/') ? url : `/${url}`}`;
+  const activeOrigin = activeApiUrl.replace(/\/api\/?$/, '');
+  return `${activeOrigin}${url.startsWith('/') ? url : `/${url}`}`;
 }
 
 export function formatMoney(value, currency = 'USD') {
@@ -58,13 +70,25 @@ export async function api(path, options = {}) {
   const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers = isForm ? {} : { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: { ...headers, ...options.headers }
-  });
-  const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(readableError(data, `Request failed (${response.status})`));
-  return data;
+
+  const orderedUrls = [...new Set([activeApiUrl, ...apiUrls])];
+  let networkError = null;
+  for (const baseUrl of orderedUrls) {
+    try {
+      const response = await fetch(`${baseUrl}${path}`, {
+        ...options,
+        headers: { ...headers, ...options.headers }
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(readableError(data, `Request failed (${response.status})`));
+      activeApiUrl = baseUrl;
+      return data;
+    } catch (error) {
+      if (!/network request failed|failed to fetch|load failed|networkerror/i.test(error?.message || '')) throw error;
+      networkError = error;
+    }
+  }
+  throw networkError || new Error('Unable to connect to FitLook API');
 }
 
 export function filePart(asset, fallbackName = 'upload.jpg') {

@@ -55,6 +55,8 @@ coverage/
 .DS_Store
 Thumbs.db
 .expo/
+mobile/.gradle-cache/
+mobile/android/
 .idea/
 .vscode/
 

@@ -1,40 +1,12 @@
 import express from 'express';
-import multer from 'multer';
-import path from 'node:path';
 import Product from '../models/Product.js';
 import { requireUser } from './auth.js';
-import { inferTryOnModel, normalizeTryOnModel } from '../utils/tryOnModel.js';
+import { inferTryOnModel } from '../utils/tryOnModel.js';
 
 const router = express.Router();
 const facetCacheTtlMs = Number(process.env.PRODUCT_FACET_CACHE_TTL_MS || 30_000);
 const productReadCache = new Map();
 const botAmazonRecord = { badge: 'Amazon', $or: [{ sourceUrl: /amazon\.[a-z.]+\/dp\//i }, { affiliateLink: /amazon\.[a-z.]+\/dp\//i }] };
-
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: 'uploads/',
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname || '');
-      cb(null, `product-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
-    }
-  }),
-  limits: { fileSize: 8 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    cb(null, file.mimetype.startsWith('image/'));
-  }
-});
-
-function splitList(value) {
-  if (!value) return [];
-  return String(value)
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function toBoolean(value) {
-  return value === true || value === 'true' || value === 'on' || value === '1';
-}
 
 function readableError(value, fallback = 'Request failed') {
   if (!value) return fallback;
@@ -54,10 +26,6 @@ function readableError(value, fallback = 'Request failed') {
 
 function cacheKeyFor(value) {
   return JSON.stringify(value, Object.keys(value).sort());
-}
-
-function clearProductReadCache() {
-  productReadCache.clear();
 }
 
 async function cachedRead(key, load) {
@@ -878,36 +846,46 @@ function draftToExternalProduct(draft, fallbackQuery = '') {
   const currency = normalizeCurrency(draft.currency) || 'USD';
   const rating = Number(draft.rating);
   const ratingCount = Number(draft.ratingCount);
+  const name = draft.name || fallbackQuery;
+  const brand = cleanBrand(draft.brand) || 'Brand unavailable';
+  const description = cleanDescription(draft.description);
+  const category = draft.category || inferCategory({ title: name, description, query: fallbackQuery });
+  const gender = draft.gender || 'unisex';
+  const tags = draft.tags || [];
+  const tryOnModel = inferTryOnModel({
+    ...draft,
+    name,
+    brand,
+    category,
+    gender,
+    description,
+    tags,
+    query: fallbackQuery,
+    searchQuery: fallbackQuery
+  });
 
   return {
     id: externalProductId(sourceUrl),
     external: true,
     sourceUrl,
     affiliateLink,
-    name: draft.name || fallbackQuery,
-    brand: cleanBrand(draft.brand) || 'Brand unavailable',
-    category: draft.category || inferCategory({ title: draft.name || fallbackQuery, description: draft.description || '', query: fallbackQuery }),
-    gender: draft.gender || 'unisex',
+    name,
+    brand,
+    category,
+    gender,
     price: Number.isFinite(price) ? price : null,
     compareAtPrice: Number.isFinite(compareAtPrice) ? compareAtPrice : null,
     currency,
     rating: Number.isFinite(rating) ? rating : 0,
     ratingCount: Number.isFinite(ratingCount) ? ratingCount : 0,
     badge: 'Amazon',
-    description: cleanDescription(draft.description),
-    tags: draft.tags || [],
-    tryOnModel: inferTryOnModel(draft),
+    description,
+    tags,
+    tryOnModel,
     colors: [],
     imageUrl,
     isNewArrival: true
   };
-}
-
-function requireAdmin(req, res, next) {
-  const adminKey = process.env.ADMIN_KEY;
-  if (!adminKey) return res.status(500).json({ message: 'ADMIN_KEY is missing on the server' });
-  if (req.headers['x-admin-key'] !== adminKey) return res.status(401).json({ message: 'Invalid admin key' });
-  next();
 }
 
 function sortFor(value) {
@@ -1011,29 +989,6 @@ router.post('/amazon-search', requireUser, async (req, res) => {
   }
 });
 
-router.post('/recategorize', requireAdmin, async (_req, res) => {
-  const botAmazonRecord = { badge: 'Amazon', $or: [{ sourceUrl: /amazon\.[a-z.]+\/dp\//i }, { affiliateLink: /amazon\.[a-z.]+\/dp\//i }] };
-  const products = await Product.find({ isActive: true, $nor: [botAmazonRecord] });
-  let updated = 0;
-  const changes = [];
-
-  for (const product of products) {
-    const nextCategory = inferCategory({
-      title: product.name,
-      description: product.description,
-      facts: [...(product.tags || []), ...(product.colors || []), product.brand, product.gender].join(' ')
-    });
-    if (!nextCategory || nextCategory === 'clothing' || nextCategory === product.category) continue;
-    changes.push({ id: product._id.toString(), name: product.name, from: product.category, to: nextCategory });
-    product.category = nextCategory;
-    await product.save();
-    updated += 1;
-  }
-
-  clearProductReadCache();
-  res.json({ updated, checked: products.length, changes });
-});
-
 router.get('/:id', async (req, res) => {
   try {
     const product = await Product.findOne({ _id: req.params.id, isActive: true });
@@ -1042,79 +997,6 @@ router.get('/:id', async (req, res) => {
   } catch {
     res.status(404).json({ message: 'Product not found' });
   }
-});
-
-router.post('/preview-link', requireAdmin, async (req, res) => {
-  try {
-    const draft = await buildProductDraft(req.body.affiliateLink);
-    res.json({ draft });
-  } catch (error) {
-    res.status(400).json({ message: readableError(error, 'Could not preview affiliate link') });
-  }
-});
-
-router.post('/', requireAdmin, upload.single('image'), async (req, res) => {
-  const { name, brand, category, gender, price } = req.body;
-  if (!name || !brand || !category || !price) {
-    return res.status(400).json({ message: 'Name, brand, category, and price are required' });
-  }
-
-  let image;
-  if (req.file) {
-    image = {
-      filename: req.file.filename,
-      path: `uploads/${req.file.filename}`,
-      mimetype: req.file.mimetype,
-      size: req.file.size
-    };
-  } else if (req.body.remoteImageUrl) {
-    image = { remoteUrl: cleanUrl(req.body.remoteImageUrl) };
-  }
-
-  if (!image) return res.status(400).json({ message: 'Product image or fetched image URL is required' });
-
-  const product = await Product.create({
-    name,
-    brand,
-    category,
-    gender: gender || 'unisex',
-    price: Number(price),
-    compareAtPrice: req.body.compareAtPrice ? Number(req.body.compareAtPrice) : undefined,
-    currency: normalizeCurrency(req.body.currency) || 'USD',
-    rating: req.body.rating ? Number(req.body.rating) : 4.5,
-    ratingCount: req.body.ratingCount ? Number(req.body.ratingCount) : 0,
-    badge: req.body.badge,
-    affiliateLink: cleanUrl(req.body.affiliateLink),
-    sourceUrl: cleanUrl(req.body.sourceUrl),
-    description: req.body.description,
-    tags: splitList(req.body.tags),
-    colors: splitList(req.body.colors),
-    tryOnModel: normalizeTryOnModel(req.body.tryOnModel),
-    isFeatured: toBoolean(req.body.isFeatured),
-    isNewArrival: toBoolean(req.body.isNewArrival),
-    image
-  });
-
-  clearProductReadCache();
-  res.status(201).json({ product: product.toClient() });
-});
-
-router.patch('/:id/tryon-model', requireAdmin, async (req, res) => {
-  const product = await Product.findByIdAndUpdate(
-    req.params.id,
-    { tryOnModel: normalizeTryOnModel(req.body.tryOnModel) },
-    { new: true }
-  );
-  if (!product) return res.status(404).json({ message: 'Product not found' });
-  clearProductReadCache();
-  res.json({ product: product.toClient() });
-});
-
-router.delete('/:id', requireAdmin, async (req, res) => {
-  const product = await Product.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
-  if (!product) return res.status(404).json({ message: 'Product not found' });
-  clearProductReadCache();
-  res.json({ product: product.toClient() });
 });
 
 export default router;

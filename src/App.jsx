@@ -557,6 +557,7 @@ function VtoTrialPage({ user, setUser }) {
 function CustomClothingTryOn({ setUser }) {
   const fileRef = useRef(null);
   const [garmentPreview, setGarmentPreview] = useState('');
+  const [tryOnModel, setTryOnModel] = useState('gpt-image');
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -585,6 +586,7 @@ function CustomClothingTryOn({ setUser }) {
     try {
       const form = new FormData();
       form.append('garment', file);
+      form.append('tryOnModel', tryOnModel);
       const data = await api('/tryons/custom', { method: 'POST', body: form });
       setResult(data.tryOn);
       if (data.user) {
@@ -630,6 +632,26 @@ function CustomClothingTryOn({ setUser }) {
                   <button className="fullscreen-button" type="button" aria-label="Open generated image full screen" title="Open full screen" onClick={() => setFullscreenImage({ src: result.imageUrl, alt: 'Generated custom try-on', title: 'Custom Try-On' })}><FullscreenIcon /></button>
                 </>
               ) : <span>Generated try-on</span>}
+            </div>
+          </div>
+          <div className="custom-model-choice" role="group" aria-label="Custom try-on clothing type">
+            <p>What are you trying on?</p>
+            <div>
+              {[
+                ['gpt-image', 'Regular clothing', 'Tops, pants, jackets'],
+                ['vto-trial', 'Swimwear / full dress', 'Bikini, swimsuit, dress']
+              ].map(([value, label, help]) => (
+                <button
+                  key={value}
+                  className={`custom-model-option ${tryOnModel === value ? 'active' : ''}`}
+                  type="button"
+                  aria-pressed={tryOnModel === value}
+                  onClick={() => setTryOnModel(value)}
+                >
+                  <span>{label}</span>
+                  <small>{help}</small>
+                </button>
+              ))}
             </div>
           </div>
           <button className="submit" type="submit" disabled={loading}>{loading ? 'Generating...' : 'Generate Custom Try-On'}</button>
@@ -770,6 +792,7 @@ function StyleBotPage({ user, setUser }) {
 
 function StyleBotProduct({ product, tryOn, loading, error, onFullscreen }) {
   const tags = (product.tags || []).filter(Boolean).slice(0, 4);
+  const selectedModelLabel = product.tryOnModel === 'vto-unrestricted' ? 'VTO model' : 'GPT image';
   return (
     <article className="style-result-card">
       <div className="style-result-media">
@@ -794,7 +817,10 @@ function StyleBotProduct({ product, tryOn, loading, error, onFullscreen }) {
         <p className="rating"><span>★</span> {Number(product.rating || 0).toFixed(1)} {product.ratingCount ? `(${product.ratingCount})` : ''}</p>
         <div className="price-row"><span className="price">{formatMoney(product.price, product.currency)}</span></div>
         {product.description && <p className="style-result-description">{product.description}</p>}
-        {tags.length > 0 && <div className="style-result-tags">{tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+        <div className="style-result-tags">
+          <span className="model-tag">{selectedModelLabel}</span>
+          {tags.map((tag) => <span key={tag}>{tag}</span>)}
+        </div>
         {error && <p className="form-message error-message">{error}</p>}
         <div className="style-result-actions">
           {product.affiliateLink && <a className="button" href={product.affiliateLink} target="_blank" rel="noreferrer">Shop ↗</a>}
@@ -1181,7 +1207,7 @@ function App() {
 
   const page = useMemo(() => {
     const productMatch = path.match(/^\/product\/([^/]+)$/);
-    if (path === '/') return <Home user={user} />;
+    if (path === '/') return user ? <Home user={user} /> : <AuthPage mode="signup" setUser={setUser} />;
     if (path === '/search') return <SearchPage user={user} setUser={setUser} />;
     if (path === '/try-on') return user ? <SearchPage user={user} setUser={setUser} tryOnMode /> : <AuthPage mode="signup" setUser={setUser} />;
     if (path === '/custom-try-on') return <CustomTryOnPage user={user} setUser={setUser} />;

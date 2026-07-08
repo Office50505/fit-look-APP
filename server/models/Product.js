@@ -82,7 +82,7 @@ productSchema.methods.toClient = function toClient() {
     tags: this.tags?.map(decodeHtml),
     colors: this.colors,
     tryOnModel: this.tryOnModel || 'gpt-image-2',
-    imageUrl: this.image?.path ? `/${this.image.path}` : this.image?.remoteUrl || null,
+    imageUrl: this.image?.remoteUrl || (this.image?.path ? `/${this.image.path}` : null),
     isFeatured: this.isFeatured,
     isNewArrival: this.isNewArrival,
     createdAt: this.createdAt

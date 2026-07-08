@@ -4,10 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "npm run mobile",
+    "android": "npm run mobile:android",
     "dev": "vite",
-    "admin:dev": "vite --config admin/vite.config.js --host 0.0.0.0",
-    "admin:build": "vite build --config admin/vite.config.js",
-    "admin:preview": "vite preview --config admin/vite.config.js --host 0.0.0.0",
     "server": "node server/index.js",
     "server:watch": "nodemon server/index.js",
     "expo": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start",
