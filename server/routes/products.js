@@ -852,7 +852,7 @@ function draftToExternalProduct(draft, fallbackQuery = '') {
   const category = draft.category || inferCategory({ title: name, description, query: fallbackQuery });
   const gender = draft.gender || 'unisex';
   const tags = draft.tags || [];
-  const tryOnModel = inferTryOnModel({
+  const inferredTryOnModel = inferTryOnModel({
     ...draft,
     name,
     brand,
@@ -863,6 +863,7 @@ function draftToExternalProduct(draft, fallbackQuery = '') {
     query: fallbackQuery,
     searchQuery: fallbackQuery
   });
+  const tryOnModel = inferredTryOnModel === 'vto-unrestricted' ? 'wan-v2.6-image-to-image' : inferredTryOnModel;
 
   return {
     id: externalProductId(sourceUrl),

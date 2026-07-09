@@ -346,6 +346,14 @@ function TryOnGenerating({ text = 'Try-on is being generated' }) {
   );
 }
 
+function tryOnModelLabel(value) {
+  if (value === 'vto-unrestricted') return 'VTO model';
+  if (value === 'wan-v2.6-image-to-image') return 'WAN 2.6 image';
+  if (value === 'wan-v2.2-image-to-image') return 'WAN 2.2 image';
+  if (String(value || '').includes('wan')) return 'WAN image';
+  return 'GPT image';
+}
+
 function SearchPage({ user, setUser, tryOnMode = false }) {
   const params = new URLSearchParams(window.location.search);
   const q = params.get('q') || '';
@@ -639,7 +647,7 @@ function CustomClothingTryOn({ setUser }) {
             <div>
               {[
                 ['gpt-image', 'Regular clothing', 'Tops, pants, jackets'],
-                ['vto-trial', 'Swimwear / full dress', 'Bikini, swimsuit, dress']
+                ['wan-v2.6-image-to-image', 'WAN 2.6 image', 'Two-image garment transfer']
               ].map(([value, label, help]) => (
                 <button
                   key={value}
@@ -792,7 +800,7 @@ function StyleBotPage({ user, setUser }) {
 
 function StyleBotProduct({ product, tryOn, loading, error, onFullscreen }) {
   const tags = (product.tags || []).filter(Boolean).slice(0, 4);
-  const selectedModelLabel = product.tryOnModel === 'vto-unrestricted' ? 'VTO model' : 'GPT image';
+  const selectedModelLabel = tryOnModelLabel(product.tryOnModel);
   return (
     <article className="style-result-card">
       <div className="style-result-media">

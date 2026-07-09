@@ -126,6 +126,14 @@ function useProducts(params, token) {
   return { ...state, reload: load };
 }
 
+function tryOnModelLabel(value) {
+  if (value === 'vto-unrestricted') return 'VTO model';
+  if (value === 'wan-v2.6-image-to-image') return 'WAN 2.6 image';
+  if (value === 'wan-v2.2-image-to-image') return 'WAN 2.2 image';
+  if (String(value || '').includes('wan')) return 'WAN image';
+  return 'GPT image';
+}
+
 function useTryOns(user, products, token) {
   const productIds = useMemo(
     () => [...new Set((products || []).map((product) => product?.id).filter(Boolean))].slice(0, 96).join(','),
@@ -857,7 +865,7 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
         <View style={styles.customModelOptions}>
           {[
             ['gpt-image', 'Regular clothing', 'Tops, pants, jackets'],
-            ['vto-trial', 'Swimwear / full dress', 'Bikini, swimsuit, dress']
+            ['wan-v2.6-image-to-image', 'WAN 2.6 image', 'Two-image garment transfer']
           ].map(([value, label, help]) => {
             const selected = tryOnModel === value;
             return (
@@ -1030,7 +1038,7 @@ function StyleBotScreen({ user, setUser, setToken, onNavigate }) {
                     </View>
                     <Text style={styles.productTitle}>{product.name}</Text>
                     <Text style={styles.productBrand}>{product.brand} | {product.category}</Text>
-                    <Text style={styles.styleModelBadge}>{product.tryOnModel === 'vto-unrestricted' ? 'VTO model' : 'GPT image'}</Text>
+                    <Text style={styles.styleModelBadge}>{tryOnModelLabel(product.tryOnModel)}</Text>
                     <Text style={styles.price}>{formatMoney(product.price, product.currency)}</Text>
                     {run.errors[product.id] ? <Text style={styles.errorText}>{run.errors[product.id]}</Text> : null}
                     {product.affiliateLink ? <AppButton label="Shop" variant="secondary" icon="open-outline" onPress={() => Linking.openURL(product.affiliateLink)} /> : null}

@@ -1,6 +1,6 @@
 {
   "name": "fitlook-mobile",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "start": "/opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start",
     "android": "/opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --android --port 8081",
     "ios": "/opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --ios --port 8081",
+    "ios:prebuild": "/opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli prebuild --platform ios",
     "web": "/opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --web --port 8081"
   },
   "dependencies": {

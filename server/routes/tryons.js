@@ -1,15 +1,17 @@
 import express from 'express';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import multer from 'multer';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import sharp from 'sharp';
 import CustomTryOn from '../models/CustomTryOn.js';
 import ExternalTryOn from '../models/ExternalTryOn.js';
 import Product from '../models/Product.js';
 import TryOn from '../models/TryOn.js';
 import User from '../models/User.js';
 import { requireUser } from './auth.js';
-import { inferTryOnModel } from '../utils/tryOnModel.js';
+import { inferTryOnModel, isWanTryOnModel, normalizeTryOnModel, restrictedTryOnFallbackModel } from '../utils/tryOnModel.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -97,8 +99,18 @@ function virtualTryOnTrialModel() {
   return process.env.FAL_VTO_TRIAL_MODEL || 'fal-ai/image-apps-v2/virtual-try-on';
 }
 
+function wanImageToImageModel(selectedModel) {
+  if (normalizeTryOnModel(selectedModel) === 'wan-v2.6-image-to-image') {
+    return process.env.FAL_WAN_V26_IMAGE_TO_IMAGE_MODEL || 'wan/v2.6/image-to-image';
+  }
+  return process.env.FAL_WAN_IMAGE_TO_IMAGE_MODEL || 'fal-ai/wan/v2.2-a14b/image-to-image';
+}
+
 function customTryOnModel(value) {
-  return String(value || '').trim() === 'vto-trial' ? 'vto-trial' : 'gpt-image';
+  const model = String(value || '').trim();
+  if (model === 'vto-trial') return 'wan-v2.6-image-to-image';
+  if (normalizeTryOnModel(model) === 'wan-v2.6-image-to-image') return 'wan-v2.6-image-to-image';
+  return 'gpt-image';
 }
 
 function tryOnModelForProduct(product) {
@@ -127,11 +139,68 @@ function aspectRatioObject(value = '') {
   return { label, value: { width, height } };
 }
 
+function normalizeWanAspectRatio(value = '') {
+  const ratio = String(value || process.env.FAL_WAN_ASPECT_RATIO || 'auto').trim();
+  return /^(?:auto|16:9|9:16|1:1)$/.test(ratio) ? ratio : 'auto';
+}
+
+function numberEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function booleanEnv(name, fallback) {
+  const value = String(process.env[name] || '').trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(value)) return true;
+  if (['false', '0', 'no', 'off'].includes(value)) return false;
+  return fallback;
+}
+
+function safePromptProductText(value) {
+  return String(value || '')
+    .replace(/\bsexy\b/gi, 'fashion')
+    .replace(/\blingerie\b/gi, 'delicate fashion garment')
+    .replace(/\bunderwear\b/gi, 'base layer garment')
+    .replace(/\binnerwear\b/gi, 'base layer garment')
+    .replace(/\bthongs?\b/gi, 'matching bottom piece')
+    .replace(/\bpant(?:y|ies)\b/gi, 'bottom piece')
+    .replace(/\bbabydoll\b/gi, 'short fashion dress')
+    .replace(/\bbra(?:s)?\b/gi, 'top')
+    .replace(/\bbralette(?:s)?\b/gi, 'top')
+    .replace(/\bbustier(?:s)?\b/gi, 'structured top')
+    .replace(/\bcorset(?:s)?\b/gi, 'structured top')
+    .replace(/\bnude\b/gi, 'neutral')
+    .replace(/\bnudity\b/gi, 'exposure')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function extensionFor(mimetype) {
   if (mimetype?.includes('png')) return '.png';
   if (mimetype?.includes('webp')) return '.webp';
   if (mimetype?.includes('gif')) return '.gif';
   return '.jpg';
+}
+
+function cleanPublicOrigin(value = '') {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return trimmed.replace(/\/api\/?$/i, '').replace(/\/$/, '');
+}
+
+function publicServerOrigin() {
+  return cleanPublicOrigin(
+    process.env.PUBLIC_API_ORIGIN ||
+    process.env.SERVER_PUBLIC_ORIGIN ||
+    process.env.API_PUBLIC_ORIGIN ||
+    process.env.PUBLIC_BASE_URL ||
+    process.env.API_BASE_URL ||
+    process.env.CLIENT_ORIGIN
+  );
+}
+
+function canUsePublicOrigin(origin = publicServerOrigin()) {
+  return /^https:\/\//i.test(origin) && !/^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/i.test(origin);
 }
 
 function safeLocalPath(storedPath) {
@@ -144,6 +213,12 @@ function dataUriFromBuffer(file, label) {
   if (!file?.buffer) throw new Error(`${label} image is missing`);
   const mimetype = file.mimetype || 'image/jpeg';
   return `data:${mimetype};base64,${file.buffer.toString('base64')}`;
+}
+
+function bufferFromDataUri(value, label) {
+  const [, mimetype = 'image/jpeg', base64 = ''] = String(value || '').match(/^data:([^;]+);base64,(.+)$/i) || [];
+  if (!base64) throw new Error(`${label} image data URI was invalid`);
+  return { bytes: Buffer.from(base64, 'base64'), mimetype };
 }
 
 function bufferFromStoredImage(image) {
@@ -269,6 +344,143 @@ async function dataUriFromRemoteImage(remoteUrl, timer) {
   });
 }
 
+async function fetchRemoteImageBytes(remoteUrl) {
+  const response = await fetch(remoteUrl, {
+    headers: {
+      accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      'user-agent': 'Mozilla/5.0 FitLook image fetcher'
+    }
+  });
+  if (!response.ok) throw new Error('Could not fetch product image');
+  const mimetype = response.headers.get('content-type') || 'image/jpeg';
+  if (!mimetype.startsWith('image/')) throw new Error('Product image URL is not an image');
+  return { bytes: Buffer.from(await response.arrayBuffer()), mimetype };
+}
+
+function wanTargetInputSize(width, height) {
+  let targetWidth = Math.max(1, Number(width) || 0);
+  let targetHeight = Math.max(1, Number(height) || 0);
+  if (!targetWidth || !targetHeight) return { width: 1024, height: 1024 };
+
+  if (targetWidth < 384 || targetHeight < 384) {
+    const scale = Math.max(384 / targetWidth, 384 / targetHeight);
+    targetWidth = Math.ceil(targetWidth * scale);
+    targetHeight = Math.ceil(targetHeight * scale);
+  }
+
+  if (targetWidth > 5000 || targetHeight > 5000) {
+    const scale = Math.min(5000 / targetWidth, 5000 / targetHeight);
+    targetWidth = Math.floor(targetWidth * scale);
+    targetHeight = Math.floor(targetHeight * scale);
+  }
+
+  return {
+    width: Math.max(1, targetWidth),
+    height: Math.max(1, targetHeight)
+  };
+}
+
+async function normalizeWanReferenceImage({ bytes, label, timer }) {
+  let metadata = {};
+  try {
+    metadata = await sharp(bytes, { failOn: 'none' }).metadata();
+  } catch (error) {
+    throw new Error(`${label} image could not be read for WAN v2.6`);
+  }
+
+  const target = wanTargetInputSize(metadata.width, metadata.height);
+  let output = await sharp(bytes, { failOn: 'none' })
+    .rotate()
+    .resize({ width: target.width, height: target.height, fit: 'inside', withoutEnlargement: false })
+    .flatten({ background: '#ffffff' })
+    .jpeg({ quality: 90 })
+    .toBuffer({ resolveWithObject: true });
+
+  if (output.info.width < 384 || output.info.height < 384) {
+    const width = Math.max(384, output.info.width);
+    const height = Math.max(384, output.info.height);
+    const left = Math.floor((width - output.info.width) / 2);
+    const top = Math.floor((height - output.info.height) / 2);
+    output = await sharp(output.data)
+      .extend({
+        top,
+        bottom: height - output.info.height - top,
+        left,
+        right: width - output.info.width - left,
+        background: '#ffffff'
+      })
+      .jpeg({ quality: 90 })
+      .toBuffer({ resolveWithObject: true });
+  }
+
+  if (output.data.length > 9.5 * 1024 * 1024) {
+    output = await sharp(output.data)
+      .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 82 })
+      .toBuffer({ resolveWithObject: true });
+  }
+
+  timer?.mark('wan reference normalized', {
+    label,
+    inputWidth: metadata.width || null,
+    inputHeight: metadata.height || null,
+    outputWidth: output.info.width,
+    outputHeight: output.info.height,
+    outputKb: Math.round(output.data.length / 1024)
+  });
+
+  const origin = publicServerOrigin();
+  if (!canUsePublicOrigin(origin)) {
+    return `data:image/jpeg;base64,${output.data.toString('base64')}`;
+  }
+
+  const hash = crypto.createHash('sha256').update(output.data).digest('hex').slice(0, 24);
+  const filename = `${label}-${hash}.jpg`;
+  const storedPath = path.posix.join('uploads', 'wan-inputs', filename);
+  const localPath = safeLocalPath(storedPath);
+  await fs.mkdir(path.dirname(localPath), { recursive: true });
+  try {
+    await fs.access(localPath);
+  } catch {
+    await fs.writeFile(localPath, output.data);
+  }
+  return `${origin}/${storedPath}`;
+}
+
+async function wanReferenceFromUpload(image, label, timer) {
+  const storedBuffer = bufferFromStoredImage(image);
+  if (storedBuffer) {
+    return normalizeWanReferenceImage({ bytes: storedBuffer, label, timer });
+  }
+
+  if (!image?.path) throw new Error(`${label} image is missing`);
+  const localPath = safeLocalPath(image.path);
+  let bytes;
+  try {
+    bytes = await fs.readFile(localPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new Error(`${label} image file is missing. Please create a new profile so the photo is saved in MongoDB.`);
+    }
+    throw error;
+  }
+  return normalizeWanReferenceImage({ bytes, label, timer });
+}
+
+async function wanReferenceFromProduct(product, timer) {
+  if (product.image?.remoteUrl) {
+    const { bytes } = await fetchRemoteImageBytes(product.image.remoteUrl);
+    return normalizeWanReferenceImage({ bytes, label: 'product', timer });
+  }
+  if (product.image?.path) return wanReferenceFromUpload(product.image, 'product', timer);
+  throw new Error('Product image is missing');
+}
+
+async function wanReferenceFromDataUri(dataUri, label, timer) {
+  const { bytes } = bufferFromDataUri(dataUri, label);
+  return normalizeWanReferenceImage({ bytes, label, timer });
+}
+
 function tryOnPrompt(product) {
   return [
 [
@@ -360,8 +572,67 @@ function virtualTryOnProductPrompt(product) {
   ].join(' ');
 }
 
+function wanImageToImageProductPrompt(product) {
+  const tags = Array.isArray(product.tags) ? product.tags.filter(Boolean).slice(0, 10).map(safePromptProductText).join(', ') : '';
+  const productName = safePromptProductText(product.name);
+  const productBrand = safePromptProductText(product.brand);
+  const productCategory = safePromptProductText(product.category);
+  const productDescription = safePromptProductText(product.description);
+  return [
+    'Edit this shopper photo into a photorealistic ecommerce fashion try-on preview.',
+    'Use the input image as the only identity, face, body, pose, framing, lighting, and background reference.',
+    'Preserve the shopper exact face, hair, skin tone, body shape, pose, camera angle, crop, hands, legs, footwear, and background.',
+    `Replace only the relevant visible clothing with this product: "${productName}" by ${productBrand}.`,
+    productCategory ? `Product category: ${productCategory}.` : '',
+    productDescription ? `Product description: ${productDescription}` : '',
+    tags ? `Product attributes and tags: ${tags}.` : '',
+    'Make the garment look natural on the shopper with realistic scale, folds, seams, neckline, sleeve length, hemline, shadows, occlusion, fabric texture, color, and pattern.',
+    'Keep the result non-sexualized, catalog-appropriate, and suitable for a mainstream fashion retail product card.',
+    'Do not change identity, pose, body proportions, background, or non-target clothing areas unless naturally covered by the new garment.',
+    'Return one clean full-body try-on image.'
+  ].filter(Boolean).join(' ');
+}
+
+function wanTryOnPrompt(product) {
+  const productName = String(product?.name || 'the selected garment').slice(0, 220);
+  const productBrand = String(product?.brand || 'the listed brand').slice(0, 120);
+  return [
+    'Create one photorealistic virtual try-on image for an ecommerce product page.',
+    'Image 1 is the shopper and must remain the identity, body, pose, camera, lighting, and background reference.',
+    'Preserve the shopper face, hair, skin tone, body shape, hands, legs, pose, framing, and expression exactly.',
+    `Image 2 is only the garment reference for "${productName}" by ${productBrand}.`,
+    'Transfer only the garment design, color, fabric, texture, neckline, sleeves, hem, seams, closures, logos, pattern, pockets, and silhouette from image 2.',
+    'Ignore any model, mannequin, person, face, body, pose, camera angle, crop, lighting, and background present in image 2.',
+    'Fit the garment naturally onto the shopper with correct scale, drape, folds, wrinkles, occlusion, and shadows.',
+    'Keep every non-garment region from image 1 unchanged. Do not add accessories, styling, text, logos, background details, body changes, or extra skin exposure.',
+    'Return one clean, full-body, non-sexualized, photorealistic retail try-on preview.'
+  ].join(' ');
+}
+
+function wanCustomTryOnPrompt() {
+  return [
+    'Create one photorealistic virtual try-on image for an ecommerce clothing preview.',
+    'Image 1 is the shopper and must remain the identity, body, pose, camera, lighting, and background reference.',
+    'Preserve the shopper face, hair, skin tone, body shape, hands, legs, pose, framing, and expression exactly.',
+    'Image 2 is only the uploaded garment reference.',
+    'Transfer only the garment design, color, fabric, texture, neckline, sleeves, hem, seams, closures, logos, pattern, pockets, and silhouette from image 2.',
+    'Ignore any model, mannequin, person, face, body, pose, camera angle, crop, lighting, and background present in image 2.',
+    'Fit the garment naturally onto the shopper with correct scale, drape, folds, wrinkles, occlusion, and shadows.',
+    'Keep every non-garment region from image 1 unchanged. Do not add accessories, styling, text, logos, background details, body changes, or extra skin exposure.',
+    'Return one clean, full-body, non-sexualized, photorealistic retail try-on preview.'
+  ].join(' ');
+}
+
+function wanNegativePrompt() {
+  return 'low resolution, blurry, distorted face, changed identity, changed pose, changed body, extra limbs, extra fingers, missing head, cropped face, copied product model, mannequin, text, watermark, logo hallucination, overexposed, low quality';
+}
+
 function isFalContentPolicyError(message = '') {
   return /content[_\s-]?policy|content checker|flagged/i.test(String(message));
+}
+
+function isFalPathNotFoundError(message = '') {
+  return /(?:path|application).*(?:not found)|not found.*(?:path|application)/i.test(String(message));
 }
 
 function falHeaders() {
@@ -373,13 +644,24 @@ function falHeaders() {
 }
 
 async function falJson(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    headers: { ...falHeaders(), ...options.headers }
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(readableError(data.detail || data.error || data.message || data, 'FAL try-on request failed'));
-  return data;
+  const { timeoutMs, ...fetchOptions } = options;
+  const controller = timeoutMs ? new AbortController() : null;
+  const timeout = timeoutMs ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: controller?.signal || fetchOptions.signal,
+      headers: { ...falHeaders(), ...fetchOptions.headers }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(readableError(data.detail || data.error || data.message || data, 'FAL try-on request failed'));
+    return data;
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`FAL try-on request timed out after ${Math.round(timeoutMs / 1000)} seconds`);
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 async function waitForFalResult(submission, timer) {
@@ -568,6 +850,119 @@ async function callFalVirtualTryOnProduct({ user, product, timer }) {
   }
 }
 
+async function callFalWanImageToImage({ user, product, garmentDataUri, selectedModel, prompt, timer }) {
+  let endpoint = wanImageToImageModel(selectedModel);
+  const endpointIsV26 = /\/v2\.6(?:\/|-)/i.test(endpoint);
+  const [person, garment] = await Promise.all([
+    endpointIsV26 ? wanReferenceFromUpload(user.bodyPhoto, 'person', timer) : dataUriFromUpload(user.bodyPhoto, 'person', timer),
+    endpointIsV26
+      ? (garmentDataUri ? wanReferenceFromDataUri(garmentDataUri, 'garment', timer) : wanReferenceFromProduct(product, timer))
+      : Promise.resolve(null)
+  ]);
+  timer?.mark('wan reference images prepared', {
+    personRef: /^https?:\/\//i.test(person) ? 'url' : 'data-uri',
+    garmentRef: garment ? (/^https?:\/\//i.test(garment) ? 'url' : 'data-uri') : 'none',
+    multiImage: endpointIsV26
+  });
+  const finalPrompt = prompt || (endpointIsV26 ? wanTryOnPrompt(product) : wanImageToImageProductPrompt(product));
+  const strength = numberEnv('FAL_WAN_STRENGTH', 0.55);
+  const aspectRatio = normalizeWanAspectRatio();
+  const payload = endpointIsV26
+    ? {
+        prompt: finalPrompt,
+        image_urls: [person, garment].filter(Boolean),
+        negative_prompt: process.env.FAL_WAN_V26_NEGATIVE_PROMPT || wanNegativePrompt(),
+        image_size: process.env.FAL_WAN_V26_IMAGE_SIZE || 'portrait_4_3',
+        num_images: 1,
+        enable_prompt_expansion: booleanEnv('FAL_WAN_PROMPT_EXPANSION', false),
+        enable_safety_checker: booleanEnv('FAL_WAN_SAFETY_CHECKER', true)
+      }
+    : {
+        prompt: finalPrompt,
+        image_url: person,
+        strength,
+        negative_prompt: process.env.FAL_WAN_NEGATIVE_PROMPT || 'blur, distorted face, changed identity, changed pose, extra limbs, extra fingers, text, watermark, logo artifacts, nudity',
+        aspect_ratio: aspectRatio,
+        num_inference_steps: Math.max(1, Math.floor(numberEnv('FAL_WAN_INFERENCE_STEPS', 27))),
+        enable_safety_checker: booleanEnv('FAL_WAN_SAFETY_CHECKER', true),
+        enable_output_safety_checker: booleanEnv('FAL_WAN_OUTPUT_SAFETY_CHECKER', false),
+        enable_prompt_expansion: booleanEnv('FAL_WAN_PROMPT_EXPANSION', false),
+        acceleration: process.env.FAL_WAN_ACCELERATION || 'regular',
+        guidance_scale: numberEnv('FAL_WAN_GUIDANCE_SCALE', 3.5),
+        guidance_scale_2: numberEnv('FAL_WAN_GUIDANCE_SCALE_2', 4),
+        shift: numberEnv('FAL_WAN_SHIFT', 2),
+        image_format: process.env.FAL_WAN_IMAGE_FORMAT || 'png'
+      };
+
+  const wanTimer = {
+    ...timer,
+    maxAttempts: Number(process.env.FAL_WAN_POLL_ATTEMPTS || 360),
+    pollMs: Number(process.env.FAL_WAN_POLL_MS || 1500)
+  };
+
+  const runWanEndpoint = async (activeEndpoint) => {
+    const activeEndpointIsV26 = /\/v2\.6(?:\/|-)/i.test(activeEndpoint);
+    if (activeEndpointIsV26 && String(process.env.FAL_WAN_V26_USE_QUEUE || '').toLowerCase() !== 'true') {
+      timer?.mark('fal wan direct attempt', {
+        endpoint: activeEndpoint,
+        strength,
+        aspectRatio,
+        fields: Object.keys(payload)
+      });
+      const result = await falJson(`https://fal.run/${activeEndpoint}`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        timeoutMs: Number(process.env.FAL_WAN_V26_RUN_TIMEOUT_MS || 540000)
+      });
+      timer?.mark('fal wan direct completed', { endpoint: activeEndpoint, keys: Object.keys(result || {}) });
+      return result;
+    }
+
+    timer?.mark('fal wan submit attempt', {
+      endpoint: activeEndpoint,
+      strength,
+      aspectRatio,
+      fields: Object.keys(payload)
+    });
+    const submission = await falJson(`https://queue.fal.run/${activeEndpoint}`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    timer?.mark('fal wan submitted', { requestId: submission.request_id });
+    return waitForFalResult(submission, wanTimer);
+  };
+
+  let result;
+  try {
+    result = await runWanEndpoint(endpoint);
+  } catch (error) {
+    const message = readableError(error, 'FAL WAN image-to-image failed');
+    const fallbackEndpoint = normalizeTryOnModel(selectedModel) === 'wan-v2.6-image-to-image'
+      ? process.env.FAL_WAN_V26_FALLBACK_MODEL
+      : process.env.FAL_WAN_IMAGE_TO_IMAGE_MODEL || 'fal-ai/wan/v2.2-a14b/image-to-image';
+    if (!isFalPathNotFoundError(message) || !fallbackEndpoint || endpoint === fallbackEndpoint) throw new Error(message);
+    timer?.mark('fal wan endpoint fallback', { from: endpoint, to: fallbackEndpoint, error: message });
+    endpoint = fallbackEndpoint;
+    result = await runWanEndpoint(endpoint);
+  }
+
+  const generatedUrl = firstGeneratedImageUrl(result);
+  if (!generatedUrl) throw new Error(`FAL WAN returned no image. Response keys: ${Object.keys(result || {}).join(', ')}`);
+  const { bytes, mimetype } = await generatedBytesFromUrl(generatedUrl, timer);
+  timer?.mark('wan generated image downloaded', { outputKb: Math.round(bytes.length / 1024) });
+  return {
+    bytes,
+    mimetype,
+    prompt: finalPrompt,
+    model: endpoint,
+    quality: `wan strength ${strength}`
+  };
+}
+
+async function callFalWanImageToImageProduct({ user, product, selectedModel, timer }) {
+  return callFalWanImageToImage({ user, product, selectedModel, timer });
+}
+
 async function callFalImageEdit({ user, product, garmentDataUri, prompt, timer }) {
   const [person, garment] = await Promise.all([
     dataUriFromUpload(user.bodyPhoto, 'person', timer),
@@ -600,6 +995,25 @@ async function callFalImageEdit({ user, product, garmentDataUri, prompt, timer }
   const bytes = Buffer.from(await imageResponse.arrayBuffer());
   timer?.mark('generated image downloaded', { outputKb: Math.round(bytes.length / 1024) });
   return { bytes, prompt: finalPrompt };
+}
+
+async function generateProductTryOnImage({ user, product, selectedModel, timer }) {
+  if (selectedModel === 'vto-unrestricted') return callFalVirtualTryOnProduct({ user, product, timer });
+  if (isWanTryOnModel(selectedModel)) return callFalWanImageToImageProduct({ user, product, selectedModel, timer });
+  try {
+    return {
+      ...(await callFalImageEdit({ user, product, timer })),
+      mimetype: 'image/png',
+      model: imageModel(),
+      quality: imageQuality()
+    };
+  } catch (error) {
+    const message = readableError(error, 'FAL image edit failed');
+    if (!isFalContentPolicyError(message)) throw new Error(message);
+    const fallbackModel = restrictedTryOnFallbackModel();
+    timer?.mark('fal content policy fallback', { from: selectedModel, to: fallbackModel });
+    return callFalWanImageToImageProduct({ user, product, selectedModel: fallbackModel, timer });
+  }
 }
 
 async function saveUserCacheFile({ user, bytes, filename, mimetype }) {
@@ -669,14 +1083,7 @@ function cachedTryOnToClient(entry) {
 async function saveGeneratedTryOn({ user, product, timer }) {
   const selectedModel = tryOnModelForProduct(product);
   timer?.mark('try-on model selected', { selectedModel });
-  const generated = selectedModel === 'vto-unrestricted'
-    ? await callFalVirtualTryOnProduct({ user, product, timer })
-    : {
-        ...(await callFalImageEdit({ user, product, timer })),
-        mimetype: 'image/png',
-        model: imageModel(),
-        quality: imageQuality()
-      };
+  const generated = await generateProductTryOnImage({ user, product, selectedModel, timer });
   const filename = `tryon-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
   const image = await saveUserCacheFile({ user, bytes: generated.bytes, filename, mimetype: generated.mimetype });
   timer?.mark('generated image saved', { path: image.path });
@@ -732,14 +1139,7 @@ function externalProductFromBody(value = {}) {
 async function saveGeneratedExternalTryOn({ user, product, timer }) {
   const selectedModel = tryOnModelForProduct(product);
   timer?.mark('external try-on model selected', { selectedModel });
-  const generated = selectedModel === 'vto-unrestricted'
-    ? await callFalVirtualTryOnProduct({ user, product, timer })
-    : {
-        ...(await callFalImageEdit({ user, product, timer })),
-        mimetype: 'image/png',
-        model: imageModel(),
-        quality: imageQuality()
-      };
+  const generated = await generateProductTryOnImage({ user, product, selectedModel, timer });
   const filename = `tryon-external-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
   const image = await saveUserCacheFile({ user, bytes: generated.bytes, filename, mimetype: generated.mimetype });
   timer?.mark('external try-on saved', { path: image.path });
@@ -810,6 +1210,14 @@ async function saveGeneratedCustomTryOn({ user, garmentFile, tryOnModel, timer }
       model: virtualTryOnTrialModel(),
       quality: `vto ${trial.aspectRatio}`
     };
+  } else if (selectedModel === 'wan-v2.6-image-to-image') {
+    generated = await callFalWanImageToImage({
+      user,
+      garmentDataUri,
+      selectedModel,
+      prompt: wanCustomTryOnPrompt(),
+      timer
+    });
   } else {
     const { bytes, prompt } = await callFalImageEdit({
       user,

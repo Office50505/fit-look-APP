@@ -13,6 +13,7 @@
     "mobile": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --port 8081",
     "mobile:android": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --android --port 8081",
     "mobile:ios": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --ios --port 8081",
+    "mobile:ios:prebuild": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli prebuild --platform ios",
     "mobile:web": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --web --port 8081",
     "build": "vite build",
     "preview": "vite preview"
@@ -28,6 +29,7 @@
     "multer": "^2.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "sharp": "^0.33.5",
     "vite": "^6.0.7"
   },
   "devDependencies": {

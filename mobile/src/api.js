@@ -1,12 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
+const productionApi = 'http://15.206.207.210/api';
 const localApi = Platform.OS === 'android' ? 'http://10.0.2.2:5050/api' : 'http://localhost:5050/api';
 function normalizeApiUrl(url) {
   return String(url || '').trim().replace(/\/$/, '');
 }
 
-export const API_URL = normalizeApiUrl(process.env.EXPO_PUBLIC_API_URL || localApi);
+export const API_URL = normalizeApiUrl(process.env.EXPO_PUBLIC_API_URL || productionApi);
 const fallbackApiUrls = String(process.env.EXPO_PUBLIC_API_FALLBACK_URLS || '')
   .split(',')
   .map(normalizeApiUrl)

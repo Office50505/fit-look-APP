@@ -31,9 +31,30 @@ const VTO_RESTRICTED_TERMS = [
   /\bsarees?|saris?\b/i
 ];
 
+const WAN_TRY_ON_MODELS = ['wan-v2.2-image-to-image', 'wan-v2.6-image-to-image'];
+const TRY_ON_MODELS = ['gpt-image-2', 'vto-unrestricted', ...WAN_TRY_ON_MODELS];
+
 function normalizeTryOnModel(value) {
   const model = String(value || '').trim().toLowerCase();
-  return ['vto-unrestricted', 'vto-trial', 'second', 'virtual-try-on'].includes(model) ? 'vto-unrestricted' : 'gpt-image-2';
+  if (['vto-unrestricted', 'vto-trial', 'second', 'virtual-try-on'].includes(model)) return 'vto-unrestricted';
+  if (model === 'wan-v2.6-image-to-image' || model.includes('wan/v2.6')) return 'wan-v2.6-image-to-image';
+  if (
+    model === 'wan-v2.2-image-to-image' ||
+    model === 'wan-image-to-image' ||
+    model === 'wan' ||
+    model === 'fal-ai/wan/v2.2-a14b/image-to-image' ||
+    model.includes('wan/v2.2')
+  ) return 'wan-v2.2-image-to-image';
+  return 'gpt-image-2';
+}
+
+function isWanTryOnModel(value) {
+  return WAN_TRY_ON_MODELS.includes(normalizeTryOnModel(value));
+}
+
+function restrictedTryOnFallbackModel() {
+  const fallback = normalizeTryOnModel(process.env.RESTRICTED_TRYON_FALLBACK_MODEL || 'wan-v2.2-image-to-image');
+  return fallback === 'gpt-image-2' ? 'wan-v2.2-image-to-image' : fallback;
 }
 
 function textForTryOnClassification(product = {}) {
@@ -61,12 +82,28 @@ function textForTryOnClassification(product = {}) {
     .toLowerCase();
 }
 
-function inferTryOnModel(product = {}) {
-  const explicit = normalizeTryOnModel(product.tryOnModel);
-  if (product.tryOnModel) return explicit;
-
+function hasRestrictedTryOnText(product = {}) {
   const text = textForTryOnClassification(product);
-  return VTO_RESTRICTED_TERMS.some((pattern) => pattern.test(text)) ? 'vto-unrestricted' : 'gpt-image-2';
+  return VTO_RESTRICTED_TERMS.some((pattern) => pattern.test(text));
 }
 
-export { inferTryOnModel, normalizeTryOnModel };
+function inferTryOnModel(product = {}) {
+  const explicit = normalizeTryOnModel(product.tryOnModel);
+  const restricted = hasRestrictedTryOnText(product);
+  if (product.tryOnModel) {
+    if (explicit === 'gpt-image-2' && restricted) return restrictedTryOnFallbackModel();
+    return explicit;
+  }
+
+  return restricted ? restrictedTryOnFallbackModel() : 'gpt-image-2';
+}
+
+export {
+  TRY_ON_MODELS,
+  WAN_TRY_ON_MODELS,
+  hasRestrictedTryOnText,
+  inferTryOnModel,
+  isWanTryOnModel,
+  normalizeTryOnModel,
+  restrictedTryOnFallbackModel
+};

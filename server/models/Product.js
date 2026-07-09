@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { TRY_ON_MODELS, inferTryOnModel } from '../utils/tryOnModel.js';
 
 function decodeHtml(value) {
   if (typeof value !== 'string') return value;
@@ -30,7 +31,7 @@ const productSchema = new mongoose.Schema(
     colors: [{ type: String, trim: true }],
     tryOnModel: {
       type: String,
-      enum: ['gpt-image-2', 'vto-unrestricted'],
+      enum: TRY_ON_MODELS,
       default: 'gpt-image-2'
     },
     image: {
@@ -81,7 +82,7 @@ productSchema.methods.toClient = function toClient() {
     description: decodeHtml(this.description),
     tags: this.tags?.map(decodeHtml),
     colors: this.colors,
-    tryOnModel: this.tryOnModel || 'gpt-image-2',
+    tryOnModel: inferTryOnModel(this),
     imageUrl: this.image?.remoteUrl || (this.image?.path ? `/${this.image.path}` : null),
     isFeatured: this.isFeatured,
     isNewArrival: this.isNewArrival,
