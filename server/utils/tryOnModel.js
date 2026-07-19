@@ -53,8 +53,8 @@ function isWanTryOnModel(value) {
 }
 
 function restrictedTryOnFallbackModel() {
-  const fallback = normalizeTryOnModel(process.env.RESTRICTED_TRYON_FALLBACK_MODEL || 'wan-v2.2-image-to-image');
-  return fallback === 'gpt-image-2' ? 'wan-v2.2-image-to-image' : fallback;
+  const fallback = normalizeTryOnModel(process.env.RESTRICTED_TRYON_FALLBACK_MODEL || 'wan-v2.6-image-to-image');
+  return fallback === 'gpt-image-2' ? 'wan-v2.6-image-to-image' : fallback;
 }
 
 function textForTryOnClassification(product = {}) {

@@ -107,10 +107,7 @@ function wanImageToImageModel(selectedModel) {
 }
 
 function customTryOnModel(value) {
-  const model = String(value || '').trim();
-  if (model === 'vto-trial') return 'wan-v2.6-image-to-image';
-  if (normalizeTryOnModel(model) === 'wan-v2.6-image-to-image') return 'wan-v2.6-image-to-image';
-  return 'gpt-image';
+  return 'wan-v2.6-image-to-image';
 }
 
 function tryOnModelForProduct(product) {
@@ -1122,6 +1119,7 @@ function externalProductFromBody(value = {}) {
   const imageUrl = cleanUrl(value.imageUrl || value.remoteImageUrl);
   if (!sourceUrl) throw new Error('External product link is missing');
   if (!imageUrl) throw new Error('External product image is missing');
+  const tryOnModel = 'wan-v2.6-image-to-image';
   return {
     sourceUrl,
     affiliateLink: cleanUrl(value.affiliateLink || sourceUrl),
@@ -1130,7 +1128,7 @@ function externalProductFromBody(value = {}) {
     category: String(value.category || 'clothing').trim(),
     description: String(value.description || '').trim(),
     tags: Array.isArray(value.tags) ? value.tags : [],
-    tryOnModel: inferTryOnModel(value),
+    tryOnModel,
     imageUrl,
     image: { remoteUrl: imageUrl }
   };
@@ -1193,46 +1191,13 @@ async function saveGeneratedCustomTryOn({ user, garmentFile, tryOnModel, timer }
     selectedModel
   });
 
-  let generated;
-  if (selectedModel === 'vto-trial') {
-    const personDataUri = await dataUriFromUpload(user.bodyPhoto, 'person', timer);
-    const prompt = virtualTryOnTrialPrompt('Custom user selected swimwear, bikini, full dress, or VTO-specific clothing mode.');
-    const trial = await callFalVirtualTryOnTrial({ personDataUri, garmentDataUri, prompt, timer });
-    const { bytes, mimetype } = await generatedBytesFromUrl(trial.generatedUrl, timer);
-    timer?.mark('custom vto image downloaded', {
-      outputKb: Math.round(bytes.length / 1024),
-      aspectRatio: trial.aspectRatio
-    });
-    generated = {
-      bytes,
-      mimetype,
-      prompt,
-      model: virtualTryOnTrialModel(),
-      quality: `vto ${trial.aspectRatio}`
-    };
-  } else if (selectedModel === 'wan-v2.6-image-to-image') {
-    generated = await callFalWanImageToImage({
-      user,
-      garmentDataUri,
-      selectedModel,
-      prompt: wanCustomTryOnPrompt(),
-      timer
-    });
-  } else {
-    const { bytes, prompt } = await callFalImageEdit({
-      user,
-      garmentDataUri,
-      prompt: customTryOnPrompt(),
-      timer
-    });
-    generated = {
-      bytes,
-      mimetype: 'image/png',
-      prompt,
-      model: imageModel(),
-      quality: imageQuality()
-    };
-  }
+  const generated = await callFalWanImageToImage({
+    user,
+    garmentDataUri,
+    selectedModel,
+    prompt: wanCustomTryOnPrompt(),
+    timer
+  });
 
   const filename = `tryon-custom-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
   const image = await saveUserCacheFile({

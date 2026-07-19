@@ -2,7 +2,7 @@
   "expo": {
     "name": "FitLook",
     "slug": "fitlook",
-    "version": "0.1.2",
+    "version": "1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": [
@@ -10,8 +10,8 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.fitlook.app",
-      "buildNumber": "3",
+      "bundleIdentifier": "com.kratikdhote.fitlook2",
+      "buildNumber": "1",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "FitLook needs photo access so you can upload profile and clothing images for try-ons.",
         "NSAppTransportSecurity": {
@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.fitlook.app",
-      "versionCode": 3,
+      "versionCode": 8,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#101820"

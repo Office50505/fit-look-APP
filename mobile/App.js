@@ -5,6 +5,7 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState } from 're
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -18,6 +19,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View
 } from 'react-native';
 import { api, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
@@ -30,7 +32,7 @@ const sortOptions = [
   ['price-asc', 'Price low'],
   ['price-desc', 'Price high']
 ];
-const validRoutes = new Set(['auth', 'home', 'shop', 'tryon', 'custom', 'vto', 'stylebot', 'tokens', 'product', 'signup', 'login', 'how', 'info']);
+const validRoutes = new Set(['auth', 'home', 'shop', 'tryon', 'custom', 'vto', 'stylebot', 'tokens', 'profile', 'product', 'signup', 'login', 'how', 'info']);
 
 function normalizeRoute(name, params = {}) {
   const routeName = typeof name === 'string' && validRoutes.has(name) ? name : 'home';
@@ -81,6 +83,10 @@ function titleCase(value = '') {
 function productImageSource(product, tryOn) {
   const url = imageUrl(tryOn?.imageUrl || product?.imageUrl);
   return url ? { uri: url } : images.hero;
+}
+
+function productImageResizeMode(tryOn) {
+  return tryOn?.imageUrl ? 'contain' : 'cover';
 }
 
 function useProducts(params, token) {
@@ -151,13 +157,13 @@ function useTryOns(user, products, token) {
       .then((data) => {
         if (!alive) return;
         const saved = Object.fromEntries((data.tryOns || []).map((tryOn) => [tryOn.productId, tryOn]));
-        setTryOns((current) => ({ ...current, ...saved }));
+        setTryOns(saved);
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [user?.id, productIds, token]);
+  }, [user?.id, user?.bodyPhotoUrl, productIds, token]);
 
   return [tryOns, setTryOns];
 }
@@ -190,16 +196,28 @@ function AppButton({ label, icon, variant = 'primary', disabled, onPress, style 
   );
 }
 
-function Header({ user, onNavigate, onLogout }) {
+function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
   return (
     <View style={styles.header}>
-      <View>
-        <Pressable onPress={() => onNavigate('home')}>
-          <Text style={styles.brand}>FitLook</Text>
-        </Pressable>
-        <Text style={styles.headerSub}>{user?.devMode ? 'Dev Mode active' : user ? `${user.tokens} tokens ready` : 'AI fitting room'}</Text>
+      <View style={styles.headerLeft}>
+        {canGoBack ? (
+          <TouchableOpacity style={styles.iconButton} onPress={onBack}>
+            <Ionicons name="chevron-back" size={22} color="#111827" />
+          </TouchableOpacity>
+        ) : null}
+        <View>
+          <Pressable onPress={() => onNavigate('home')}>
+            <Text style={styles.brand}>FitLook</Text>
+          </Pressable>
+          <Text style={styles.headerSub}>{user?.devMode ? 'Dev Mode active' : user ? `${user.tokens} tokens ready` : 'AI fitting room'}</Text>
+        </View>
       </View>
       <View style={styles.headerActions}>
+        {user ? (
+          <TouchableOpacity style={styles.iconButton} onPress={() => onNavigate('profile')}>
+            {user.bodyPhotoUrl ? <Image source={{ uri: imageUrl(user.bodyPhotoUrl) }} style={styles.headerAvatar} /> : <Ionicons name="person-outline" size={20} color="#111827" />}
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity style={styles.iconButton} onPress={() => onNavigate('tokens')}>
           <Ionicons name="sparkles-outline" size={19} color="#111827" />
         </TouchableOpacity>
@@ -224,7 +242,8 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
     ['shop', 'search-outline', 'Shop'],
     ['tryon', 'shirt-outline', 'Try-On'],
     ['stylebot', 'chatbubble-ellipses-outline', 'Bot'],
-    ['custom', 'image-outline', 'Custom']
+    ['custom', 'image-outline', 'Custom'],
+    ['profile', 'person-outline', 'Profile']
   ];
   return (
     <View style={styles.bottomNav}>
@@ -282,7 +301,7 @@ function ProductCard({ product, tryOn, loading, error, locked, onPress, onTryOn 
   return (
     <Pressable style={[styles.productCard, locked && styles.lockedCard]} onPress={locked ? undefined : onPress}>
       <View style={styles.productImageWrap}>
-        <Image source={productImageSource(product, tryOn)} style={styles.productImage} />
+        <Image source={productImageSource(product, tryOn)} style={styles.productImage} resizeMode={productImageResizeMode(tryOn)} />
         {locked ? <View style={styles.lockOverlay}><Ionicons name="lock-closed" size={22} color="#fff" /></View> : null}
         {tryOn?.imageUrl ? <Text style={styles.badge}>AI Try-On</Text> : product?.badge ? <Text style={styles.badge}>{product.badge}</Text> : null}
         {loading ? <TryOnLoading text="Generating" /> : null}
@@ -582,10 +601,12 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate 
 }
 
 function ProductScreen({ id, user, setUser, token, onNavigate }) {
+  const { width } = useWindowDimensions();
   const [state, setState] = useState({ product: null, loading: true, error: '' });
   const [tryOn, setTryOn] = useState(null);
   const [tryOnLoading, setTryOnLoading] = useState(false);
   const [tryOnError, setTryOnError] = useState('');
+  const [lightbox, setLightbox] = useState(null);
   const related = useProducts({ category: state.product?.category || '', limit: 5 }, token);
   const relatedProducts = related.products.filter((item) => item.id !== id).slice(0, 4);
   const [relatedTryOns] = useTryOns(user, relatedProducts, token);
@@ -613,7 +634,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
     return () => {
       alive = false;
     };
-  }, [id, user?.id, token]);
+  }, [id, user?.id, user?.bodyPhotoUrl, token]);
 
   const generate = async () => {
     if (!user) {
@@ -644,10 +665,37 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
 
   const product = state.product;
   const tags = (product.tags || []).filter(Boolean).slice(0, 10);
+  const mediaWidth = Math.max(1, Math.round(width - 32));
+  const mediaHeight = Math.min(640, Math.max(500, Math.round(mediaWidth * 1.42)));
+  const originalUri = imageUrl(product.imageUrl);
+  const tryOnUri = imageUrl(tryOn?.imageUrl);
+  const mediaItems = [
+    tryOnUri ? { key: 'tryon', label: 'AI Try-On', source: { uri: tryOnUri }, uri: tryOnUri } : null,
+    { key: 'original', label: 'Original Product', source: originalUri ? { uri: originalUri } : images.hero, uri: originalUri }
+  ].filter(Boolean);
   return (
     <ScrollView contentContainerStyle={styles.scrollContent}>
-      <View style={styles.detailMedia}>
-        <Image source={productImageSource(product, tryOn)} style={styles.detailImage} />
+      <View style={[styles.detailMedia, { height: mediaHeight }]}>
+        <ScrollView
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.detailMediaTrack}
+        >
+          {mediaItems.map((item, index) => (
+            <Pressable key={item.key} style={[styles.detailSlide, { width: mediaWidth }]} onPress={() => item.uri && setLightbox(item.uri)}>
+              <Image source={item.source} style={styles.detailImage} resizeMode="contain" />
+              <Text style={styles.detailImageBadge}>{item.label}</Text>
+              {mediaItems.length > 1 ? <Text style={styles.detailImageCount}>{index + 1}/{mediaItems.length}</Text> : null}
+            </Pressable>
+          ))}
+        </ScrollView>
+        {mediaItems.length > 1 ? (
+          <View style={styles.detailSwipeHint}>
+            <Ionicons name="swap-horizontal-outline" size={16} color="#111827" />
+            <Text style={styles.detailSwipeText}>Slide to compare</Text>
+          </View>
+        ) : null}
         {tryOnLoading ? <TryOnLoading text="Generating try-on" large /> : null}
       </View>
       <View style={styles.detailBody}>
@@ -710,6 +758,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
           />
         </View>
       ) : null}
+      <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </ScrollView>
   );
 }
@@ -814,7 +863,7 @@ function AuthEntryScreen({ onNavigate }) {
 
 function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
   const [garment, setGarment] = useState(null);
-  const [tryOnModel, setTryOnModel] = useState('gpt-image');
+  const [tryOnModel] = useState('wan-v2.6-image-to-image');
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -864,14 +913,12 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
         <Text style={styles.customModelTitle}>What are you trying on?</Text>
         <View style={styles.customModelOptions}>
           {[
-            ['gpt-image', 'Regular clothing', 'Tops, pants, jackets'],
             ['wan-v2.6-image-to-image', 'WAN 2.6 image', 'Two-image garment transfer']
           ].map(([value, label, help]) => {
             const selected = tryOnModel === value;
             return (
               <Pressable
                 key={value}
-                onPress={() => setTryOnModel(value)}
                 style={[styles.customModelOption, selected && styles.customModelOptionActive]}
               >
                 <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={18} color={selected ? '#0f766e' : '#64748b'} />
@@ -1030,10 +1077,10 @@ function StyleBotScreen({ user, setUser, setToken, onNavigate }) {
                   <View key={product.id} style={styles.styleResult}>
                     <View style={styles.styleImages}>
                       <View style={styles.styleImageBox}>
-                        <Image source={product.imageUrl ? { uri: imageUrl(product.imageUrl) } : images.hero} style={styles.styleImage} resizeMode="cover" />
+                        <Image source={product.imageUrl ? { uri: imageUrl(product.imageUrl) } : images.hero} style={styles.styleImage} resizeMode="contain" />
                       </View>
                       <Pressable style={styles.styleImageBox} onPress={() => run.tryOns[product.id]?.imageUrl && setLightbox(imageUrl(run.tryOns[product.id].imageUrl))}>
-                        {run.generating[product.id] ? <TryOnLoading text="Generating" /> : run.tryOns[product.id]?.imageUrl ? <Image key={imageUrl(run.tryOns[product.id].imageUrl)} source={{ uri: imageUrl(run.tryOns[product.id].imageUrl) }} style={styles.styleImage} resizeMode="cover" /> : <Text style={styles.previewPlaceholder}>On you</Text>}
+                        {run.generating[product.id] ? <TryOnLoading text="Generating" /> : run.tryOns[product.id]?.imageUrl ? <Image key={imageUrl(run.tryOns[product.id].imageUrl)} source={{ uri: imageUrl(run.tryOns[product.id].imageUrl) }} style={styles.styleImage} resizeMode="contain" /> : <Text style={styles.previewPlaceholder}>On you</Text>}
                       </Pressable>
                     </View>
                     <Text style={styles.productTitle}>{product.name}</Text>
@@ -1093,6 +1140,100 @@ function TokensScreen({ user }) {
         <InfoCard title="What costs tokens?" text={user?.devMode ? 'Dev Mode bypasses token charging for testing.' : 'Generating a product try-on or custom clothing try-on costs 1 token.'} />
         <InfoCard title="What is free?" text="Browsing, search, product pages, and viewing previously generated try-ons are free." />
         <InfoCard title="Why cache matters" text="If a try-on already exists for the same user and product, FitLook reuses it without charging another token." />
+      </View>
+    </ScrollView>
+  );
+}
+
+function formatDate(value) {
+  if (!value) return 'Not available';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Not available';
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function formatFileSize(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return 'Saved';
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function ProfileScreen({ user, setUser, setToken, onNavigate }) {
+  const [photo, setPhoto] = useState(null);
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
+
+  const photoSource = photo?.uri
+    ? { uri: photo.uri }
+    : user.bodyPhotoUrl
+      ? { uri: imageUrl(user.bodyPhotoUrl) }
+      : images.hero;
+
+  const updatePhoto = async () => {
+    if (!photo) {
+      setMessage('Choose a new full-body photo first.');
+      return;
+    }
+    setLoading(true);
+    setMessage('Updating profile photo...');
+    try {
+      const form = new FormData();
+      form.append('bodyPhoto', filePart(photo, 'body-photo.jpg'));
+      const data = await api('/auth/me', { method: 'PUT', body: form });
+      if (data.user) setUser(data.user);
+      setPhoto(null);
+      setMessage('Profile photo updated. New AI try-ons will use this image.');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.scrollContent}>
+      <View style={styles.profileHero}>
+        <TouchableOpacity style={styles.profilePhotoWrap} onPress={async () => setPhoto(await pickImage())}>
+          <Image source={photoSource} style={styles.profilePhoto} />
+          <View style={styles.profilePhotoAction}>
+            <Ionicons name="camera-outline" size={18} color="#fff" />
+          </View>
+        </TouchableOpacity>
+        <View style={styles.profileCopy}>
+          <Text style={styles.kicker}>Profile</Text>
+          <Text style={styles.profileName}>{user.name || 'FitLook member'}</Text>
+          <Text style={styles.profileEmail}>{user.email}</Text>
+        </View>
+      </View>
+
+      <View style={styles.profileDetails}>
+        {[
+          ['Tokens', user.devMode ? 'Dev mode' : `${user.tokens ?? 0}`],
+          ['Photo', formatFileSize(user.bodyPhotoSize)],
+          ['Joined', formatDate(user.createdAt)],
+          ['Updated', formatDate(user.updatedAt)]
+        ].map(([label, value]) => (
+          <View key={label} style={styles.profileStat}>
+            <Text style={styles.profileStatLabel}>{label}</Text>
+            <Text style={styles.profileStatValue}>{value}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.profileActions}>
+        <TouchableOpacity style={styles.uploadBox} onPress={async () => setPhoto(await pickImage())}>
+          <Ionicons name={photo ? 'checkmark-circle-outline' : 'cloud-upload-outline'} size={30} color="#0f766e" />
+          <View style={styles.uploadCopy}>
+            <Text style={styles.uploadTitle}>{photo ? 'New photo selected' : 'Change try-on photo'}</Text>
+            <Text style={styles.photoGuideText}>Use a clear single-person, full-body image with your face visible.</Text>
+          </View>
+        </TouchableOpacity>
+        <AppButton label={loading ? 'Saving...' : 'Save Profile Photo'} icon="save-outline" disabled={loading || !photo} onPress={updatePhoto} />
+        <AppButton label="Browse Products" icon="search-outline" variant="secondary" onPress={() => onNavigate('shop')} />
+        {message ? <Text style={[styles.formMessage, message.includes('updated') || message.includes('Updating') ? null : styles.errorText]}>{message}</Text> : null}
       </View>
     </ScrollView>
   );
@@ -1192,13 +1333,32 @@ function ImageLightbox({ uri, onClose }) {
 }
 
 export default function App() {
-  const [route, setRoute] = useState({ name: 'auth', params: {} });
+  const [routeStack, setRouteStack] = useState([{ name: 'auth', params: {} }]);
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [ready, setReady] = useState(false);
 
-  const currentRoute = normalizeRoute(route?.name, route?.params);
-  const navigate = useCallback((name, params = {}) => setRoute(normalizeRoute(name, params)), []);
+  const currentRoute = normalizeRoute(routeStack[routeStack.length - 1]?.name, routeStack[routeStack.length - 1]?.params);
+  const routeParamsKey = JSON.stringify(currentRoute.params || {});
+  const navigate = useCallback((name, params = {}) => {
+    const next = normalizeRoute(name, params);
+    setRouteStack((current) => {
+      const active = normalizeRoute(current[current.length - 1]?.name, current[current.length - 1]?.params);
+      if (active.name === next.name && JSON.stringify(active.params || {}) === JSON.stringify(next.params || {})) return current;
+      return [...current, next];
+    });
+  }, []);
+  const replaceRoute = useCallback((name, params = {}) => {
+    setRouteStack([normalizeRoute(name, params)]);
+  }, []);
+  const goBack = useCallback(() => {
+    if (routeStack.length <= 1) return false;
+    setRouteStack((current) => {
+      if (current.length <= 1) return current;
+      return current.slice(0, -1);
+    });
+    return true;
+  }, [routeStack.length]);
 
   useEffect(() => {
     let alive = true;
@@ -1207,7 +1367,7 @@ export default function App() {
         if (!alive) return;
         setUser(data.user);
         setToken(await getToken());
-        setRoute((current) => (current?.name === 'auth' ? normalizeRoute('shop') : current));
+        setRouteStack((current) => (current.length === 1 && current[0]?.name === 'auth' ? [normalizeRoute('shop')] : current));
       })
       .catch(() => {})
       .finally(() => alive && setReady(true));
@@ -1216,11 +1376,16 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => goBack());
+    return () => subscription.remove();
+  }, [goBack]);
+
   const performLogout = async () => {
     await clearToken();
     setToken(null);
     setUser(null);
-    navigate('auth');
+    replaceRoute('auth');
   };
 
   const logout = () => {
@@ -1249,6 +1414,8 @@ export default function App() {
         return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'tokens':
         return <TokensScreen user={user} />;
+      case 'profile':
+        return <ProfileScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'product':
         return routeParams.id ? <ProductScreen id={routeParams.id} user={user} setUser={setUser} token={token} onNavigate={navigate} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={navigate} />;
       case 'signup':
@@ -1262,7 +1429,7 @@ export default function App() {
       default:
         return <InfoScreen page="missing" user={user} onNavigate={navigate} />;
     }
-  }, [currentRoute.name, JSON.stringify(currentRoute.params || {}), user, token, navigate]);
+  }, [currentRoute.name, routeParamsKey, user, token, navigate]);
 
   if (!ready) {
     return (
@@ -1280,7 +1447,7 @@ export default function App() {
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar style="dark" />
-      {authOnlyRoute ? null : <Header user={user} onNavigate={navigate} onLogout={logout} />}
+      {authOnlyRoute ? null : <Header user={user} canGoBack={routeStack.length > 1} onBack={goBack} onNavigate={navigate} onLogout={logout} />}
       <View style={styles.content}>
         <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
           {screen}
@@ -1309,7 +1476,7 @@ const styles = StyleSheet.create({
     flex: 1
   },
   scrollContent: {
-    paddingBottom: Platform.OS === 'android' ? 156 : 112
+    paddingBottom: Platform.OS === 'android' ? 104 : 112
   },
   header: {
     paddingHorizontal: 18,
@@ -1321,6 +1488,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between'
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1
   },
   brand: {
     fontSize: 28,
@@ -1348,6 +1521,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center'
   },
+  headerAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17
+  },
   bottomNav: {
     position: 'absolute',
     left: 0,
@@ -1356,13 +1534,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 22 : 40,
+    paddingBottom: Platform.OS === 'ios' ? 22 : 8,
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
     borderTopColor: '#e5e7eb'
   },
   navItem: {
-    minWidth: 58,
+    minWidth: 50,
     alignItems: 'center',
     gap: 3
   },
@@ -1816,9 +1994,61 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#e5e7eb'
   },
+  detailMediaTrack: {
+    alignItems: 'stretch'
+  },
+  detailSlide: {
+    height: '100%',
+    position: 'relative',
+    backgroundColor: '#fff'
+  },
   detailImage: {
     width: '100%',
     height: '100%'
+  },
+  detailImageBadge: {
+    position: 'absolute',
+    left: 12,
+    top: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    color: '#111827',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  detailImageCount: {
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(17, 24, 39, 0.82)',
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  detailSwipeHint: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 12,
+    minHeight: 34,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 255, 255, 0.88)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6
+  },
+  detailSwipeText: {
+    color: '#111827',
+    fontSize: 12,
+    fontWeight: '900'
   },
   detailBody: {
     paddingHorizontal: 16,
@@ -2256,6 +2486,85 @@ const styles = StyleSheet.create({
   tokenAmount: {
     color: '#0f766e',
     fontWeight: '900'
+  },
+  profileHero: {
+    margin: 16,
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16
+  },
+  profilePhotoWrap: {
+    width: 118,
+    height: 150,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#e5e7eb'
+  },
+  profilePhoto: {
+    width: '100%',
+    height: '100%'
+  },
+  profilePhotoAction: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(17, 24, 39, 0.82)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileCopy: {
+    flex: 1
+  },
+  profileName: {
+    marginTop: 6,
+    color: '#111827',
+    fontSize: 27,
+    lineHeight: 31,
+    fontWeight: '900',
+    letterSpacing: 0
+  },
+  profileEmail: {
+    marginTop: 6,
+    color: '#64748b',
+    fontWeight: '800'
+  },
+  profileDetails: {
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10
+  },
+  profileStat: {
+    width: '48%',
+    padding: 13,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb'
+  },
+  profileStatLabel: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase'
+  },
+  profileStatValue: {
+    marginTop: 5,
+    color: '#111827',
+    fontSize: 17,
+    fontWeight: '900'
+  },
+  profileActions: {
+    margin: 16,
+    gap: 10
   },
   infoGrid: {
     paddingHorizontal: 16,

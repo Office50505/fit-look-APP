@@ -565,7 +565,7 @@ function VtoTrialPage({ user, setUser }) {
 function CustomClothingTryOn({ setUser }) {
   const fileRef = useRef(null);
   const [garmentPreview, setGarmentPreview] = useState('');
-  const [tryOnModel, setTryOnModel] = useState('gpt-image');
+  const [tryOnModel] = useState('wan-v2.6-image-to-image');
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -646,7 +646,6 @@ function CustomClothingTryOn({ setUser }) {
             <p>What are you trying on?</p>
             <div>
               {[
-                ['gpt-image', 'Regular clothing', 'Tops, pants, jackets'],
                 ['wan-v2.6-image-to-image', 'WAN 2.6 image', 'Two-image garment transfer']
               ].map(([value, label, help]) => (
                 <button
@@ -654,7 +653,6 @@ function CustomClothingTryOn({ setUser }) {
                   className={`custom-model-option ${tryOnModel === value ? 'active' : ''}`}
                   type="button"
                   aria-pressed={tryOnModel === value}
-                  onClick={() => setTryOnModel(value)}
                 >
                   <span>{label}</span>
                   <small>{help}</small>

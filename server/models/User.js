@@ -46,13 +46,20 @@ const userSchema = new mongoose.Schema(
 
 userSchema.methods.toClient = function toClient() {
   const hasMongoBodyPhoto = this.bodyPhoto?.storage === 'mongodb' || Boolean(this.bodyPhoto?.data);
+  const bodyPhotoPath = hasMongoBodyPhoto ? '/api/auth/me/body-photo' : this.bodyPhoto?.path ? `/${this.bodyPhoto.path}` : null;
+  const bodyPhotoVersion = this.updatedAt ? new Date(this.updatedAt).getTime() : Date.now();
+  const bodyPhotoUrl = bodyPhotoPath ? `${bodyPhotoPath}?v=${bodyPhotoVersion}` : null;
   return {
     id: this._id.toString(),
     name: this.name,
     email: this.email,
     tokens: this.tokens,
     devMode: devMode(),
-    bodyPhotoUrl: hasMongoBodyPhoto ? '/api/auth/me/body-photo' : this.bodyPhoto?.path ? `/${this.bodyPhoto.path}` : null
+    bodyPhotoUrl,
+    bodyPhotoFilename: this.bodyPhoto?.filename || null,
+    bodyPhotoSize: this.bodyPhoto?.size || null,
+    createdAt: this.createdAt,
+    updatedAt: this.updatedAt
   };
 };
 

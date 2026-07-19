@@ -46,7 +46,7 @@ server {
   listen 80 default_server;
   server_name _;
 
-  client_max_body_size 12m;
+  client_max_body_size 30m;
 
   location / {
     proxy_pass http://127.0.0.1:5050;

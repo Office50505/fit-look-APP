@@ -1,7 +1,6 @@
 import express from 'express';
 import Product from '../models/Product.js';
 import { requireUser } from './auth.js';
-import { inferTryOnModel } from '../utils/tryOnModel.js';
 
 const router = express.Router();
 const facetCacheTtlMs = Number(process.env.PRODUCT_FACET_CACHE_TTL_MS || 30_000);
@@ -852,18 +851,7 @@ function draftToExternalProduct(draft, fallbackQuery = '') {
   const category = draft.category || inferCategory({ title: name, description, query: fallbackQuery });
   const gender = draft.gender || 'unisex';
   const tags = draft.tags || [];
-  const inferredTryOnModel = inferTryOnModel({
-    ...draft,
-    name,
-    brand,
-    category,
-    gender,
-    description,
-    tags,
-    query: fallbackQuery,
-    searchQuery: fallbackQuery
-  });
-  const tryOnModel = inferredTryOnModel === 'vto-unrestricted' ? 'wan-v2.6-image-to-image' : inferredTryOnModel;
+  const tryOnModel = 'wan-v2.6-image-to-image';
 
   return {
     id: externalProductId(sourceUrl),
