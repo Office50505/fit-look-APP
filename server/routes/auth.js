@@ -1,75 +1,364 @@
 import bcrypt from 'bcryptjs';
 import express from 'express';
+import heicConvert from 'heic-convert';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import ExternalTryOn from '../models/ExternalTryOn.js';
-import TryOn from '../models/TryOn.js';
+import sharp from 'sharp';
 import User from '../models/User.js';
+import { normalizeGenderPreference } from '../utils/genderPreference.js';
 
 const router = express.Router();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '../..');
-const maxBodyPhotoBytes = Number(process.env.BODY_PHOTO_MAX_BYTES || 25 * 1024 * 1024);
+const avifExtensions = new Set(['.avif']);
+const avifMimeTypes = new Set(['image/avif', 'image/x-avif']);
+const heicExtensions = new Set(['.heic', '.heif']);
+const heicMimeTypes = new Set(['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']);
+
+function profileImageModel() {
+  return process.env.FAL_PROFILE_IMAGE_MODEL || process.env.FAL_TRYON_MODEL || 'openai/gpt-image-2/edit';
+}
+
+function shouldGenerateFullBodyProfile() {
+  return !['0', 'false', 'no', 'off'].includes(String(process.env.PROFILE_FULL_BODY_GENERATION ?? 'true').toLowerCase());
+}
+
+function shouldGenerateFullBodyProfileForRequest(req) {
+  const mode = String(req.body?.profilePhotoMode || 'ai-full-body').toLowerCase();
+  return shouldGenerateFullBodyProfile() && mode !== 'exact';
+}
+
+function extensionForFile(file) {
+  return path.extname(file.originalname || file.filename || '').toLowerCase();
+}
+
+function extensionForMimetype(mimetype) {
+  if (mimetype?.includes('png')) return '.png';
+  if (mimetype?.includes('webp')) return '.webp';
+  if (mimetype?.includes('gif')) return '.gif';
+  return '.jpg';
+}
+
+function imageMimeTypeFromBuffer(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 12) return '';
+  if (bytes[0] === 0x89 && bytes.toString('ascii', 1, 4) === 'PNG') return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
+  if (bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  if (bytes.toString('ascii', 4, 12) === 'ftypavif') return 'image/avif';
+  return '';
+}
+
+function imageMimeTypeFromResponse(response, bytes) {
+  const declared = response.headers.get('content-type') || '';
+  if (declared.startsWith('image/')) return declared.split(';')[0];
+  return imageMimeTypeFromBuffer(bytes) || declared || 'image/png';
+}
+
+function isHeicUpload(file) {
+  return heicMimeTypes.has(String(file.mimetype || '').toLowerCase()) || heicExtensions.has(extensionForFile(file));
+}
+
+function isAvifUpload(file) {
+  return avifMimeTypes.has(String(file.mimetype || '').toLowerCase()) || avifExtensions.has(extensionForFile(file));
+}
+
+function isAvifBuffer(bytes) {
+  return imageMimeTypeFromBuffer(bytes) === 'image/avif';
+}
+
+function isAllowedImageUpload(file) {
+  return String(file.mimetype || '').startsWith('image/') || isHeicUpload(file) || isAvifUpload(file);
+}
+
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: maxBodyPhotoBytes },
+  storage: multer.diskStorage({
+    destination: 'uploads/',
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || '');
+      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+    }
+  }),
+  limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype?.startsWith('image/')) return cb(null, true);
-    return cb(new Error('Body photo must be an image file'));
+    cb(null, isAllowedImageUpload(file));
   }
 });
+
+function readableProviderError(value, fallback = 'Profile image generation failed') {
+  if (!value) return fallback;
+  if (typeof value === 'string') return value;
+  if (value instanceof Error) return value.message || fallback;
+  if (Array.isArray(value)) return value.map((item) => readableProviderError(item, fallback)).filter(Boolean).join(' ') || fallback;
+  if (typeof value === 'object') {
+    const nested = value.message || value.detail || value.error || value.errors;
+    if (nested && nested !== value) return readableProviderError(nested, fallback);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return String(value);
+}
+
+function falHeaders() {
+  if (!process.env.FAL_KEY) throw new Error('FAL_KEY is missing on the server');
+  return {
+    Authorization: `Key ${process.env.FAL_KEY}`,
+    'Content-Type': 'application/json'
+  };
+}
+
+async function falJson(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { ...falHeaders(), ...options.headers }
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(readableProviderError(data.detail || data.error || data.message || data, 'FAL profile image request failed'));
+  return data;
+}
+
+async function waitForFalProfileResult(submission) {
+  const statusUrl = submission.status_url;
+  const responseUrl = submission.response_url;
+  if (!statusUrl || !responseUrl) throw new Error('FAL did not return queue URLs');
+
+  const maxAttempts = Number(process.env.FAL_PROFILE_POLL_ATTEMPTS || 120);
+  const pollMs = Number(process.env.FAL_PROFILE_POLL_MS || 1500);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const status = await falJson(statusUrl);
+    if (status.status === 'COMPLETED') return falJson(responseUrl);
+    if (status.status === 'FAILED' || status.error) throw new Error(readableProviderError(status.error || status, 'FAL profile image generation failed'));
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error(`FAL profile image generation timed out after ${Math.round((maxAttempts * pollMs) / 1000)} seconds`);
+}
+
+function firstGeneratedImageUrl(value, depth = 0) {
+  if (!value || depth > 8) return '';
+  if (typeof value === 'string') return /^https?:\/\//i.test(value) || /^data:image\//i.test(value) ? value : '';
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstGeneratedImageUrl(item, depth + 1);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (typeof value !== 'object') return '';
+  for (const key of ['url', 'image_url', 'imageUrl']) {
+    const found = firstGeneratedImageUrl(value[key], depth + 1);
+    if (found) return found;
+  }
+  for (const key of ['images', 'image', 'output', 'result', 'data']) {
+    const found = firstGeneratedImageUrl(value[key], depth + 1);
+    if (found) return found;
+  }
+  for (const child of Object.values(value)) {
+    const found = firstGeneratedImageUrl(child, depth + 1);
+    if (found) return found;
+  }
+  return '';
+}
+
+async function generatedBytesFromUrl(url) {
+  if (/^data:image\//i.test(url)) {
+    const [, metadata = '', base64 = ''] = url.match(/^data:([^;]+);base64,(.+)$/i) || [];
+    if (!base64) throw new Error('Generated profile image data URI was invalid');
+    const bytes = Buffer.from(base64, 'base64');
+    return { bytes, mimetype: metadata || imageMimeTypeFromBuffer(bytes) || 'image/png' };
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      'user-agent': 'Mozilla/5.0 FitLook profile image fetcher'
+    }
+  });
+  if (!response.ok) throw new Error('Could not download generated profile image');
+  const bytes = Buffer.from(await response.arrayBuffer());
+  return { bytes, mimetype: imageMimeTypeFromResponse(response, bytes) };
+}
+
+function fullBodyProfilePrompt() {
+  return [
+    'Create one photorealistic, full-body, head-to-toe image of the exact person shown in the uploaded reference photo, standing upright in a straight front-facing pose, looking directly at the camera. This is a neutral body reference image for an ecommerce virtual clothing try-on app.',
+    'FACE PRESERVATION — ABSOLUTE, NON-NEGOTIABLE RULE: The face must be a 100% exact, unaltered match to the uploaded reference. Do NOT change, redesign, beautify, smooth, slim, age, de-age, or reinterpret the face in any way — not even slightly. Preserve the identical face shape, eyes, eyebrows, nose, lips, jawline, chin, ears, hairline, hairstyle, skin tone, skin texture, and any marks or moles. If the reference face is at a side angle, three-quarter view, or tilted, render it front-facing but reconstruct the SAME face — never substitute a similar or generic face. If the reference face shows any expression, keep the exact same facial features and render a calm, natural, neutral expression — change only the expression, never the features or identity. The output face must be instantly recognizable as the same individual.',
+    'BODY & POSE: Exactly one person, complete full body visible from top of head to soles of feet. Straight, relaxed standing pose, body squared to the camera, arms relaxed at the sides, both hands and all fingers visible, feet slightly apart, weight evenly balanced. If the reference is a selfie, cropped portrait, or half-body photo, generate a plausible realistic full body consistent with the person\'s visible build, age, and skin tone. If the reference shows a seated, turned, angled, or tilted posture, convert it to the straight front-facing standing pose above — without altering the face. No cropping at the head, shoulders, arms, hands, waist, hips, knees, ankles, or feet.',
+    'CLOTHING & SCENE: Simple fitted neutral clothing: plain fitted t-shirt and plain fitted pants in solid neutral colors, plain simple shoes. Clean even studio lighting, soft shadows, sharp focus, realistic proportions, true-to-life skin. Plain seamless neutral background, light gray or off-white.',
+    'DO NOT: Do not modify the face or identity in any way, under any condition. No logos, text, watermarks, accessories, jewelry, hats, sunglasses, bags, or props. No extra people, mirrors, reflections, or duplicated limbs. No stylization, cartoon, illustration, or beauty filters — photorealistic only. Output must be non-sexualized, modest, and suitable as an ecommerce body reference.'
+  ].join(' ');
+}
+
+async function generateFullBodyProfilePhoto(file) {
+  if (!shouldGenerateFullBodyProfile()) return file;
+
+  const inputBuffer = await fs.readFile(file.path);
+  const inputDataUri = `data:${file.mimetype || 'image/jpeg'};base64,${inputBuffer.toString('base64')}`;
+  const model = profileImageModel();
+  const submission = await falJson(`https://queue.fal.run/${model}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      prompt: fullBodyProfilePrompt(),
+      image_urls: [inputDataUri],
+      image_size: { width: 1024, height: 1536 },
+      quality: process.env.FAL_PROFILE_IMAGE_QUALITY || process.env.FAL_IMAGE_QUALITY || 'low',
+      num_images: 1,
+      output_format: 'png'
+    })
+  });
+  const result = await waitForFalProfileResult(submission);
+  const generatedUrl = firstGeneratedImageUrl(result);
+  if (!generatedUrl) throw new Error('FAL did not return a generated full-body profile image');
+
+  const { bytes, mimetype } = await generatedBytesFromUrl(generatedUrl);
+  const filename = `profile-fullbody-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionForMimetype(mimetype)}`;
+  const outputPath = path.join(path.dirname(file.path), filename);
+  await fs.writeFile(outputPath, bytes);
+
+  return {
+    ...file,
+    filename,
+    path: outputPath,
+    mimetype,
+    size: bytes.length
+  };
+}
+
+function isBodyPhotoPreparationError(error) {
+  const message = error?.message || '';
+  return message.includes('HEIC/HEIF') || /FAL|profile image|full-body profile/i.test(message);
+}
+
+async function normalizeBodyPhotoUpload(file) {
+  if (!file || (!isHeicUpload(file) && !isAvifUpload(file))) return file;
+
+  const inputPath = file.path;
+  const parsed = path.parse(file.filename);
+  const filename = `${parsed.name}.jpg`;
+  const outputPath = path.join(path.dirname(inputPath), filename);
+
+  try {
+    const inputBuffer = await fs.readFile(inputPath);
+    const outputBuffer = isAvifUpload(file) || isAvifBuffer(inputBuffer)
+      ? await sharp(inputBuffer).jpeg({ quality: 90 }).toBuffer()
+      : Buffer.from(await heicConvert({
+        buffer: inputBuffer,
+        format: 'JPEG',
+        quality: 0.9
+      }));
+
+    await fs.writeFile(outputPath, outputBuffer);
+    await fs.unlink(inputPath).catch(() => {});
+    const stats = await fs.stat(outputPath);
+    return {
+      ...file,
+      filename,
+      path: outputPath,
+      mimetype: 'image/jpeg',
+      size: stats.size
+    };
+  } catch (error) {
+    await fs.unlink(outputPath).catch(() => {});
+    throw new Error('Could not convert the AVIF/HEIC/HEIF profile photo. Please try another image.');
+  }
+}
+
+async function bodyPhotoFromUpload(file, { generateFullBody = true } = {}) {
+  const normalized = await normalizeBodyPhotoUpload(file);
+  return {
+    filename: normalized.filename,
+    path: `uploads/${normalized.filename}`,
+    mimetype: normalized.mimetype,
+    size: normalized.size,
+    status: generateFullBody ? 'generating' : 'ready',
+    source: generateFullBody ? 'upload' : 'exact-upload'
+  };
+}
+
+function localFileFromBodyPhoto(bodyPhoto) {
+  return {
+    filename: bodyPhoto.filename,
+    path: bodyPhoto.path,
+    mimetype: bodyPhoto.mimetype,
+    size: bodyPhoto.size
+  };
+}
+
+async function generateFullBodyProfileInBackground(userId, sourceBodyPhoto, { enabled = true } = {}) {
+  if (!enabled || !shouldGenerateFullBodyProfile()) return;
+
+  setImmediate(async () => {
+    try {
+      console.log('[profile-fullbody] start', { userId: userId.toString(), source: sourceBodyPhoto.path });
+      const generated = await generateFullBodyProfilePhoto(localFileFromBodyPhoto(sourceBodyPhoto));
+      const generatedBodyPhoto = {
+        filename: generated.filename,
+        path: `uploads/${generated.filename}`,
+        mimetype: generated.mimetype,
+        size: generated.size,
+        status: 'ready',
+        source: 'fal-full-body',
+        generatedAt: new Date()
+      };
+
+      const updated = await User.findOneAndUpdate(
+        { _id: userId, 'bodyPhoto.path': sourceBodyPhoto.path },
+        { $set: { bodyPhoto: generatedBodyPhoto } },
+        { new: true }
+      );
+
+      if (updated) {
+        await fs.unlink(sourceBodyPhoto.path).catch(() => {});
+        console.log('[profile-fullbody] done', { userId: userId.toString(), path: generatedBodyPhoto.path });
+      } else {
+        await fs.unlink(generated.path).catch(() => {});
+        console.log('[profile-fullbody] skipped stale result', { userId: userId.toString() });
+      }
+    } catch (error) {
+      const message = readableProviderError(error, 'Could not generate full-body profile image');
+      await User.findOneAndUpdate(
+        { _id: userId, 'bodyPhoto.path': sourceBodyPhoto.path },
+        { $set: { 'bodyPhoto.status': 'failed', 'bodyPhoto.error': message } }
+      );
+      console.error('[profile-fullbody] failed', { userId: userId.toString(), error: message });
+    }
+  });
+}
 
 function sign(user) {
   return jwt.sign({ sub: user._id.toString() }, process.env.JWT_SECRET, { expiresIn: '14d' });
 }
 
-function bodyPhotoUpload(req, res, next) {
-  upload.single('bodyPhoto')(req, res, (error) => {
-    if (!error) return next();
-    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ message: `Body photo must be under ${Math.round(maxBodyPhotoBytes / 1024 / 1024)} MB` });
-    }
-    return res.status(400).json({ message: error.message || 'Body photo could not be uploaded' });
-  });
+function normalizeUsername(value = '') {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '');
 }
 
-function extensionFor(file) {
-  const fromName = path.extname(file.originalname || '').toLowerCase().replace(/[^.\w-]/g, '');
-  if (fromName) return fromName;
-  if (file.mimetype === 'image/png') return '.png';
-  if (file.mimetype === 'image/webp') return '.webp';
-  if (file.mimetype === 'image/heic') return '.heic';
-  return '.jpg';
+function parseBoolean(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
 }
 
-async function saveBodyPhoto(userId, file) {
-  const filename = `body-photo-${Date.now()}${extensionFor(file)}`;
-  const storedPath = path.posix.join('uploads', 'users', userId.toString(), 'profile', filename);
-  const localPath = path.join(rootDir, ...storedPath.split('/'));
-  await fs.mkdir(path.dirname(localPath), { recursive: true });
-  await fs.writeFile(localPath, file.buffer);
-  return {
-    filename: file.originalname || filename,
-    path: storedPath,
-    mimetype: file.mimetype,
-    size: file.size,
-    storage: 'disk'
-  };
+function usernameFromName(value = '') {
+  return normalizeUsername(
+    String(value)
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+  );
 }
 
-async function removeStoredBodyPhoto(photo) {
-  if (!photo?.path || photo.storage === 'mongodb') return;
-  const localPath = path.resolve(rootDir, photo.path);
-  if (!localPath.startsWith(rootDir)) return;
-  try {
-    await fs.unlink(localPath);
-  } catch (error) {
-    if (error?.code !== 'ENOENT') console.warn('Could not remove old body photo:', error.message);
+async function uniqueUsername(seed) {
+  const base = usernameFromName(seed) || 'fitlook_user';
+  for (let index = 0; index < 20; index += 1) {
+    const candidate = index === 0 ? base : `${base}${Math.floor(100 + Math.random() * 9000)}`;
+    const existing = await User.exists({ username: candidate });
+    if (!existing) return candidate;
   }
+  return `${base}${Date.now().toString().slice(-6)}`;
 }
 
 async function requireUser(req, res, next) {
@@ -78,7 +367,7 @@ async function requireUser(req, res, next) {
     const token = header.startsWith('Bearer ') ? header.slice(7) : null;
     if (!token) return res.status(401).json({ message: 'Authentication required' });
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.sub).select('-bodyPhoto.data');
+    const user = await User.findById(decoded.sub);
     if (!user) return res.status(401).json({ message: 'User not found' });
     req.user = user;
     next();
@@ -87,90 +376,97 @@ async function requireUser(req, res, next) {
   }
 }
 
-router.post('/signup', bodyPhotoUpload, async (req, res) => {
+router.post('/signup', upload.single('bodyPhoto'), async (req, res) => {
   const { name, email, password } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ message: 'Name, email, and password are required' });
+  const username = normalizeUsername(req.body.username) || await uniqueUsername(name);
+  const genderPreference = normalizeGenderPreference(req.body.genderPreference);
+  if (!name || !email || !password || !username || !genderPreference) return res.status(400).json({ message: 'Name, username, email, gender preference, and password are required' });
+  if (username.length < 3) return res.status(400).json({ message: 'Username must be at least 3 characters' });
   if (!req.file) return res.status(400).json({ message: 'Full-body photo is required' });
 
-  try {
-    const existing = await User.findOne({ email: email.toLowerCase() });
-    if (existing) return res.status(409).json({ message: 'An account already exists for this email' });
+  const existing = await User.findOne({
+    $or: [
+      { email: email.toLowerCase() },
+      { username }
+    ]
+  });
+  if (existing?.email === email.toLowerCase()) return res.status(409).json({ message: 'An account already exists for this email' });
+  if (existing?.username === username) return res.status(409).json({ message: 'This username is already taken' });
 
-    const user = new User({
+  try {
+    const generateFullBody = shouldGenerateFullBodyProfileForRequest(req);
+    const bodyPhoto = await bodyPhotoFromUpload(req.file, { generateFullBody });
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = await User.create({
       name,
       email,
-      passwordHash: await bcrypt.hash(password, 12)
+      username,
+      genderPreference,
+      passwordHash,
+      devMode: parseBoolean(req.body.devMode),
+      bodyPhoto
     });
-    user.bodyPhoto = await saveBodyPhoto(user._id, req.file);
-    await user.save();
 
+    generateFullBodyProfileInBackground(user._id, bodyPhoto, { enabled: generateFullBody });
     res.status(201).json({ token: sign(user), user: user.toClient() });
   } catch (error) {
-    console.error('Signup failed:', error);
-    if (error?.code === 11000) {
-      return res.status(409).json({ message: 'An account already exists for this email' });
-    }
-    if (error?.name === 'ValidationError') {
-      return res.status(400).json({ message: error.message || 'Signup details are invalid' });
-    }
-    res.status(500).json({ message: 'Could not create account right now' });
+    if (isBodyPhotoPreparationError(error)) return res.status(400).json({ message: error.message });
+    if (error.code === 11000 && error.keyPattern?.username) return res.status(409).json({ message: 'This username is already taken' });
+    if (error.code === 11000 && error.keyPattern?.email) return res.status(409).json({ message: 'An account already exists for this email' });
+    throw error;
   }
 });
 
-router.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ message: 'Email and password are required' });
-    const user = await User.findOne({ email: email.toLowerCase() }).select('-bodyPhoto.data');
-    if (!user?.passwordHash) return res.status(401).json({ message: 'Invalid email or password' });
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) return res.status(401).json({ message: 'Invalid email or password' });
-    res.json({ token: sign(user), user: user.toClient() });
-  } catch (error) {
-    console.error('Login failed:', error);
-    res.status(500).json({ message: 'Could not log in right now' });
+router.get('/username-suggestions', async (req, res) => {
+  const base = usernameFromName(req.query.name) || 'fitlook_user';
+  const suggestions = [];
+  for (let index = 0; suggestions.length < 4 && index < 20; index += 1) {
+    const candidate = index === 0 ? base : `${base}${Math.floor(100 + Math.random() * 9000)}`;
+    const existing = await User.exists({ username: candidate });
+    if (!existing && !suggestions.includes(candidate)) suggestions.push(candidate);
   }
+  res.json({ suggestions });
+});
+
+router.post('/login', async (req, res) => {
+  const identifier = String(req.body.email || req.body.username || '').trim().toLowerCase();
+  const { password } = req.body;
+  if (!identifier || !password) return res.status(400).json({ message: 'Email or username and password are required' });
+  const user = await User.findOne({
+    $or: [
+      { email: identifier },
+      { username: normalizeUsername(identifier) }
+    ]
+  });
+  if (!user) return res.status(401).json({ message: 'Invalid email/username or password' });
+  const ok = await bcrypt.compare(password, user.passwordHash);
+  if (!ok) return res.status(401).json({ message: 'Invalid email/username or password' });
+  res.json({ token: sign(user), user: user.toClient() });
 });
 
 router.get('/me', requireUser, (req, res) => {
   res.json({ user: req.user.toClient() });
 });
 
-router.put('/me', requireUser, bodyPhotoUpload, async (req, res) => {
-  if (!req.file) return res.status(400).json({ message: 'Choose a new full-body photo first' });
-
-  try {
-    const oldPhoto = req.user.bodyPhoto?.toObject ? req.user.bodyPhoto.toObject() : req.user.bodyPhoto;
-    const bodyPhoto = await saveBodyPhoto(req.user._id, req.file);
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { bodyPhoto, tryOnCache: [] },
-      { new: true, runValidators: true }
-    ).select('-bodyPhoto.data');
-
-    await Promise.all([
-      TryOn.deleteMany({ user: req.user._id }),
-      ExternalTryOn.deleteMany({ user: req.user._id }),
-      removeStoredBodyPhoto(oldPhoto)
-    ]);
-
-    res.json({ user: user.toClient(), invalidatedTryOns: true });
-  } catch (error) {
-    console.error('Profile update failed:', error);
-    if (error?.name === 'ValidationError') {
-      return res.status(400).json({ message: error.message || 'Profile details are invalid' });
-    }
-    res.status(500).json({ message: 'Could not update profile right now' });
-  }
+router.patch('/dev-mode', requireUser, async (req, res) => {
+  req.user.devMode = parseBoolean(req.body?.devMode);
+  await req.user.save();
+  res.json({ user: req.user.toClient() });
 });
 
-router.get('/me/body-photo', requireUser, async (req, res) => {
-  const user = await User.findById(req.user._id).select('bodyPhoto');
-  const photo = user?.bodyPhoto;
-  if (!photo?.data) return res.status(404).json({ message: 'Body photo is not stored in MongoDB' });
-  res.type(photo.mimetype || 'image/jpeg');
-  res.set('Cache-Control', 'private, max-age=3600');
-  res.send(photo.data);
+router.post('/body-photo', requireUser, upload.single('bodyPhoto'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'Upload a profile photo first' });
+  try {
+    const generateFullBody = shouldGenerateFullBodyProfileForRequest(req);
+    const bodyPhoto = await bodyPhotoFromUpload(req.file, { generateFullBody });
+    req.user.bodyPhoto = bodyPhoto;
+    await req.user.save();
+    generateFullBodyProfileInBackground(req.user._id, bodyPhoto, { enabled: generateFullBody });
+    res.json({ user: req.user.toClient() });
+  } catch (error) {
+    if (isBodyPhotoPreparationError(error)) return res.status(400).json({ message: error.message });
+    throw error;
+  }
 });
 
 export default router;

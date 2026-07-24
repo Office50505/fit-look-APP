@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -32,7 +33,7 @@ const sortOptions = [
   ['price-asc', 'Price low'],
   ['price-desc', 'Price high']
 ];
-const validRoutes = new Set(['auth', 'home', 'shop', 'tryon', 'custom', 'vto', 'stylebot', 'tokens', 'profile', 'product', 'signup', 'login', 'how', 'info']);
+const validRoutes = new Set(['auth', 'home', 'shop', 'tryon', 'closet', 'custom', 'stylebot', 'tokens', 'profile', 'product', 'signup', 'login', 'how', 'info']);
 
 function normalizeRoute(name, params = {}) {
   const routeName = typeof name === 'string' && validRoutes.has(name) ? name : 'home';
@@ -78,6 +79,12 @@ function titleCase(value = '') {
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+}
+
+function dateInputValue(value = new Date()) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
 }
 
 function productImageSource(product, tryOn) {
@@ -132,7 +139,34 @@ function useProducts(params, token) {
   return { ...state, reload: load };
 }
 
+function useApiState(path, token, enabled = true, emptyData = {}) {
+  const [state, setState] = useState({ data: emptyData, loading: Boolean(enabled), error: '' });
+
+  const load = useCallback(() => {
+    if (!enabled || !path) {
+      setState({ data: emptyData, loading: false, error: '' });
+      return undefined;
+    }
+    let alive = true;
+    setState((current) => ({ ...current, loading: true, error: '' }));
+    api(path)
+      .then((data) => {
+        if (alive) setState({ data: data || emptyData, loading: false, error: '' });
+      })
+      .catch((error) => {
+        if (alive) setState({ data: emptyData, loading: false, error: error.message });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [path, token, enabled]);
+
+  useEffect(load, [load]);
+  return { ...state, reload: load };
+}
+
 function tryOnModelLabel(value) {
+  if (String(value || '').includes('fitroom')) return 'FitRoom';
   if (value === 'vto-unrestricted') return 'VTO model';
   if (value === 'wan-v2.6-image-to-image') return 'WAN 2.6 image';
   if (value === 'wan-v2.2-image-to-image') return 'WAN 2.2 image';
@@ -210,6 +244,7 @@ function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
             <Text style={styles.brand}>FitLook</Text>
           </Pressable>
           <Text style={styles.headerSub}>{user?.devMode ? 'Dev Mode active' : user ? `${user.tokens} tokens ready` : 'AI fitting room'}</Text>
+          {user?.bodyPhotoStatus === 'generating' ? <Text style={styles.headerNotice}>Profile preparing</Text> : null}
         </View>
       </View>
       <View style={styles.headerActions}>
@@ -241,8 +276,8 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
     ['home', 'home-outline', 'Home'],
     ['shop', 'search-outline', 'Shop'],
     ['tryon', 'shirt-outline', 'Try-On'],
+    ['closet', 'grid-outline', 'Closet'],
     ['stylebot', 'chatbubble-ellipses-outline', 'Bot'],
-    ['custom', 'image-outline', 'Custom'],
     ['profile', 'person-outline', 'Profile']
   ];
   return (
@@ -295,16 +330,22 @@ function StatusPanel({ loading, error, empty, text }) {
   return null;
 }
 
-function ProductCard({ product, tryOn, loading, error, locked, onPress, onTryOn }) {
+function ProductCard({ product, tryOn, loading, videoLoading, error, videoError, locked, onPress, onTryOn, onTryOnVideo }) {
   const hasDiscount = product?.compareAtPrice && product.compareAtPrice > product.price;
   const discount = hasDiscount ? `${Math.round(((product.compareAtPrice - product.price) / product.compareAtPrice) * 100)}% off` : '';
+  const videoUri = imageUrl(tryOn?.videoUrl);
+  const hasTryOnImage = Boolean(tryOn?.imageUrl);
   return (
     <Pressable style={[styles.productCard, locked && styles.lockedCard]} onPress={locked ? undefined : onPress}>
       <View style={styles.productImageWrap}>
-        <Image source={productImageSource(product, tryOn)} style={styles.productImage} resizeMode={productImageResizeMode(tryOn)} />
+        {videoUri ? (
+          <TryOnVideoPlayer uri={videoUri} style={styles.productImage} nativeControls={false} />
+        ) : (
+          <Image source={productImageSource(product, tryOn)} style={styles.productImage} resizeMode={productImageResizeMode(tryOn)} />
+        )}
         {locked ? <View style={styles.lockOverlay}><Ionicons name="lock-closed" size={22} color="#fff" /></View> : null}
-        {tryOn?.imageUrl ? <Text style={styles.badge}>AI Try-On</Text> : product?.badge ? <Text style={styles.badge}>{product.badge}</Text> : null}
-        {loading ? <TryOnLoading text="Generating" /> : null}
+        {hasTryOnImage ? <Text style={styles.badge}>{videoUri ? 'Video Try-On' : 'AI Try-On'}</Text> : product?.badge ? <Text style={styles.badge}>{product.badge}</Text> : null}
+        {loading || videoLoading ? <TryOnLoading text={videoLoading ? 'Video' : 'Generating'} /> : null}
       </View>
       <View style={styles.productBody}>
         <Text style={styles.productTitle} numberOfLines={2}>{product?.name || 'Product'}</Text>
@@ -319,14 +360,25 @@ function ProductCard({ product, tryOn, loading, error, locked, onPress, onTryOn 
         </View>
         {onTryOn ? (
           <AppButton
-            label={tryOn?.imageUrl ? 'Try-On Ready' : loading ? 'Generating...' : 'Try On'}
+            label={hasTryOnImage ? 'Try-On Ready' : loading ? 'Generating...' : 'Try On'}
             icon="sparkles-outline"
-            disabled={loading || Boolean(tryOn?.imageUrl)}
+            disabled={loading || hasTryOnImage}
             onPress={onTryOn}
             style={styles.cardButton}
           />
         ) : null}
+        {hasTryOnImage && onTryOnVideo ? (
+          <AppButton
+            label={videoLoading ? 'Video...' : videoUri ? 'New Video' : 'Video Try-On'}
+            icon="videocam-outline"
+            variant="secondary"
+            disabled={loading || videoLoading}
+            onPress={onTryOnVideo}
+            style={styles.cardButton}
+          />
+        ) : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {videoError ? <Text style={styles.errorText}>{videoError}</Text> : null}
       </View>
     </Pressable>
   );
@@ -361,9 +413,19 @@ function ProductRow({ title, state, onNavigate, user, token }) {
 function HomeScreen({ onNavigate, user, token }) {
   const trending = useProducts({ limit: 6 }, token);
   const arrivals = useProducts({ newArrival: 'true', sort: 'newest', limit: 6 }, token);
+  const recommended = useApiState('/recommendations/for-you?limit=6', token, Boolean(user), { products: [] });
+  const recommendedState = {
+    products: recommended.data.products || [],
+    total: recommended.data.products?.length || 0,
+    loading: recommended.loading,
+    error: recommended.error
+  };
   return (
     <ScrollView contentContainerStyle={styles.scrollContent}>
       <Hero onNavigate={onNavigate} />
+      {user && (recommended.loading || recommendedState.products.length > 0) ? (
+        <ProductRow title="Recommended For You" state={recommendedState} onNavigate={onNavigate} user={user} token={token} />
+      ) : null}
       <ProductRow title="Trending Now" state={trending} onNavigate={onNavigate} user={user} token={token} />
       <ProductRow title="New Arrivals" state={arrivals} onNavigate={onNavigate} user={user} token={token} />
       <View style={styles.section}>
@@ -455,6 +517,25 @@ function FilterDropdown({ label, selected, options, onSelect }) {
   );
 }
 
+function TryOnVideoPlayer({ uri, style, nativeControls = true }) {
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.loop = true;
+    instance.muted = true;
+    instance.play();
+  });
+
+  return (
+    <VideoView
+      player={player}
+      style={style || styles.detailVideo}
+      nativeControls={nativeControls}
+      contentFit="contain"
+      allowsFullscreen
+      allowsPictureInPicture
+    />
+  );
+}
+
 function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate }) {
   const [draft, setDraft] = useState(initial.q || '');
   const [filters, setFilters] = useState({
@@ -467,7 +548,9 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate 
   });
   const [continueWithoutTryOn, setContinueWithoutTryOn] = useState(false);
   const [tryOnLoading, setTryOnLoading] = useState({});
+  const [tryOnVideoLoading, setTryOnVideoLoading] = useState({});
   const [tryOnErrors, setTryOnErrors] = useState({});
+  const [tryOnVideoErrors, setTryOnVideoErrors] = useState({});
   const autoKey = useRef('');
   const state = useProducts({ ...filters, limit: 60 }, token);
   const [tryOns, setTryOns] = useTryOns(user, state.products, token);
@@ -519,6 +602,25 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate 
       setTryOnLoading((current) => ({ ...current, [product.id]: false }));
     }
   }, [user, tryOnLoading, tryOns]);
+
+  const generateTryOnVideo = useCallback(async (product) => {
+    const existing = tryOns[product?.id];
+    if (!user || !product?.id || tryOnVideoLoading[product.id] || !existing?.imageUrl) return;
+    setTryOnVideoLoading((current) => ({ ...current, [product.id]: true }));
+    setTryOnVideoErrors((current) => ({ ...current, [product.id]: '' }));
+    try {
+      const data = await api(`/tryons/${product.id}/video`, {
+        method: 'POST',
+        body: existing.videoUrl ? JSON.stringify({ force: true }) : undefined
+      });
+      setTryOns((current) => ({ ...current, [product.id]: data.tryOn }));
+      if (data.user) setUser(data.user);
+    } catch (error) {
+      setTryOnVideoErrors((current) => ({ ...current, [product.id]: error.message }));
+    } finally {
+      setTryOnVideoLoading((current) => ({ ...current, [product.id]: false }));
+    }
+  }, [user, tryOnVideoLoading, tryOns]);
 
   useEffect(() => {
     if (!user || tryOnMode || !hasSearchIntent || continueWithoutTryOn || state.loading || trialProducts.length === 0) return;
@@ -580,9 +682,12 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate 
             product={product}
             tryOn={tryOns[product.id]}
             loading={Boolean(tryOnLoading[product.id])}
+            videoLoading={Boolean(tryOnVideoLoading[product.id])}
             error={tryOnErrors[product.id]}
+            videoError={tryOnVideoErrors[product.id]}
             onPress={() => onNavigate('product', { id: product.id })}
             onTryOn={allowTryOnTrial && index < 4 ? () => generateTryOn(product) : undefined}
+            onTryOnVideo={allowTryOnTrial && tryOns[product.id]?.imageUrl ? () => generateTryOnVideo(product) : undefined}
           />
         ))}
       </View>
@@ -605,7 +710,9 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
   const [state, setState] = useState({ product: null, loading: true, error: '' });
   const [tryOn, setTryOn] = useState(null);
   const [tryOnLoading, setTryOnLoading] = useState(false);
+  const [tryOnVideoLoading, setTryOnVideoLoading] = useState(false);
   const [tryOnError, setTryOnError] = useState('');
+  const [tryOnVideoError, setTryOnVideoError] = useState('');
   const [lightbox, setLightbox] = useState(null);
   const related = useProducts({ category: state.product?.category || '', limit: 5 }, token);
   const relatedProducts = related.products.filter((item) => item.id !== id).slice(0, 4);
@@ -655,6 +762,28 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
     }
   };
 
+  const generateVideo = async () => {
+    if (!user) {
+      onNavigate('signup');
+      return;
+    }
+    if (tryOnVideoLoading || !tryOn?.imageUrl || !state.product?.id) return;
+    setTryOnVideoLoading(true);
+    setTryOnVideoError('');
+    try {
+      const data = await api(`/tryons/${state.product.id}/video`, {
+        method: 'POST',
+        body: tryOn?.videoUrl ? JSON.stringify({ force: true }) : undefined
+      });
+      setTryOn(data.tryOn);
+      if (data.user) setUser(data.user);
+    } catch (error) {
+      setTryOnVideoError(error.message);
+    } finally {
+      setTryOnVideoLoading(false);
+    }
+  };
+
   if (state.loading || state.error || !state.product) {
     return (
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -669,7 +798,9 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
   const mediaHeight = Math.min(640, Math.max(500, Math.round(mediaWidth * 1.42)));
   const originalUri = imageUrl(product.imageUrl);
   const tryOnUri = imageUrl(tryOn?.imageUrl);
+  const tryOnVideoUri = imageUrl(tryOn?.videoUrl);
   const mediaItems = [
+    tryOnVideoUri ? { key: 'video', label: 'Video Try-On', type: 'video', uri: tryOnVideoUri } : null,
     tryOnUri ? { key: 'tryon', label: 'AI Try-On', source: { uri: tryOnUri }, uri: tryOnUri } : null,
     { key: 'original', label: 'Original Product', source: originalUri ? { uri: originalUri } : images.hero, uri: originalUri }
   ].filter(Boolean);
@@ -683,8 +814,12 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
           contentContainerStyle={styles.detailMediaTrack}
         >
           {mediaItems.map((item, index) => (
-            <Pressable key={item.key} style={[styles.detailSlide, { width: mediaWidth }]} onPress={() => item.uri && setLightbox(item.uri)}>
-              <Image source={item.source} style={styles.detailImage} resizeMode="contain" />
+            <Pressable key={item.key} style={[styles.detailSlide, { width: mediaWidth }]} onPress={() => item.type !== 'video' && item.uri && setLightbox(item.uri)}>
+              {item.type === 'video' ? (
+                <TryOnVideoPlayer uri={item.uri} />
+              ) : (
+                <Image source={item.source} style={styles.detailImage} resizeMode="contain" />
+              )}
               <Text style={styles.detailImageBadge}>{item.label}</Text>
               {mediaItems.length > 1 ? <Text style={styles.detailImageCount}>{index + 1}/{mediaItems.length}</Text> : null}
             </Pressable>
@@ -696,7 +831,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
             <Text style={styles.detailSwipeText}>Slide to compare</Text>
           </View>
         ) : null}
-        {tryOnLoading ? <TryOnLoading text="Generating try-on" large /> : null}
+        {tryOnLoading || tryOnVideoLoading ? <TryOnLoading text={tryOnVideoLoading ? 'Generating video' : 'Generating try-on'} large /> : null}
       </View>
       <View style={styles.detailBody}>
         <Text style={styles.kicker}>{product.brand}</Text>
@@ -737,8 +872,18 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
             disabled={tryOnLoading || Boolean(tryOn?.imageUrl)}
             onPress={generate}
           />
+          {user && tryOn?.imageUrl ? (
+            <AppButton
+              label={tryOnVideoLoading ? 'Generating Video...' : tryOn?.videoUrl ? 'Generate Video Again' : 'Generate Video Try-On'}
+              icon="videocam-outline"
+              variant="secondary"
+              disabled={tryOnLoading || tryOnVideoLoading}
+              onPress={generateVideo}
+            />
+          ) : null}
         </View>
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
+        {tryOnVideoError ? <Text style={styles.errorText}>{tryOnVideoError}</Text> : null}
       </View>
       {relatedProducts.length ? (
         <View style={styles.section}>
@@ -766,15 +911,47 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
 function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   const isSignup = mode === 'signup';
   const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
+  const [usernameTouched, setUsernameTouched] = useState(false);
+  const [usernameSuggestions, setUsernameSuggestions] = useState([]);
+  const [genderPreference, setGenderPreference] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [photo, setPhoto] = useState(null);
+  const [profilePhotoMode, setProfilePhotoMode] = useState('ai-full-body');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    if (!isSignup) return undefined;
+    const cleanName = name.trim();
+    if (!cleanName) {
+      setUsernameSuggestions([]);
+      if (!usernameTouched) setUsername('');
+      return undefined;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      api(`/auth/username-suggestions?name=${encodeURIComponent(cleanName)}`)
+        .then((data) => {
+          if (!alive) return;
+          const suggestions = data.suggestions || [];
+          setUsernameSuggestions(suggestions);
+          if (!usernameTouched && suggestions[0]) setUsername(suggestions[0]);
+        })
+        .catch(() => {
+          if (alive) setUsernameSuggestions([]);
+        });
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [isSignup, name, usernameTouched]);
+
   const submit = async () => {
-    if (!email || !password || (isSignup && (!name || !photo))) {
-      setMessage(isSignup ? 'Name, email, password, and body photo are required.' : 'Email and password are required.');
+    if (!email || !password || (isSignup && (!name || !username || !genderPreference || !photo))) {
+      setMessage(isSignup ? 'Name, username, gender preference, email, password, and profile photo are required.' : 'Email/username and password are required.');
       return;
     }
     setLoading(true);
@@ -783,8 +960,11 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       const body = isSignup ? new FormData() : JSON.stringify({ email, password });
       if (isSignup) {
         body.append('name', name);
+        body.append('username', username);
+        body.append('genderPreference', genderPreference);
         body.append('email', email);
         body.append('password', password);
+        body.append('profilePhotoMode', profilePhotoMode);
         body.append('bodyPhoto', filePart(photo, 'body-photo.jpg'));
       }
       const data = await api(isSignup ? '/auth/signup' : '/auth/login', { method: 'POST', body });
@@ -805,24 +985,61 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
         <View style={styles.authCard}>
           <Text style={styles.kicker}>{isSignup ? 'Create Profile' : 'Welcome Back'}</Text>
           <Text style={styles.authTitle}>{isSignup ? 'Build your AI fitting room.' : 'Log in to your fitting room.'}</Text>
-          <Text style={styles.description}>{isSignup ? 'Upload one clear standing photo so FitLook can generate realistic outfit previews.' : 'Continue browsing, unlock saved looks, and generate AI previews.'}</Text>
+          <Text style={styles.description}>{isSignup ? 'Upload a selfie or body photo. FitLook can create a full-body profile for realistic outfit previews.' : 'Continue browsing, unlock saved looks, and generate AI previews.'}</Text>
           {isSignup ? <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Full name" placeholderTextColor="#94a3b8" /> : null}
-          <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder="Email address" autoCapitalize="none" keyboardType="email-address" placeholderTextColor="#94a3b8" />
+          {isSignup ? (
+            <>
+              <TextInput
+                style={styles.input}
+                value={username}
+                onChangeText={(value) => {
+                  setUsernameTouched(true);
+                  setUsername(value.toLowerCase().replace(/[^a-z0-9_]/g, ''));
+                }}
+                placeholder="Username"
+                autoCapitalize="none"
+                placeholderTextColor="#94a3b8"
+              />
+              {usernameSuggestions.length ? <FilterChips selected={username} options={usernameSuggestions.map((item) => [item, item])} onSelect={(item) => { setUsernameTouched(true); setUsername(item); }} compact /> : null}
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Gender preference</Text>
+                <FilterChips
+                  selected={genderPreference}
+                  options={[['male', 'Male'], ['female', 'Female'], ['other', 'Other']]}
+                  onSelect={setGenderPreference}
+                  compact
+                />
+              </View>
+            </>
+          ) : null}
+          <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder={isSignup ? 'Email address' : 'Email or username'} autoCapitalize="none" keyboardType={isSignup ? 'email-address' : 'default'} placeholderTextColor="#94a3b8" />
           <TextInput style={styles.input} value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry placeholderTextColor="#94a3b8" />
           {isSignup ? (
-            <TouchableOpacity style={styles.uploadBox} onPress={async () => setPhoto(await pickImage())}>
-              {photo?.uri ? <Image source={{ uri: photo.uri }} style={styles.uploadPreview} /> : <Ionicons name="cloud-upload-outline" size={30} color="#0f766e" />}
-              <View style={styles.uploadCopy}>
-                <Text style={styles.uploadTitle}>{photo ? 'Body photo selected' : 'Upload a clear standing photo'}</Text>
-                <View style={styles.photoGuide}>
-                  <Text style={styles.photoGuideTitle}>Best photo for AI try-on</Text>
-                  <Text style={styles.photoGuideText}>Use a single-person, full-body photo from head to shoes.</Text>
-                  <Text style={styles.photoGuideText}>Stand facing the camera with your face clearly visible.</Text>
-                  <Text style={styles.photoGuideText}>Choose bright lighting and a simple background.</Text>
-                  <Text style={styles.photoGuideText}>Avoid mirror selfies, heavy filters, group photos, cropped bodies, or covered faces.</Text>
+            <>
+              <TouchableOpacity style={styles.uploadBox} onPress={async () => setPhoto(await pickImage())}>
+                {photo?.uri ? <Image source={{ uri: photo.uri }} style={styles.uploadPreview} /> : <Ionicons name="cloud-upload-outline" size={30} color="#0f766e" />}
+                <View style={styles.uploadCopy}>
+                  <Text style={styles.uploadTitle}>{photo ? 'Profile photo selected' : 'Upload a selfie or photo'}</Text>
+                  <View style={styles.photoGuide}>
+                    <Text style={styles.photoGuideTitle}>Best photo for AI try-on</Text>
+                    <Text style={styles.photoGuideText}>Use a single-person selfie, portrait, or body photo.</Text>
+                    <Text style={styles.photoGuideText}>Face the camera with your face clearly visible.</Text>
+                    <Text style={styles.photoGuideText}>Choose bright lighting and a simple background.</Text>
+                    <Text style={styles.photoGuideText}>Avoid heavy filters, group photos, covered faces, or very blurry images.</Text>
+                  </View>
                 </View>
+              </TouchableOpacity>
+              <View style={styles.formGroup}>
+                <Text style={styles.formLabel}>Profile photo mode</Text>
+                <FilterChips
+                  selected={profilePhotoMode}
+                  options={[['ai-full-body', 'Create full-body AI profile'], ['exact', 'Use exact photo']]}
+                  onSelect={setProfilePhotoMode}
+                  compact
+                  wrap
+                />
               </View>
-            </TouchableOpacity>
+            </>
           ) : null}
           <AppButton label={loading ? 'Working...' : isSignup ? 'Create Account' : 'Log In'} icon="person-outline" disabled={loading} onPress={submit} />
           {message ? <Text style={[styles.formMessage, message === 'Working...' ? null : styles.errorText]}>{message}</Text> : null}
@@ -861,9 +1078,733 @@ function AuthEntryScreen({ onNavigate }) {
   );
 }
 
+const closetCategories = ['tops', 'bottoms', 'dresses', 'suits', 'outerwear', 'shoes', 'accessories', 'activewear', 'ethnic', 'other'];
+const closetOccasions = ['today casual', 'office meeting', 'date night', 'party', 'wedding function', 'college day', 'travel', 'rainy weather'];
+const closetSceneOptions = {
+  backdrop: ['neutral studio', 'office lobby', 'cafe', 'outdoor street', 'wedding venue'],
+  pose: ['front facing', 'relaxed standing', 'walking pose', 'three-quarter angle'],
+  lighting: ['natural light', 'studio softbox', 'evening warm', 'bright daylight']
+};
+const closetComboSlots = [
+  { key: 'topwear', label: 'Topwear', helper: 'Shirts, tops, kurtas', short: 'To', categories: ['tops', 'outerwear', 'ethnic'] },
+  { key: 'bottomwear', label: 'Bottomwear', helper: 'Pants, denim, skirts', short: 'Bo', categories: ['bottoms'] },
+  { key: 'goggles', label: 'Goggles', helper: 'Glasses and shades', short: 'Go', categories: ['accessories'], keywords: ['goggle', 'goggles', 'glass', 'glasses', 'sunglass', 'eyewear'] },
+  { key: 'cap', label: 'Cap', helper: 'Caps and hats', short: 'Ca', categories: ['accessories'], keywords: ['cap', 'hat'] },
+  { key: 'footwear', label: 'Footwear', helper: 'Shoes, boots, sandals', short: 'Fo', categories: ['shoes'] }
+];
+
+function slotMatchesItem(slot, item, strict = false) {
+  if (!slot?.categories?.includes(item?.category)) return false;
+  if (!slot.keywords?.length) return true;
+  const text = [item.name, item.category, item.color, item.formality, ...(item.tags || []), ...(item.occasions || [])]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  const keywordMatch = slot.keywords.some((keyword) => text.includes(keyword));
+  return strict ? keywordMatch : keywordMatch || slot.categories.includes(item.category);
+}
+
+function optionsForSlot(slot, items) {
+  const exactOptions = items.filter((item) => slotMatchesItem(slot, item, true));
+  return exactOptions.length ? exactOptions : items.filter((item) => slotMatchesItem(slot, item));
+}
+
+function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
+  const emptyCloset = { items: [], outfits: [], suggestions: [], stats: {} };
+  const closet = useApiState('/closet', token, Boolean(user), emptyCloset);
+  const [closetView, setClosetView] = useState('stylist');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [comboSlots, setComboSlots] = useState({});
+  const [activeSlot, setActiveSlot] = useState('topwear');
+  const [filter, setFilter] = useState('all');
+  const [itemPhoto, setItemPhoto] = useState(null);
+  const [itemName, setItemName] = useState('');
+  const [itemCategory, setItemCategory] = useState('tops');
+  const [itemColor, setItemColor] = useState('');
+  const [itemFabric, setItemFabric] = useState('');
+  const [itemPattern, setItemPattern] = useState('');
+  const [itemSeason, setItemSeason] = useState('all-season');
+  const [itemFormality, setItemFormality] = useState('any');
+  const [itemOccasions, setItemOccasions] = useState('');
+  const [itemTags, setItemTags] = useState('');
+  const [occasion, setOccasion] = useState('today casual');
+  const [weather, setWeather] = useState('');
+  const [mood, setMood] = useState('');
+  const [plannedFor, setPlannedFor] = useState(dateInputValue());
+  const [backdrop, setBackdrop] = useState('neutral studio');
+  const [pose, setPose] = useState('front facing');
+  const [lighting, setLighting] = useState('natural light');
+  const [stylistText, setStylistText] = useState('');
+  const [chat, setChat] = useState([
+    { role: 'assistant', text: 'Ask what to wear today, for an occasion, or which pants fit a shirt from your closet.' }
+  ]);
+  const [suggestionOverrides, setSuggestionOverrides] = useState(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState('');
+  const [lightbox, setLightbox] = useState(null);
+
+  if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
+
+  const items = closet.data.items || [];
+  const outfits = closet.data.outfits || [];
+  const suggestions = suggestionOverrides || closet.data.suggestions || [];
+  const latestOutfit = outfits[0];
+  const selectedItems = selectedIds.map((id) => items.find((item) => item.id === id)).filter(Boolean);
+  const filteredItems = items.filter((item) => filter === 'all' || item.category === filter);
+  const selectedKey = selectedIds.slice().sort().join(':');
+  const mainPreview = latestOutfit?.imageUrl || user.bodyPhotoUrl || null;
+  const comboPreviewItems = (selectedItems.length ? selectedItems : items.filter((item) => ['tops', 'bottoms', 'suits', 'outerwear', 'shoes'].includes(item.category))).slice(0, 4);
+  const lookbookCards = outfits.length
+    ? outfits.slice(0, 5).map((outfit) => ({ id: outfit.id, title: outfit.title, imageUrl: outfit.imageUrl, items: outfit.items || [] }))
+    : suggestions.slice(0, 5).map((suggestion, index) => ({ id: suggestion.key || `${suggestion.title}-${index}`, title: suggestion.title, items: suggestion.items || [] }));
+  const slotItems = closetComboSlots.map((slot) => ({
+    ...slot,
+    selected: items.find((item) => item.id === comboSlots[slot.key]) || null,
+    options: optionsForSlot(slot, items)
+  }));
+  const activeWardrobeSlot = slotItems.find((slot) => slot.key === activeSlot) || slotItems[0];
+  const selectionCards = [
+    {
+      key: 'add',
+      step: '01',
+      title: 'Add Clothes',
+      copy: 'Upload wardrobe photos and save category, color, fabric, season and occasion tags.',
+      meta: `${closet.data.stats?.total || items.length} saved`,
+      action: 'Open Add',
+      icon: 'cloud-upload-outline',
+      tone: '#0f5132',
+      items: items.slice(0, 3)
+    },
+    {
+      key: 'combo',
+      step: '02',
+      title: 'Build Combo',
+      copy: 'Select which pant fits which shirt, add shoes or accessories, then generate it on you.',
+      meta: selectedItems.length ? `${selectedItems.length} selected` : 'Shirt + pant picker',
+      action: 'Choose Items',
+      icon: 'shirt-outline',
+      tone: '#7c4f2b',
+      items: comboPreviewItems
+    },
+    {
+      key: 'wardrobe',
+      step: '03',
+      title: 'Your Closet',
+      copy: 'Browse saved clothes with filters and send selected pieces to the combo builder.',
+      meta: `${closetCategories.length} filters`,
+      action: 'View Wardrobe',
+      icon: 'grid-outline',
+      tone: '#5b4b7a',
+      items: items.slice(0, 4)
+    }
+  ];
+
+  const toggleItem = (id) => {
+    setSelectedIds((current) => current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id].slice(-5));
+  };
+
+  const selectedIdsFromSlots = (slots) => [...new Set(Object.values(slots).filter(Boolean))];
+
+  const slotsFromItems = (entries = []) => {
+    const next = {};
+    closetComboSlots.forEach((slot) => {
+      const item = entries.find((entry) => slotMatchesItem(slot, entry));
+      if (item) next[slot.key] = item.id;
+    });
+    return next;
+  };
+
+  const applySuggestion = (suggestion) => {
+    const suggestionItems = suggestion.items || (suggestion.itemIds || []).map((id) => items.find((item) => item.id === id)).filter(Boolean);
+    setSelectedIds((suggestion.itemIds || suggestionItems.map((item) => item.id)).filter(Boolean));
+    setComboSlots(slotsFromItems(suggestionItems));
+    setOccasion(suggestion.title || 'today');
+    setClosetView('combo');
+    setMessage(suggestion.reason || 'Suggestion selected.');
+  };
+
+  const applyComboItems = (entries = []) => {
+    const nextSlots = slotsFromItems(entries);
+    setComboSlots(nextSlots);
+    setSelectedIds(entries.map((item) => item.id).filter(Boolean).slice(0, 5));
+    setClosetView('combo');
+  };
+
+  const setSlotItem = (slotKey, itemId) => {
+    setComboSlots((current) => ({ ...current, [slotKey]: itemId }));
+    setSelectedIds((current) => {
+      const slot = closetComboSlots.find((entry) => entry.key === slotKey);
+      const replaced = current.filter((id) => {
+        const item = items.find((entry) => entry.id === id);
+        return !slot || !item || !slotMatchesItem(slot, item);
+      });
+      return itemId ? [...replaced, itemId].slice(-5) : replaced;
+    });
+  };
+
+  const chooseSlotItem = (slotKey, item) => {
+    setComboSlots((current) => {
+      const next = { ...current };
+      if (!item) delete next[slotKey];
+      else next[slotKey] = item.id;
+      setSelectedIds(selectedIdsFromSlots(next).slice(0, 5));
+      return next;
+    });
+  };
+
+  const swapSelected = (item) => {
+    const replacement = items
+      .filter((candidate) => candidate.id !== item.id && candidate.category === item.category && !selectedIds.includes(candidate.id))
+      .sort((a, b) => Number(b.favorite) - Number(a.favorite) || new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0];
+    if (!replacement) {
+      setMessage(`No other ${item.category} item is available to swap.`);
+      return;
+    }
+    setSelectedIds((current) => current.map((id) => (id === item.id ? replacement.id : id)));
+    setComboSlots((current) => {
+      const matchedSlot = closetComboSlots.find((slot) => slotMatchesItem(slot, item));
+      if (!matchedSlot || current[matchedSlot.key] !== item.id) return current;
+      return { ...current, [matchedSlot.key]: replacement.id };
+    });
+    setMessage(`Swapped ${item.name} with ${replacement.name}.`);
+  };
+
+  const updateItem = async (item, updates) => {
+    setBusy(`update-${item.id}`);
+    try {
+      await api(`/closet/items/${encodeURIComponent(item.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(updates)
+      });
+      closet.reload();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const addItem = async () => {
+    if (!itemPhoto) {
+      setMessage('Upload a closet item photo first.');
+      return;
+    }
+    setBusy('add');
+    setMessage('Saving closet item...');
+    try {
+      const form = new FormData();
+      form.append('item', filePart(itemPhoto, 'closet-item.jpg'));
+      form.append('name', itemName || itemPhoto.fileName || 'Closet item');
+      form.append('category', itemCategory);
+      form.append('color', itemColor);
+      form.append('fabric', itemFabric);
+      form.append('pattern', itemPattern);
+      form.append('season', itemSeason);
+      form.append('formality', itemFormality);
+      form.append('occasions', itemOccasions);
+      form.append('tags', itemTags);
+      await api('/closet/items', { method: 'POST', body: form });
+      setSuggestionOverrides(null);
+      setItemPhoto(null);
+      setItemName('');
+      setItemColor('');
+      setItemFabric('');
+      setItemPattern('');
+      setItemSeason('all-season');
+      setItemFormality('any');
+      setItemOccasions('');
+      setItemTags('');
+      setMessage('Closet item added.');
+      closet.reload();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const generateOutfit = async (ids = selectedIds, details = {}) => {
+    if (!ids.length) {
+      setMessage('Select at least one closet item first.');
+      return;
+    }
+    setBusy('generate');
+    setMessage('Generating your closet look with FitRoom...');
+    try {
+      const data = await api('/closet/outfits/generate', {
+        method: 'POST',
+        body: JSON.stringify({
+          itemIds: ids,
+          occasion: details.occasion || occasion,
+          weather,
+          mood,
+          plannedFor,
+          backdrop,
+          pose,
+          lighting,
+          notes: [backdrop, pose, lighting].filter(Boolean).join(' | '),
+          title: details.title || `Closet look for ${details.occasion || occasion || 'today'}`
+        })
+      });
+      if (data.user) setUser(data.user);
+      setSuggestionOverrides(null);
+      setMessage('Closet look is ready.');
+      setSelectedIds(ids);
+      closet.reload();
+      if (data.outfit?.imageUrl) setLightbox(imageUrl(data.outfit.imageUrl));
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const askForSuggestions = async (nextOccasion = occasion) => {
+    setOccasion(nextOccasion);
+    setBusy('suggest');
+    setMessage('Finding the best combos from your closet...');
+    try {
+      const data = await api('/closet/suggest', {
+        method: 'POST',
+        body: JSON.stringify({ occasion: nextOccasion, weather, mood })
+      });
+      setSuggestionOverrides(data.suggestions || []);
+      setMessage('Suggestions ready.');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const askStylist = async () => {
+    const prompt = stylistText.trim();
+    if (!prompt) return;
+    setBusy('chat');
+    setMessage('Asking closet stylist...');
+    setChat((current) => [...current, { role: 'user', text: prompt }]);
+    try {
+      const data = await api('/closet/chat', { method: 'POST', body: JSON.stringify({ message: prompt }) });
+      const reply = data.reply || 'Stylist suggestions are ready.';
+      setChat((current) => [...current, { role: 'assistant', text: reply }]);
+      setMessage(reply);
+      if (data.suggestions?.[0]) setSelectedIds(data.suggestions[0].itemIds || []);
+      if (data.suggestions) setSuggestionOverrides(data.suggestions);
+      setStylistText('');
+    } catch (error) {
+      setChat((current) => [...current, { role: 'assistant', text: error.message }]);
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const removeItem = async (id) => {
+    setBusy(`delete-${id}`);
+    setMessage('Removing item...');
+    try {
+      await api(`/closet/items/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      setSuggestionOverrides(null);
+      setSelectedIds((current) => current.filter((itemId) => itemId !== id));
+      setComboSlots((current) => Object.fromEntries(Object.entries(current).filter(([, itemId]) => itemId !== id)));
+      setMessage('Closet item removed.');
+      closet.reload();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.toolHero}>
+          <Text style={styles.kicker}>AI Closet</Text>
+          <Text style={styles.screenTitle}>Your wardrobe, on you.</Text>
+          <Text style={styles.description}>Upload clothes, select a combo, and generate a FitRoom outfit preview from your saved profile.</Text>
+          <View style={styles.profileDetailsInline}>
+            <Text style={styles.statPill}>{items.length} items</Text>
+            <Text style={styles.statPill}>{outfits.length} looks</Text>
+            <Text style={styles.statPill}>{user.tokens} tokens</Text>
+          </View>
+        </View>
+
+        <FilterChips
+          selected={closetView}
+          options={[['stylist', 'Stylist'], ['combo', 'Combo'], ['add', 'Add'], ['wardrobe', 'Wardrobe'], ['looks', 'Looks']]}
+          onSelect={setClosetView}
+          compact
+        />
+
+        {latestOutfit?.imageUrl ? (
+          <Pressable style={styles.latestOutfitCard} onPress={() => setLightbox(imageUrl(latestOutfit.imageUrl))}>
+            <Image source={{ uri: imageUrl(latestOutfit.imageUrl) }} style={styles.latestOutfitImage} resizeMode="cover" />
+            <View style={styles.latestOutfitCopy}>
+              <Text style={styles.kicker}>Latest Look</Text>
+              <Text style={styles.latestOutfitTitle}>{latestOutfit.title || 'Generated outfit'}</Text>
+              <Text style={styles.muted}>{latestOutfit.items?.map((item) => item.name).join(' + ') || 'Tap to view'}</Text>
+            </View>
+          </Pressable>
+        ) : null}
+
+        {closetView === 'stylist' ? <View style={styles.closetPanel}>
+          <View style={styles.panelHeaderRow}>
+            <View>
+              <Text style={styles.kicker}>BeSpoke AI Stylist</Text>
+              <Text style={styles.sectionTitle}>Daily Recommendations</Text>
+            </View>
+            <TouchableOpacity style={styles.smallOutlineButton} onPress={() => askForSuggestions('today casual')} disabled={busy === 'suggest'}>
+              <Ionicons name="sparkles-outline" size={16} color="#0f766e" />
+              <Text style={styles.smallOutlineText}>{busy === 'suggest' ? 'Finding...' : 'Daily'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.stylistBoard}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wardrobeRail}>
+              {slotItems.map((slot) => (
+                <TouchableOpacity
+                  key={slot.key}
+                  style={[styles.wardrobeRailItem, activeSlot === slot.key && styles.wardrobeRailItemActive, slot.selected && styles.wardrobeRailItemSelected]}
+                  onPress={() => setActiveSlot(slot.key)}
+                >
+                  <View style={styles.railThumb}>
+                    {slot.selected?.imageUrl || slot.options[0]?.imageUrl ? (
+                      <Image source={{ uri: imageUrl(slot.selected?.imageUrl || slot.options[0]?.imageUrl) }} style={styles.railThumbImage} resizeMode="cover" />
+                    ) : (
+                      <Text style={styles.railThumbText}>{slot.short}</Text>
+                    )}
+                  </View>
+                  <Text style={styles.railLabel}>{slot.label}</Text>
+                  <Text style={styles.railMeta} numberOfLines={1}>{slot.selected?.name || `${slot.options.length} options`}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <Pressable style={styles.stylistPreviewFrame} onPress={() => mainPreview && setLightbox(imageUrl(mainPreview))}>
+              {mainPreview ? <Image source={{ uri: imageUrl(mainPreview) }} style={styles.stylistPreviewImage} resizeMode="cover" /> : <Image source={images.hero} style={styles.stylistPreviewImage} resizeMode="cover" />}
+              {busy === 'generate' ? <View style={styles.previewGenerating}><ActivityIndicator color="#fff" /><Text style={styles.previewGeneratingText}>Generating outfit</Text></View> : null}
+            </Pressable>
+
+            <View style={styles.lookbookRail}>
+              <Text style={styles.formLabel}>Lookbook & OOTD</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
+                {lookbookCards.length ? lookbookCards.map((card) => (
+                  <TouchableOpacity
+                    key={card.id}
+                    style={styles.lookbookCard}
+                    onPress={() => card.imageUrl ? setLightbox(imageUrl(card.imageUrl)) : applyComboItems(card.items || [])}
+                  >
+                    {card.imageUrl ? <Image source={{ uri: imageUrl(card.imageUrl) }} style={styles.lookbookImage} resizeMode="cover" /> : <Text style={styles.lookbookEmpty}>OOTD</Text>}
+                    <View style={styles.lookbookThumbs}>
+                      {(card.items || []).slice(0, 4).map((item) => <Image key={item.id} source={{ uri: imageUrl(item.imageUrl) }} style={styles.lookbookThumb} />)}
+                    </View>
+                  </TouchableOpacity>
+                )) : [0, 1, 2, 3].map((index) => (
+                  <TouchableOpacity key={index} style={styles.lookbookCard} onPress={() => askForSuggestions()}>
+                    <Text style={styles.lookbookEmpty}>OOTD</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+
+          <View style={styles.slotOptions}>
+            <View style={styles.panelHeaderRow}>
+              <View>
+                <Text style={styles.kicker}>Choose {activeWardrobeSlot.label}</Text>
+                <Text style={styles.latestOutfitTitle}>{activeWardrobeSlot.selected?.name || `Select ${activeWardrobeSlot.label}`}</Text>
+                <Text style={styles.muted}>{activeWardrobeSlot.helper}</Text>
+              </View>
+              {activeWardrobeSlot.selected ? (
+                <TouchableOpacity style={styles.smallOutlineButton} onPress={() => chooseSlotItem(activeWardrobeSlot.key, null)}>
+                  <Ionicons name="close-circle-outline" size={16} color="#0f766e" />
+                  <Text style={styles.smallOutlineText}>Clear</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            {activeWardrobeSlot.options.length ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
+                {activeWardrobeSlot.options.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[styles.slotOptionCard, comboSlots[activeWardrobeSlot.key] === item.id && styles.slotOptionActive]}
+                    onPress={() => chooseSlotItem(activeWardrobeSlot.key, item)}
+                  >
+                    <Image source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : images.hero} style={styles.slotOptionImage} resizeMode="cover" />
+                    <Text style={styles.slotOptionName} numberOfLines={2}>{item.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <TouchableOpacity style={styles.emptyActionBox} onPress={() => setClosetView('add')}>
+                <Ionicons name="add-circle-outline" size={22} color="#0f766e" />
+                <Text style={styles.emptyActionText}>Add {activeWardrobeSlot.label}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.stylistConsoleActions}>
+            <View>
+              <Text style={styles.actionMetric}>{closet.data.stats?.total || items.length}</Text>
+              <Text style={styles.actionMetricLabel}>items in wardrobe</Text>
+            </View>
+            <View>
+              <Text style={styles.actionMetric}>{user.tokens}</Text>
+              <Text style={styles.actionMetricLabel}>try-on tokens</Text>
+            </View>
+            <TouchableOpacity style={[styles.generateMiniButton, (!selectedIds.length || busy === 'generate') && styles.disabledButton]} disabled={!selectedIds.length || busy === 'generate'} onPress={() => generateOutfit(selectedIds, { title: 'My closet combo' })}>
+              <Text style={styles.generateMiniText}>{busy === 'generate' ? 'Generating...' : `Generate${selectedIds.length ? ` (${selectedIds.length})` : ''}`}</Text>
+            </TouchableOpacity>
+          </View>
+        </View> : null}
+
+        {closetView === 'stylist' ? <View style={styles.closetPanel}>
+          <View style={styles.panelHeaderRow}>
+            <View>
+              <Text style={styles.kicker}>Selection</Text>
+              <Text style={styles.sectionTitle}>Choose your closet action.</Text>
+            </View>
+            <Text style={styles.statPill}>{user.tokens} tokens</Text>
+          </View>
+          <View style={styles.actionCardList}>
+            {selectionCards.map((card) => (
+              <TouchableOpacity key={card.key} style={[styles.closetActionCard, { borderTopColor: card.tone }]} onPress={() => setClosetView(card.key)}>
+                <View style={styles.closetActionTop}>
+                  <Text style={styles.actionStep}>{card.step}</Text>
+                  <Text style={styles.actionMeta}>{card.meta}</Text>
+                </View>
+                <View style={styles.actionPreview}>
+                  {card.items.length ? card.items.map((item) => <Image key={item.id} source={{ uri: imageUrl(item.imageUrl) }} style={styles.actionPreviewImage} />) : <Ionicons name={card.icon} size={34} color="#94a3b8" />}
+                </View>
+                <Text style={styles.latestOutfitTitle}>{card.title}</Text>
+                <Text style={styles.muted}>{card.copy}</Text>
+                <Text style={[styles.actionLink, { color: card.tone }]}>{card.action}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
+            {closetOccasions.map((idea) => (
+              <TouchableOpacity key={idea} style={styles.occasionChip} onPress={() => askForSuggestions(idea)}>
+                <Text style={styles.occasionChipText}>{idea}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View> : null}
+
+        {closetView === 'add' ? <View style={styles.closetPanel}>
+          <Text style={styles.sectionTitle}>Add Clothing</Text>
+          <TouchableOpacity style={styles.uploadBox} onPress={async () => setItemPhoto(await pickImage())}>
+            {itemPhoto?.uri ? <Image source={{ uri: itemPhoto.uri }} style={styles.uploadPreview} /> : <Ionicons name="cloud-upload-outline" size={30} color="#0f766e" />}
+            <View style={styles.uploadCopy}>
+              <Text style={styles.uploadTitle}>{itemPhoto ? 'Closet photo selected' : 'Upload clothing photo'}</Text>
+              <Text style={styles.photoGuideText}>Use one clear item per photo for best combo selection.</Text>
+            </View>
+          </TouchableOpacity>
+          <TextInput style={styles.input} value={itemName} onChangeText={setItemName} placeholder="Item name" placeholderTextColor="#94a3b8" />
+          <FilterChips selected={itemCategory} options={closetCategories.map((item) => [item, titleCase(item)])} onSelect={setItemCategory} compact />
+          <View style={styles.twoColumnInputs}>
+            <TextInput style={[styles.input, styles.halfInput]} value={itemColor} onChangeText={setItemColor} placeholder="Color" placeholderTextColor="#94a3b8" />
+            <TextInput style={[styles.input, styles.halfInput]} value={itemFabric} onChangeText={setItemFabric} placeholder="Fabric" placeholderTextColor="#94a3b8" />
+          </View>
+          <View style={styles.twoColumnInputs}>
+            <TextInput style={[styles.input, styles.halfInput]} value={itemPattern} onChangeText={setItemPattern} placeholder="Pattern" placeholderTextColor="#94a3b8" />
+            <TextInput style={[styles.input, styles.halfInput]} value={itemOccasions} onChangeText={setItemOccasions} placeholder="Occasions" placeholderTextColor="#94a3b8" />
+          </View>
+          <Text style={styles.formLabel}>Season</Text>
+          <FilterChips selected={itemSeason} options={['all-season', 'summer', 'winter', 'rainy'].map((item) => [item, titleCase(item)])} onSelect={setItemSeason} compact />
+          <Text style={styles.formLabel}>Vibe</Text>
+          <FilterChips selected={itemFormality} options={['any', 'casual', 'smart-casual', 'formal', 'party', 'active'].map((item) => [item, titleCase(item)])} onSelect={setItemFormality} compact />
+          <TextInput style={styles.input} value={itemTags} onChangeText={setItemTags} placeholder="Tags or occasions" placeholderTextColor="#94a3b8" />
+          <AppButton label={busy === 'add' ? 'Saving...' : 'Add To Closet'} icon="add-circle-outline" disabled={busy === 'add'} onPress={addItem} />
+        </View> : null}
+
+        {closetView === 'combo' ? <View style={styles.closetPanel}>
+          <Text style={styles.sectionTitle}>Combo Builder</Text>
+          <Text style={styles.muted}>Pick pieces by slot, then generate the selected outfit on your profile.</Text>
+          <View style={styles.twoColumnInputs}>
+            <TextInput style={[styles.input, styles.halfInput]} value={occasion} onChangeText={setOccasion} placeholder="Occasion" placeholderTextColor="#94a3b8" />
+            <TextInput style={[styles.input, styles.halfInput]} value={weather} onChangeText={setWeather} placeholder="Weather" placeholderTextColor="#94a3b8" />
+          </View>
+          <View style={styles.twoColumnInputs}>
+            <TextInput style={[styles.input, styles.halfInput]} value={mood} onChangeText={setMood} placeholder="Mood" placeholderTextColor="#94a3b8" />
+            <TextInput style={[styles.input, styles.halfInput]} value={plannedFor} onChangeText={setPlannedFor} placeholder="YYYY-MM-DD" placeholderTextColor="#94a3b8" />
+          </View>
+          <Text style={styles.formLabel}>Backdrop</Text>
+          <FilterChips selected={backdrop} options={closetSceneOptions.backdrop.map((item) => [item, titleCase(item)])} onSelect={setBackdrop} compact />
+          <Text style={styles.formLabel}>Pose</Text>
+          <FilterChips selected={pose} options={closetSceneOptions.pose.map((item) => [item, titleCase(item)])} onSelect={setPose} compact />
+          <Text style={styles.formLabel}>Lighting</Text>
+          <FilterChips selected={lighting} options={closetSceneOptions.lighting.map((item) => [item, titleCase(item)])} onSelect={setLighting} compact />
+          <AppButton label={busy === 'suggest' ? 'Finding Ideas...' : 'Suggest Combos'} icon="sparkles-outline" variant="secondary" disabled={busy === 'suggest' || !items.length} onPress={() => askForSuggestions()} />
+          <View style={styles.comboSlotGrid}>
+            {closetComboSlots.map((slot) => {
+              const selectedItem = items.find((item) => item.id === comboSlots[slot.key]);
+              const isActive = activeSlot === slot.key;
+              return (
+                <TouchableOpacity key={slot.key} style={[styles.comboSlot, isActive && styles.comboSlotActive]} onPress={() => setActiveSlot(slot.key)}>
+                  <Text style={styles.comboSlotLabel}>{slot.label}</Text>
+                  <Text style={styles.comboSlotValue} numberOfLines={1}>{selectedItem?.name || slot.helper}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {closetComboSlots.map((slot) => {
+            if (slot.key !== activeSlot) return null;
+            const options = optionsForSlot(slot, items);
+            return (
+              <View key={slot.key} style={styles.slotOptions}>
+                <Text style={styles.formLabel}>{slot.label}</Text>
+                {options.length ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
+                    {options.map((item) => {
+                      const active = comboSlots[slot.key] === item.id;
+                      return (
+                        <TouchableOpacity key={item.id} style={[styles.slotOptionCard, active && styles.slotOptionActive]} onPress={() => setSlotItem(slot.key, item.id)}>
+                          <Image source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : images.hero} style={styles.slotOptionImage} resizeMode="cover" />
+                          <Text style={styles.slotOptionName} numberOfLines={2}>{item.name}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                ) : <Text style={styles.muted}>Add a {slot.helper.toLowerCase()} item to fill this slot.</Text>}
+                {comboSlots[slot.key] ? <AppButton label="Clear Slot" icon="close-circle-outline" variant="secondary" onPress={() => setSlotItem(slot.key, '')} /> : null}
+              </View>
+            );
+          })}
+          {selectedItems.length ? (
+            <View style={styles.selectedComboStrip}>
+              {selectedItems.map((item) => (
+                <View key={item.id} style={styles.selectedChipCard}>
+                  <Image source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : images.hero} style={styles.selectedChipImage} />
+                  <Text style={styles.selectedChipName} numberOfLines={1}>{item.name}</Text>
+                  <TouchableOpacity onPress={() => swapSelected(item)}><Text style={styles.selectedChipAction}>Swap</Text></TouchableOpacity>
+                  <TouchableOpacity onPress={() => toggleItem(item.id)}><Text style={styles.selectedChipAction}>Remove</Text></TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          <AppButton label={busy === 'generate' ? 'Generating...' : `Generate Combo On Me (${selectedIds.length})`} icon="sparkles-outline" disabled={busy === 'generate' || !selectedIds.length} onPress={() => generateOutfit()} />
+          <View style={styles.comboSuggestionList}>
+            <Text style={styles.formLabel}>Combo Selection</Text>
+            {suggestions.length ? suggestions.slice(0, 6).map((combo, index) => {
+              const comboIds = combo.itemIds || [];
+              const active = comboIds.slice().sort().join(':') === selectedKey;
+              return (
+                <TouchableOpacity key={combo.key || combo.title || index} style={[styles.comboSuggestionCard, active && styles.comboSuggestionActive]} onPress={() => applyComboItems(combo.items || [])}>
+                  <Text style={styles.comboNumber}>{String(index + 1).padStart(2, '0')}</Text>
+                  <View style={styles.comboThumbs}>
+                    {(combo.items || []).slice(0, 4).map((item) => <Image key={item.id} source={{ uri: imageUrl(item.imageUrl) }} style={styles.comboThumb} />)}
+                  </View>
+                  <View style={styles.comboSuggestionCopy}>
+                    <Text style={styles.suggestionTitle}>{combo.title || `Combo ${index + 1}`}</Text>
+                    <Text style={styles.suggestionCopy} numberOfLines={2}>{combo.reason || 'AI-picked from your closet'}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            }) : (
+              <TouchableOpacity style={styles.comboSuggestionCard} onPress={() => askForSuggestions()}>
+                <Text style={styles.comboNumber}>AI</Text>
+                <View style={styles.comboSuggestionCopy}>
+                  <Text style={styles.suggestionTitle}>Create combos</Text>
+                  <Text style={styles.suggestionCopy}>Get recommendations from your uploaded closet.</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View> : null}
+
+        {closetView === 'combo' || closetView === 'stylist' ? <View style={styles.closetPanel}>
+          <View style={styles.panelHeaderRow}>
+            <View>
+              <Text style={styles.sectionTitle}>Closet Stylist</Text>
+              <Text style={styles.muted}>Your clothes only</Text>
+            </View>
+            <Text style={styles.statPill}>{user.tokens} tokens</Text>
+          </View>
+          <View style={styles.chatTranscript}>
+            {chat.map((entry, index) => (
+              <View key={`${entry.role}-${index}`} style={[styles.chatBubble, entry.role === 'user' && styles.chatBubbleUser]}>
+                <Text style={[styles.chatBubbleText, entry.role === 'user' && styles.chatBubbleUserText]}>{entry.text}</Text>
+              </View>
+            ))}
+          </View>
+          <View style={styles.searchRow}>
+            <TextInput style={styles.searchInput} value={stylistText} onChangeText={setStylistText} placeholder="Ask for office, date, rain, wedding..." placeholderTextColor="#94a3b8" />
+            <TouchableOpacity style={[styles.searchButton, busy === 'chat' && styles.disabledButton]} disabled={busy === 'chat'} onPress={askStylist}>
+              <Ionicons name="sparkles-outline" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          {suggestions.length ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
+              {suggestions.map((suggestion) => (
+                <TouchableOpacity key={suggestion.key || suggestion.title} style={styles.suggestionCard} onPress={() => applySuggestion(suggestion)}>
+                  <Text style={styles.suggestionTitle}>{suggestion.title}</Text>
+                  <Text style={styles.suggestionCopy} numberOfLines={2}>{suggestion.reason}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          ) : null}
+        </View> : null}
+
+        <StatusPanel loading={closet.loading} error={closet.error} empty={!closet.loading && !items.length} text="Add clothes to start building closet looks." />
+        {closetView === 'wardrobe' ? <View style={styles.closetPanel}>
+          <View style={styles.panelHeaderRow}>
+            <View>
+              <Text style={styles.sectionTitle}>Your Closet</Text>
+              <Text style={styles.muted}>Browse, save favorites, remove old items, or send selected pieces to combo.</Text>
+            </View>
+            {selectedIds.length ? <TouchableOpacity style={styles.smallOutlineButton} onPress={() => setClosetView('combo')}><Text style={styles.smallOutlineText}>Build ({selectedIds.length})</Text></TouchableOpacity> : null}
+          </View>
+          <FilterChips selected={filter} options={[['all', 'All'], ...closetCategories.map((item) => [item, titleCase(item)])]} onSelect={setFilter} compact />
+        </View> : null}
+        {closetView === 'wardrobe' || closetView === 'combo' ? <View style={styles.closetGrid}>
+          {(closetView === 'wardrobe' ? filteredItems : items).map((item) => {
+            const selected = selectedIds.includes(item.id);
+            return (
+              <Pressable key={item.id} style={[styles.closetItemCard, selected && styles.closetItemSelected]} onPress={() => toggleItem(item.id)}>
+                <Image source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : images.hero} style={styles.closetItemImage} resizeMode="cover" />
+                <View style={styles.closetItemBody}>
+                  <Text style={styles.productTitle} numberOfLines={1}>{item.name}</Text>
+                  <Text style={styles.productBrand} numberOfLines={2}>{[item.color, item.fabric, item.category, item.formality].filter(Boolean).map(titleCase).join(' | ')}</Text>
+                  <View style={styles.closetItemActions}>
+                    <Text style={[styles.selectText, selected && styles.selectTextActive]}>{selected ? 'Selected' : 'Tap to select'}</Text>
+                    <TouchableOpacity onPress={() => updateItem(item, { favorite: !item.favorite })} disabled={busy === `update-${item.id}`}>
+                      <Ionicons name={item.favorite ? 'heart' : 'heart-outline'} size={17} color={item.favorite ? '#b91c1c' : '#64748b'} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => removeItem(item.id)} disabled={busy === `delete-${item.id}`}>
+                      <Ionicons name="trash-outline" size={17} color="#b91c1c" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </Pressable>
+            );
+          })}
+          {closetView === 'wardrobe' && !filteredItems.length ? <StatusPanel empty text="No clothes match this filter yet." /> : null}
+        </View> : null}
+        {closetView === 'looks' ? (
+          <View style={styles.looksList}>
+            {outfits.map((outfit) => (
+              <Pressable key={outfit.id} style={styles.latestOutfitCard} onPress={() => outfit.imageUrl && setLightbox(imageUrl(outfit.imageUrl))}>
+                <Image source={outfit.imageUrl ? { uri: imageUrl(outfit.imageUrl) } : images.hero} style={styles.latestOutfitImage} resizeMode="cover" />
+                <View style={styles.latestOutfitCopy}>
+                  <Text style={styles.latestOutfitTitle}>{outfit.title || 'Generated outfit'}</Text>
+                  <Text style={styles.muted}>{outfit.items?.map((item) => item.name).join(' + ') || outfit.occasion || 'Saved closet look'}</Text>
+                </View>
+              </Pressable>
+            ))}
+            {!outfits.length ? <StatusPanel empty text="Generated closet looks will appear here." /> : null}
+          </View>
+        ) : null}
+        {message ? <Text style={[styles.formMessage, styles.closetMessage, /failed|missing|error|not enough|upload|select/i.test(message) ? styles.errorText : null]}>{message}</Text> : null}
+      </ScrollView>
+      <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
+    </KeyboardAvoidingView>
+  );
+}
+
 function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
   const [garment, setGarment] = useState(null);
-  const [tryOnModel] = useState('wan-v2.6-image-to-image');
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -882,7 +1823,6 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
     try {
       const form = new FormData();
       form.append('garment', filePart(garment, 'garment.jpg'));
-      form.append('tryOnModel', tryOnModel);
       const data = await api('/tryons/custom', { method: 'POST', body: form });
       setResult(data.tryOn);
       if (data.user) setUser(data.user);
@@ -899,7 +1839,7 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
       <View style={styles.toolHero}>
         <Text style={styles.kicker}>Custom Try-On</Text>
         <Text style={styles.screenTitle}>Try on any clothing photo.</Text>
-        <Text style={styles.description}>Upload a garment image and FitLook will generate it on your saved profile photo. Each generated image costs 1 token.</Text>
+        <Text style={styles.description}>Upload a garment image and FitLook will generate it on your saved profile photo with FitRoom. Each generated image costs 1 token.</Text>
       </View>
       <View style={styles.tryOnPair}>
         <TouchableOpacity style={styles.previewBox} onPress={async () => setGarment(await pickImage())}>
@@ -913,9 +1853,9 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
         <Text style={styles.customModelTitle}>What are you trying on?</Text>
         <View style={styles.customModelOptions}>
           {[
-            ['wan-v2.6-image-to-image', 'WAN 2.6 image', 'Two-image garment transfer']
+            ['fitroom/tryon-v2', 'FitRoom try-on', 'Product and custom clothing transfer']
           ].map(([value, label, help]) => {
-            const selected = tryOnModel === value;
+            const selected = value === 'fitroom/tryon-v2';
             return (
               <Pressable
                 key={value}
@@ -1107,39 +2047,73 @@ function StyleBotScreen({ user, setUser, setToken, onNavigate }) {
   );
 }
 
-function TokensScreen({ user }) {
-  const packs = [
-    ['Starter', 10, '$4.99', 'For quick outfit checks.'],
-    ['Everyday', 30, '$11.99', 'Best for regular browsing.'],
-    ['Studio', 80, '$24.99', 'For heavy try-on sessions.']
-  ];
+function TokensScreen({ user, setUser, onNavigate }) {
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const subscription = user?.subscription;
+  const isActive = subscription?.status === 'active' && (!subscription.currentPeriodEnd || new Date(subscription.currentPeriodEnd) > new Date());
+
+  const startCheckout = async () => {
+    if (!user) {
+      onNavigate('signup');
+      return;
+    }
+    setCheckoutLoading(true);
+    setMessage('Opening PhonePe checkout...');
+    try {
+      const data = await api('/payments/phonepe/subscription', { method: 'POST' });
+      if (data.redirectUrl) {
+        await Linking.openURL(data.redirectUrl);
+        setMessage('Complete payment in PhonePe, then return to FitLook.');
+      } else {
+        setMessage('Checkout link was not returned.');
+      }
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
+  const refreshAccount = async () => {
+    setMessage('Refreshing account...');
+    try {
+      const data = await api('/auth/me');
+      if (data.user) setUser(data.user);
+      setMessage('Account refreshed.');
+    } catch (error) {
+      setMessage(error.message);
+    }
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.scrollContent}>
       <View style={styles.toolHero}>
         <Text style={styles.kicker}>FitLook Tokens</Text>
         <Text style={styles.screenTitle}>One token, one AI try-on.</Text>
-        <Text style={styles.description}>Tokens are used only when FitLook generates a new AI try-on image. Cached try-ons for the same product do not charge again.</Text>
+        <Text style={styles.description}>Get 20 free tokens on signup. Subscribe for Rs 1000/month to receive 100 try-on tokens for the month.</Text>
         <View style={styles.balanceCard}>
-          <Text style={styles.balanceNumber}>{user?.devMode ? '∞' : user ? user.tokens : 4}</Text>
-          <Text style={styles.balanceLabel}>{user?.devMode ? 'dev mode active' : user ? 'tokens available' : 'free tokens on signup'}</Text>
+          <Text style={styles.balanceNumber}>{user ? user.tokens : 20}</Text>
+          <Text style={styles.balanceLabel}>{user ? 'tokens available' : 'free tokens on signup'}</Text>
         </View>
+        {message ? <Text style={[styles.formMessage, /failed|missing|not|error|Could not/i.test(message) ? styles.errorText : null]}>{message}</Text> : null}
       </View>
-      {packs.map(([name, amount, price, copy]) => (
-        <View key={name} style={styles.tokenPack}>
-          <View>
-            <Text style={styles.tokenName}>{name}</Text>
-            <Text style={styles.muted}>{copy}</Text>
-          </View>
-          <View style={styles.tokenRight}>
-            <Text style={styles.tokenAmount}>{amount} tokens</Text>
-            <Text style={styles.price}>{price}</Text>
-          </View>
+      <View style={[styles.tokenPack, styles.subscriptionPack]}>
+        <View style={styles.planHead}>
+          <Text style={styles.tokenName}>Monthly</Text>
+          {isActive ? <Text style={styles.activePill}>Active</Text> : null}
         </View>
-      ))}
+        <Text style={styles.tokenAmount}>100 tokens every month</Text>
+        <Text style={styles.detailPrice}>Rs 1000</Text>
+        <Text style={styles.muted}>PhonePe checkout opens securely. Tokens are added only after payment is confirmed.</Text>
+        {isActive && subscription.currentPeriodEnd ? <Text style={styles.muted}>Current month ends {formatDate(subscription.currentPeriodEnd)}</Text> : null}
+        <AppButton label={checkoutLoading ? 'Opening PhonePe...' : user ? 'Subscribe with PhonePe' : 'Create Account First'} icon="card-outline" disabled={checkoutLoading} onPress={startCheckout} />
+        <AppButton label="Refresh Account" icon="refresh-outline" variant="secondary" onPress={refreshAccount} />
+      </View>
       <View style={styles.infoGrid}>
-        <InfoCard title="What costs tokens?" text={user?.devMode ? 'Dev Mode bypasses token charging for testing.' : 'Generating a product try-on or custom clothing try-on costs 1 token.'} />
-        <InfoCard title="What is free?" text="Browsing, search, product pages, and viewing previously generated try-ons are free." />
-        <InfoCard title="Why cache matters" text="If a try-on already exists for the same user and product, FitLook reuses it without charging another token." />
+        <InfoCard title="What costs tokens?" text="Generating a product, custom, external, or closet try-on costs 1 token." />
+        <InfoCard title="What is free?" text="New accounts start with 20 free tokens. Browsing, search, product pages, and viewing saved try-ons are free." />
+        <InfoCard title="How payment works" text="FitLook verifies PhonePe order status before adding subscription tokens." />
       </View>
     </ScrollView>
   );
@@ -1161,6 +2135,7 @@ function formatFileSize(value) {
 
 function ProfileScreen({ user, setUser, setToken, onNavigate }) {
   const [photo, setPhoto] = useState(null);
+  const [profilePhotoMode, setProfilePhotoMode] = useState('ai-full-body');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -1174,18 +2149,19 @@ function ProfileScreen({ user, setUser, setToken, onNavigate }) {
 
   const updatePhoto = async () => {
     if (!photo) {
-      setMessage('Choose a new full-body photo first.');
+      setMessage('Choose a new profile photo first.');
       return;
     }
     setLoading(true);
-    setMessage('Updating profile photo...');
+    setMessage('Uploading profile photo...');
     try {
       const form = new FormData();
       form.append('bodyPhoto', filePart(photo, 'body-photo.jpg'));
-      const data = await api('/auth/me', { method: 'PUT', body: form });
+      form.append('profilePhotoMode', profilePhotoMode);
+      const data = await api('/auth/body-photo', { method: 'POST', body: form });
       if (data.user) setUser(data.user);
       setPhoto(null);
-      setMessage('Profile photo updated. New AI try-ons will use this image.');
+      setMessage(data.user?.bodyPhotoStatus === 'generating' ? 'Photo saved. Full-body try-on profile is preparing in the background.' : 'Profile photo updated.');
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -1212,9 +2188,9 @@ function ProfileScreen({ user, setUser, setToken, onNavigate }) {
       <View style={styles.profileDetails}>
         {[
           ['Tokens', user.devMode ? 'Dev mode' : `${user.tokens ?? 0}`],
-          ['Photo', formatFileSize(user.bodyPhotoSize)],
-          ['Joined', formatDate(user.createdAt)],
-          ['Updated', formatDate(user.updatedAt)]
+          ['Preference', titleCase(user.genderPreference || 'other')],
+          ['Photo', titleCase(user.bodyPhotoStatus || 'uploaded')],
+          ['Joined', formatDate(user.joinedAt || user.createdAt)]
         ].map(([label, value]) => (
           <View key={label} style={styles.profileStat}>
             <Text style={styles.profileStatLabel}>{label}</Text>
@@ -1228,9 +2204,21 @@ function ProfileScreen({ user, setUser, setToken, onNavigate }) {
           <Ionicons name={photo ? 'checkmark-circle-outline' : 'cloud-upload-outline'} size={30} color="#0f766e" />
           <View style={styles.uploadCopy}>
             <Text style={styles.uploadTitle}>{photo ? 'New photo selected' : 'Change try-on photo'}</Text>
-            <Text style={styles.photoGuideText}>Use a clear single-person, full-body image with your face visible.</Text>
+            <Text style={styles.photoGuideText}>Use a clear single-person selfie, portrait, or body photo with your face visible.</Text>
           </View>
         </TouchableOpacity>
+        {user.bodyPhotoStatus === 'generating' ? <Text style={styles.formMessage}>Full-body try-on profile is preparing in the background.</Text> : null}
+        {user.bodyPhotoStatus === 'failed' ? <Text style={[styles.formMessage, styles.errorText]}>Full-body profile generation failed. Upload a clearer profile photo.</Text> : null}
+        <View style={styles.formGroup}>
+          <Text style={styles.formLabel}>Profile photo mode</Text>
+          <FilterChips
+            selected={profilePhotoMode}
+            options={[['ai-full-body', 'Create full-body AI profile'], ['exact', 'Use exact photo']]}
+            onSelect={setProfilePhotoMode}
+            compact
+            wrap
+          />
+        </View>
         <AppButton label={loading ? 'Saving...' : 'Save Profile Photo'} icon="save-outline" disabled={loading || !photo} onPress={updatePhoto} />
         <AppButton label="Browse Products" icon="search-outline" variant="secondary" onPress={() => onNavigate('shop')} />
         {message ? <Text style={[styles.formMessage, message.includes('updated') || message.includes('Updating') ? null : styles.errorText]}>{message}</Text> : null}
@@ -1381,6 +2369,18 @@ export default function App() {
     return () => subscription.remove();
   }, [goBack]);
 
+  useEffect(() => {
+    if (user?.bodyPhotoStatus !== 'generating') return undefined;
+    const timer = setInterval(() => {
+      api('/auth/me')
+        .then((data) => {
+          if (data.user) setUser(data.user);
+        })
+        .catch(() => {});
+    }, 7000);
+    return () => clearInterval(timer);
+  }, [user?.bodyPhotoStatus]);
+
   const performLogout = async () => {
     await clearToken();
     setToken(null);
@@ -1406,14 +2406,14 @@ export default function App() {
         return <ShopScreen initial={routeParams} user={user} setUser={setUser} token={token} onNavigate={navigate} />;
       case 'tryon':
         return user ? <ShopScreen tryOnMode initial={routeParams} user={user} setUser={setUser} token={token} onNavigate={navigate} /> : <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+      case 'closet':
+        return <ClosetScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={navigate} />;
       case 'custom':
         return <CustomTryOnScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} />;
-      case 'vto':
-        return <VtoTrialScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'stylebot':
         return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'tokens':
-        return <TokensScreen user={user} />;
+        return <TokensScreen user={user} setUser={setUser} onNavigate={navigate} />;
       case 'profile':
         return <ProfileScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'product':
@@ -1506,6 +2506,12 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontSize: 12,
     fontWeight: '700'
+  },
+  headerNotice: {
+    marginTop: 2,
+    color: '#0f766e',
+    fontSize: 11,
+    fontWeight: '900'
   },
   headerActions: {
     flexDirection: 'row',
@@ -1915,6 +2921,11 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingRight: 12
   },
+  wrappedChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingRight: 0
+  },
   chip: {
     borderRadius: 999,
     paddingHorizontal: 13,
@@ -1925,6 +2936,9 @@ const styles = StyleSheet.create({
   },
   compactChip: {
     paddingVertical: 7
+  },
+  wrappedChip: {
+    marginBottom: 8
   },
   activeChip: {
     backgroundColor: '#111827',
@@ -2005,6 +3019,11 @@ const styles = StyleSheet.create({
   detailImage: {
     width: '100%',
     height: '100%'
+  },
+  detailVideo: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#000'
   },
   detailImageBadge: {
     position: 'absolute',
@@ -2193,6 +3212,15 @@ const styles = StyleSheet.create({
     color: '#111827',
     backgroundColor: '#fff',
     fontWeight: '700'
+  },
+  formGroup: {
+    gap: 8
+  },
+  formLabel: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase'
   },
   noteInput: {
     marginHorizontal: 16,
@@ -2475,6 +3503,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12
   },
+  subscriptionPack: {
+    flexDirection: 'column'
+  },
+  planHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10
+  },
+  activePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#dcfce7',
+    color: '#166534',
+    fontSize: 12,
+    fontWeight: '900'
+  },
   tokenName: {
     fontSize: 18,
     fontWeight: '900',
@@ -2565,6 +3612,561 @@ const styles = StyleSheet.create({
   profileActions: {
     margin: 16,
     gap: 10
+  },
+  profileDetailsInline: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  statPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#ecfdf5',
+    color: '#0f766e',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  latestOutfitCard: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb'
+  },
+  latestOutfitImage: {
+    width: '100%',
+    height: 320
+  },
+  latestOutfitCopy: {
+    padding: 14,
+    gap: 5
+  },
+  latestOutfitTitle: {
+    color: '#111827',
+    fontSize: 21,
+    lineHeight: 25,
+    fontWeight: '900'
+  },
+  closetPanel: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    gap: 10
+  },
+  panelHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  smallOutlineButton: {
+    minHeight: 38,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6
+  },
+  smallOutlineText: {
+    color: '#0f766e',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  stylistBoard: {
+    gap: 12
+  },
+  wardrobeRail: {
+    gap: 10,
+    paddingRight: 12
+  },
+  wardrobeRailItem: {
+    width: 112,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    gap: 6
+  },
+  wardrobeRailItemActive: {
+    borderColor: '#0f766e',
+    backgroundColor: '#ecfdf5'
+  },
+  wardrobeRailItemSelected: {
+    borderColor: '#14b8a6'
+  },
+  railThumb: {
+    width: 58,
+    height: 58,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  railThumbImage: {
+    width: '100%',
+    height: '100%'
+  },
+  railThumbText: {
+    color: '#64748b',
+    fontSize: 13,
+    fontWeight: '900'
+  },
+  railLabel: {
+    color: '#111827',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  railMeta: {
+    maxWidth: 92,
+    color: '#64748b',
+    fontSize: 10,
+    fontWeight: '800',
+    textAlign: 'center'
+  },
+  stylistPreviewFrame: {
+    height: 360,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e5e7eb'
+  },
+  stylistPreviewImage: {
+    width: '100%',
+    height: '100%'
+  },
+  previewGenerating: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(17, 24, 39, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8
+  },
+  previewGeneratingText: {
+    color: '#fff',
+    fontWeight: '900'
+  },
+  lookbookRail: {
+    gap: 8
+  },
+  lookbookCard: {
+    width: 112,
+    height: 140,
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  lookbookImage: {
+    width: '100%',
+    height: '100%'
+  },
+  lookbookEmpty: {
+    color: '#64748b',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  lookbookThumbs: {
+    position: 'absolute',
+    left: 6,
+    right: 6,
+    bottom: 6,
+    flexDirection: 'row',
+    gap: 4
+  },
+  lookbookThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#fff'
+  },
+  emptyActionBox: {
+    minHeight: 92,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6
+  },
+  emptyActionText: {
+    color: '#0f766e',
+    fontWeight: '900'
+  },
+  stylistConsoleActions: {
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10
+  },
+  actionMetric: {
+    color: '#111827',
+    fontSize: 22,
+    fontWeight: '900'
+  },
+  actionMetricLabel: {
+    color: '#64748b',
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  generateMiniButton: {
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: '#0f766e',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  generateMiniText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  actionCardList: {
+    gap: 10
+  },
+  closetActionCard: {
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderTopWidth: 4,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+    gap: 9
+  },
+  closetActionTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  actionStep: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    color: '#0f5132',
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'center',
+    lineHeight: 32
+  },
+  actionMeta: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase'
+  },
+  actionPreview: {
+    height: 116,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  actionPreviewImage: {
+    flex: 1,
+    height: '100%'
+  },
+  actionLink: {
+    fontWeight: '900'
+  },
+  occasionChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff'
+  },
+  occasionChipText: {
+    color: '#0f5132',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  twoColumnInputs: {
+    flexDirection: 'row',
+    gap: 8
+  },
+  halfInput: {
+    flex: 1,
+    marginBottom: 0
+  },
+  comboSlotGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  comboSlot: {
+    width: '48%',
+    minHeight: 72,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    justifyContent: 'center'
+  },
+  comboSlotActive: {
+    borderColor: '#0f766e',
+    backgroundColor: '#ecfdf5'
+  },
+  comboSlotLabel: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase'
+  },
+  comboSlotValue: {
+    marginTop: 5,
+    color: '#111827',
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '900'
+  },
+  slotOptions: {
+    gap: 10
+  },
+  slotOptionCard: {
+    width: 118,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb'
+  },
+  slotOptionActive: {
+    borderColor: '#0f766e',
+    backgroundColor: '#ecfdf5'
+  },
+  slotOptionImage: {
+    width: '100%',
+    height: 112,
+    backgroundColor: '#e5e7eb'
+  },
+  slotOptionName: {
+    padding: 8,
+    minHeight: 48,
+    color: '#111827',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900'
+  },
+  selectedComboStrip: {
+    gap: 8
+  },
+  selectedChipCard: {
+    minHeight: 56,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  selectedChipImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+    backgroundColor: '#e5e7eb'
+  },
+  selectedChipName: {
+    flex: 1,
+    color: '#111827',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  selectedChipAction: {
+    color: '#0f766e',
+    fontSize: 11,
+    fontWeight: '900'
+  },
+  comboSuggestionList: {
+    gap: 8
+  },
+  comboSuggestionCard: {
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f8fafc',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10
+  },
+  comboSuggestionActive: {
+    borderColor: '#0f766e',
+    backgroundColor: '#ecfdf5'
+  },
+  comboNumber: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    color: '#0f5132',
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'center',
+    lineHeight: 32
+  },
+  comboThumbs: {
+    width: 72,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 3
+  },
+  comboThumb: {
+    width: 33,
+    height: 33,
+    borderRadius: 6,
+    backgroundColor: '#e5e7eb'
+  },
+  comboSuggestionCopy: {
+    flex: 1
+  },
+  suggestionRow: {
+    gap: 10,
+    paddingRight: 12
+  },
+  suggestionCard: {
+    width: 220,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 5
+  },
+  suggestionTitle: {
+    color: '#111827',
+    fontWeight: '900'
+  },
+  suggestionCopy: {
+    color: '#64748b',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700'
+  },
+  chatTranscript: {
+    maxHeight: 220,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    gap: 8
+  },
+  chatBubble: {
+    maxWidth: '88%',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb'
+  },
+  chatBubbleUser: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#111827',
+    borderColor: '#111827'
+  },
+  chatBubbleText: {
+    color: '#334155',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700'
+  },
+  chatBubbleUserText: {
+    color: '#fff'
+  },
+  closetGrid: {
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12
+  },
+  closetItemCard: {
+    width: 174,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb'
+  },
+  closetItemSelected: {
+    borderColor: '#0f766e',
+    backgroundColor: '#ecfdf5'
+  },
+  closetItemImage: {
+    width: '100%',
+    height: 174,
+    backgroundColor: '#e5e7eb'
+  },
+  closetItemBody: {
+    padding: 10,
+    gap: 5
+  },
+  closetItemActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8
+  },
+  selectText: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '900'
+  },
+  selectTextActive: {
+    color: '#0f766e'
+  },
+  closetMessage: {
+    marginHorizontal: 16,
+    marginTop: 10
+  },
+  looksList: {
+    marginBottom: 12
   },
   infoGrid: {
     paddingHorizontal: 16,

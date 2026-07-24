@@ -1,65 +1,76 @@
 import mongoose from 'mongoose';
 
 function signupTokens() {
-  const value = Number(process.env.SIGNUP_FREE_TOKENS || 4);
-  return Number.isFinite(value) && value >= 0 ? value : 4;
+  const value = Number(process.env.SIGNUP_FREE_TOKENS || 20);
+  return Number.isFinite(value) && value >= 0 ? value : 20;
 }
 
-function devMode() {
-  return ['1', 'true', 'yes', 'on'].includes(String(process.env.DEV_MODE || '').toLowerCase());
+function defaultDevMode() {
+  return ['1', 'true', 'yes', 'on'].includes(String(process.env.SIGNUP_DEV_MODE_DEFAULT || '').toLowerCase());
 }
 
 const userSchema = new mongoose.Schema(
   {
     name: { type: String, trim: true, required: true },
     email: { type: String, trim: true, lowercase: true, unique: true, required: true },
+    username: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      unique: true,
+      sparse: true
+    },
     passwordHash: { type: String, required: true },
+    genderPreference: {
+      type: String,
+      enum: ['male', 'female', 'other'],
+      default: 'other'
+    },
     tokens: { type: Number, default: signupTokens },
+    devMode: { type: Boolean, default: defaultDevMode },
+    subscription: {
+      planId: { type: String, trim: true },
+      status: { type: String, trim: true, default: 'none' },
+      tokensPerMonth: { type: Number, default: 0 },
+      currentPeriodStart: Date,
+      currentPeriodEnd: Date,
+      lastOrderId: { type: String, trim: true }
+    },
     bodyPhoto: {
       filename: String,
       path: String,
       mimetype: String,
       size: Number,
-      data: Buffer,
-      storage: { type: String, enum: ['disk', 'mongodb'], default: 'disk' }
-    },
-    tryOnCache: [{
-      kind: { type: String, enum: ['product', 'external', 'custom', 'vto-trial'], required: true },
-      key: { type: String, required: true },
-      tryOn: { type: mongoose.Schema.Types.ObjectId, ref: 'TryOn' },
-      externalTryOn: { type: mongoose.Schema.Types.ObjectId, ref: 'ExternalTryOn' },
-      customTryOn: { type: mongoose.Schema.Types.ObjectId, ref: 'CustomTryOn' },
-      product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
-      sourceUrl: String,
-      label: String,
-      image: {
-        filename: String,
-        path: String,
-        mimetype: String,
-        size: Number
-      },
-      createdAt: { type: Date, default: Date.now }
-    }]
+      status: { type: String, enum: ['uploaded', 'generating', 'ready', 'failed'], default: 'uploaded' },
+      source: { type: String, trim: true },
+      generatedAt: Date,
+      error: String
+    }
   },
   { timestamps: true }
 );
 
 userSchema.methods.toClient = function toClient() {
-  const hasMongoBodyPhoto = this.bodyPhoto?.storage === 'mongodb' || Boolean(this.bodyPhoto?.data);
-  const bodyPhotoPath = hasMongoBodyPhoto ? '/api/auth/me/body-photo' : this.bodyPhoto?.path ? `/${this.bodyPhoto.path}` : null;
-  const bodyPhotoVersion = this.updatedAt ? new Date(this.updatedAt).getTime() : Date.now();
-  const bodyPhotoUrl = bodyPhotoPath ? `${bodyPhotoPath}?v=${bodyPhotoVersion}` : null;
   return {
     id: this._id.toString(),
     name: this.name,
     email: this.email,
+    username: this.username,
+    genderPreference: this.genderPreference || 'other',
     tokens: this.tokens,
-    devMode: devMode(),
-    bodyPhotoUrl,
-    bodyPhotoFilename: this.bodyPhoto?.filename || null,
-    bodyPhotoSize: this.bodyPhoto?.size || null,
-    createdAt: this.createdAt,
-    updatedAt: this.updatedAt
+    subscription: {
+      planId: this.subscription?.planId || null,
+      status: this.subscription?.status || 'none',
+      tokensPerMonth: this.subscription?.tokensPerMonth || 0,
+      currentPeriodStart: this.subscription?.currentPeriodStart || null,
+      currentPeriodEnd: this.subscription?.currentPeriodEnd || null
+    },
+    devMode: Boolean(this.devMode),
+    joinedAt: this.createdAt,
+    bodyPhotoUrl: this.bodyPhoto?.path ? `/${this.bodyPhoto.path}` : null,
+    bodyPhotoStatus: this.bodyPhoto?.status || 'uploaded',
+    bodyPhotoSource: this.bodyPhoto?.source || 'upload',
+    bodyPhotoGeneratedAt: this.bodyPhoto?.generatedAt || null
   };
 };
 

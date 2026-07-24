@@ -1,11 +1,58 @@
 import express from 'express';
-import Product from '../models/Product.js';
+import multer from 'multer';
+import path from 'node:path';
+import Product, { productToClient } from '../models/Product.js';
 import { requireUser } from './auth.js';
+import { clearRecommendationCaches } from './recommendations.js';
+import { inferTryOnModel, normalizeTryOnModel } from '../utils/tryOnModel.js';
+import { createHybridCache } from '../utils/cache.js';
+import { wearableCompatibility } from '../utils/wearable.js';
+import { genderCompatibility, genderedSearchQuery, genderPreferenceForQuery } from '../utils/genderPreference.js';
 
 const router = express.Router();
-const facetCacheTtlMs = Number(process.env.PRODUCT_FACET_CACHE_TTL_MS || 30_000);
-const productReadCache = new Map();
-const botAmazonRecord = { badge: 'Amazon', $or: [{ sourceUrl: /amazon\.[a-z.]+\/dp\//i }, { affiliateLink: /amazon\.[a-z.]+\/dp\//i }] };
+const readCacheTtlMs = Number(process.env.PRODUCT_READ_CACHE_TTL_MS || 30 * 1000);
+const productListCache = createHybridCache('products:list', { ttlMs: readCacheTtlMs, maxItems: 150 });
+const productDetailCache = createHybridCache('products:detail', { ttlMs: readCacheTtlMs, maxItems: 300 });
+
+async function clearProductReadCaches() {
+  await Promise.all([
+    productListCache.clear(),
+    productDetailCache.clear()
+  ]);
+}
+
+async function clearReadCachesAfterProductWrite() {
+  await Promise.all([
+    clearProductReadCaches(),
+    clearRecommendationCaches()
+  ]);
+}
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: 'uploads/',
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || '');
+      cb(null, `product-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+    }
+  }),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    cb(null, file.mimetype.startsWith('image/'));
+  }
+});
+
+function splitList(value) {
+  if (!value) return [];
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toBoolean(value) {
+  return value === true || value === 'true' || value === 'on' || value === '1';
+}
 
 function readableError(value, fallback = 'Request failed') {
   if (!value) return fallback;
@@ -21,25 +68,6 @@ function readableError(value, fallback = 'Request failed') {
     }
   }
   return String(value);
-}
-
-function cacheKeyFor(value) {
-  return JSON.stringify(value, Object.keys(value).sort());
-}
-
-async function cachedRead(key, load) {
-  const now = Date.now();
-  const cached = productReadCache.get(key);
-  if (cached && cached.expiresAt > now) return cached.promise;
-
-  const promise = Promise.resolve()
-    .then(load)
-    .catch((error) => {
-      productReadCache.delete(key);
-      throw error;
-    });
-  productReadCache.set(key, { expiresAt: now + facetCacheTtlMs, promise });
-  return promise;
 }
 
 function cleanUrl(value) {
@@ -368,7 +396,7 @@ function hostBrand(url) {
 const categoryRules = [
   ['ethnic wear', /\b(sarees?|saris?|lehenga(?:s)?|dupatta(?:s)?|kurta(?:s)?|kurtis?|salwar(?:s)?|churidar(?:s)?|anarkali|palazzo(?:s)?|ethnic|traditional|sharara(?:s)?)\b/i, 28],
   ['eyewear', /\b(sun\s*glasses|sunglasses|eye\s*glasses|eyeglasses|glasses|spectacles?|optical\s*frames?|frames?|lenses?|goggles?|aviator|wayfarer)\b/i, 30],
-  ['innerwear', /\b(underwear|briefs?|boxers?|trunks?|vests?|innerwear|lingerie|bras?|pant(?:y|ies)|camisoles?|shapewear)\b/i, 30],
+  ['innerwear', /\b(underwear|briefs?|boxers?|trunks?|vests?|innerwear|lingerie|bras?|bralettes?|sports?\s+bras?|pant(?:y|ies)|camisoles?|shapewear|bikinis?|swimsuits?|swimwear|monokinis?|tankinis?)\b/i, 30],
   ['sleepwear', /\b(night(?:y|ie|wear|gown|suit|dress)|sleepwear|pajamas?|pyjamas?|loungewear|robe)\b/i, 26],
   ['dresses', /\b(dresses?|gowns?|bodycon|maxi|midi|mini\s*dress|a-line\s*dress|wrap\s*dress|party\s*dress)\b/i, 24],
   ['skirts', /\b(skirts?|skorts?)\b/i, 24],
@@ -845,36 +873,57 @@ function draftToExternalProduct(draft, fallbackQuery = '') {
   const currency = normalizeCurrency(draft.currency) || 'USD';
   const rating = Number(draft.rating);
   const ratingCount = Number(draft.ratingCount);
-  const name = draft.name || fallbackQuery;
-  const brand = cleanBrand(draft.brand) || 'Brand unavailable';
-  const description = cleanDescription(draft.description);
-  const category = draft.category || inferCategory({ title: name, description, query: fallbackQuery });
-  const gender = draft.gender || 'unisex';
-  const tags = draft.tags || [];
-  const tryOnModel = 'wan-v2.6-image-to-image';
 
   return {
     id: externalProductId(sourceUrl),
     external: true,
     sourceUrl,
     affiliateLink,
-    name,
-    brand,
-    category,
-    gender,
+    name: draft.name || fallbackQuery,
+    brand: cleanBrand(draft.brand) || 'Brand unavailable',
+    category: draft.category || inferCategory({ title: draft.name || fallbackQuery, description: draft.description || '', query: fallbackQuery }),
+    gender: draft.gender || 'unisex',
     price: Number.isFinite(price) ? price : null,
     compareAtPrice: Number.isFinite(compareAtPrice) ? compareAtPrice : null,
     currency,
     rating: Number.isFinite(rating) ? rating : 0,
     ratingCount: Number.isFinite(ratingCount) ? ratingCount : 0,
     badge: 'Amazon',
-    description,
-    tags,
-    tryOnModel,
+    description: cleanDescription(draft.description),
+    tags: draft.tags || [],
+    tryOnModel: inferTryOnModel(draft),
     colors: [],
     imageUrl,
     isNewArrival: true
   };
+}
+
+function textForIntent(product = {}) {
+  return [
+    product.name,
+    product.brand,
+    product.category,
+    product.description,
+    Array.isArray(product.tags) ? product.tags.join(' ') : product.tags
+  ].filter(Boolean).join(' ');
+}
+
+function queryIntentCompatibility(product = {}, query = '') {
+  const prompt = String(query || '');
+  const text = textForIntent(product);
+  const braIntent = /\b(bras?|bralettes?|sports?\s+bras?)\b/i.test(prompt);
+  const swimIntent = /\b(bikinis?|swimsuits?|swimwear|monokinis?|one\s*piece\s+swimsuits?)\b/i.test(prompt);
+
+  if (braIntent && !/\b(bras?|bralettes?|sports?\s+bras?|lingerie)\b/i.test(text)) return false;
+  if (swimIntent && !/\b(bikinis?|swimsuits?|swimwear|monokinis?|tankinis?|one\s*piece)\b/i.test(text)) return false;
+  return true;
+}
+
+function requireAdmin(req, res, next) {
+  const adminKey = process.env.ADMIN_KEY;
+  if (!adminKey) return res.status(500).json({ message: 'ADMIN_KEY is missing on the server' });
+  if (req.headers['x-admin-key'] !== adminKey) return res.status(401).json({ message: 'Invalid admin key' });
+  next();
 }
 
 function sortFor(value) {
@@ -885,61 +934,65 @@ function sortFor(value) {
 }
 
 router.get('/', async (req, res) => {
-  const { q, category, brand, gender, featured, newArrival, sort } = req.query;
+  const cacheKey = req.originalUrl;
+  const cached = await productListCache.get(cacheKey);
+  if (cached) return res.json(cached);
+
+  const { q, tag, category, brand, gender, featured, newArrival, sort } = req.query;
   const limit = Math.min(Number(req.query.limit) || 48, 96);
+  const botAmazonRecord = { badge: 'Amazon', $or: [{ sourceUrl: /amazon\.[a-z.]+\/dp\//i }, { affiliateLink: /amazon\.[a-z.]+\/dp\//i }] };
   const filter = { isActive: true, $nor: [botAmazonRecord] };
-  const readCacheKey = cacheKeyFor({ q, category, brand, gender, featured, newArrival });
 
   if (q) filter.$text = { $search: q };
-  if (category) filter.category = new RegExp(`^${escapeRegExp(String(category).trim())}$`, 'i');
-  if (brand) filter.brand = new RegExp(`^${escapeRegExp(String(brand).trim())}$`, 'i');
-  if (gender) filter.gender = new RegExp(`^${escapeRegExp(String(gender).trim())}$`, 'i');
+  if (tag) filter.tags = new RegExp(`^${escapeRegExp(String(tag).trim())}$`, 'i');
+  if (category) filter.category = new RegExp(`^${String(category).trim()}$`, 'i');
+  if (brand) filter.brand = new RegExp(`^${String(brand).trim()}$`, 'i');
+  if (gender) filter.gender = new RegExp(`^${String(gender).trim()}$`, 'i');
   if (featured === 'true') filter.isFeatured = true;
   if (newArrival === 'true') filter.isNewArrival = true;
 
   const projection = q ? { score: { $meta: 'textScore' } } : {};
-  const query = Product.find(filter, projection).limit(limit);
+  const query = Product.find(filter, projection).limit(limit).lean();
   if (q && !sort) query.sort({ score: { $meta: 'textScore' }, createdAt: -1 });
   else query.sort(sortFor(sort));
 
-  const [products, total, facets, categoryCounts] = await Promise.all([
+  const [products, total, brands, categories, categoryCounts] = await Promise.all([
     query,
-    cachedRead(`products:total:${readCacheKey}`, () => Product.countDocuments(filter)),
-    cachedRead('products:facets:global', async () => {
-      const [brands, categories] = await Promise.all([
-        Product.distinct('brand', { isActive: true, $nor: [botAmazonRecord] }),
-        Product.distinct('category', { isActive: true, $nor: [botAmazonRecord] })
-      ]);
-      return {
-        brands: brands.filter(Boolean).sort(),
-        categories: categories.filter(Boolean).sort()
-      };
-    }),
-    cachedRead(`products:category-counts:${readCacheKey}`, () => Product.aggregate([
-        { $match: filter },
-        { $group: { _id: '$category', count: { $sum: 1 } } },
-        { $sort: { count: -1, _id: 1 } }
-      ]))
+    Product.countDocuments(filter),
+    Product.distinct('brand', { isActive: true, $nor: [botAmazonRecord] }),
+    Product.distinct('category', { isActive: true, $nor: [botAmazonRecord] }),
+    Product.aggregate([
+      { $match: filter },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+      { $sort: { count: -1, _id: 1 } }
+    ])
   ]);
 
-  res.json({
-    products: products.map((product) => product.toClient()),
+  const payload = {
+    products: products.map(productToClient),
     total,
     facets: {
-      brands: facets.brands,
-      categories: facets.categories,
+      brands: brands.filter(Boolean).sort(),
+      categories: categories.filter(Boolean).sort(),
       categoryCounts: categoryCounts.map((item) => ({ category: item._id || 'uncategorized', count: item.count }))
     }
-  });
+  };
+  await productListCache.set(cacheKey, payload);
+  res.json(payload);
 });
 
 router.post('/amazon-search', requireUser, async (req, res) => {
   const query = String(req.body?.query || '').trim();
   const limit = Math.min(Math.max(Number(req.body?.limit) || 2, 1), 2);
+  const genderPreference = genderPreferenceForQuery(query, req.body?.genderPreference || req.user.genderPreference);
   if (!query) return res.status(400).json({ message: 'Tell the style bot what you want first' });
 
   try {
-    const searchUrl = `${amazonSearchBaseUrl()}/s?k=${encodeURIComponent(query)}`;
+    const queryCompatibility = wearableCompatibility({ name: query }, { query });
+    if (!queryCompatibility.compatible) throw new Error(queryCompatibility.reason);
+
+    const searchQuery = genderedSearchQuery(query, genderPreference);
+    const searchUrl = `${amazonSearchBaseUrl()}/s?k=${encodeURIComponent(searchQuery)}`;
     const response = await fetch(searchUrl, {
       redirect: 'follow',
       headers: {
@@ -967,10 +1020,13 @@ router.post('/amazon-search', requireUser, async (req, res) => {
     for (const result of settled) {
       if (result.status !== 'fulfilled') continue;
       if (products.some((product) => product.sourceUrl === result.value.sourceUrl)) continue;
+      if (!queryIntentCompatibility(result.value, query)) continue;
+      if (!wearableCompatibility(result.value, { query }).compatible) continue;
+      if (!genderCompatibility(result.value, genderPreference).compatible) continue;
       products.push(result.value);
       if (products.length >= limit) break;
     }
-    if (products.length === 0) throw new Error('Amazon results were found, but product details could not be extracted');
+    if (products.length === 0) throw new Error('Amazon results were found, but none were compatible with AI try-on. Try a clothing item, shoes, watch, bag, eyewear, or accessory.');
 
     res.json({ products });
   } catch (error) {
@@ -978,14 +1034,120 @@ router.post('/amazon-search', requireUser, async (req, res) => {
   }
 });
 
+router.post('/recategorize', requireAdmin, async (_req, res) => {
+  const botAmazonRecord = { badge: 'Amazon', $or: [{ sourceUrl: /amazon\.[a-z.]+\/dp\//i }, { affiliateLink: /amazon\.[a-z.]+\/dp\//i }] };
+  const products = await Product.find({ isActive: true, $nor: [botAmazonRecord] });
+  let updated = 0;
+  const changes = [];
+
+  for (const product of products) {
+    const nextCategory = inferCategory({
+      title: product.name,
+      description: product.description,
+      facts: [...(product.tags || []), ...(product.colors || []), product.brand, product.gender].join(' ')
+    });
+    if (!nextCategory || nextCategory === 'clothing' || nextCategory === product.category) continue;
+    changes.push({ id: product._id.toString(), name: product.name, from: product.category, to: nextCategory });
+    product.category = nextCategory;
+    await product.save();
+    updated += 1;
+  }
+
+  if (updated) await clearReadCachesAfterProductWrite();
+  res.json({ updated, checked: products.length, changes });
+});
+
 router.get('/:id', async (req, res) => {
   try {
-    const product = await Product.findOne({ _id: req.params.id, isActive: true });
+    const cached = await productDetailCache.get(req.params.id);
+    if (cached) return res.json(cached);
+    const product = await Product.findOne({ _id: req.params.id, isActive: true }).lean();
     if (!product) return res.status(404).json({ message: 'Product not found' });
-    res.json({ product: product.toClient() });
+    const payload = { product: productToClient(product) };
+    await productDetailCache.set(req.params.id, payload);
+    res.json(payload);
   } catch {
     res.status(404).json({ message: 'Product not found' });
   }
+});
+
+router.post('/preview-link', requireAdmin, async (req, res) => {
+  try {
+    const draft = await buildProductDraft(req.body.affiliateLink);
+    res.json({ draft });
+  } catch (error) {
+    res.status(400).json({ message: readableError(error, 'Could not preview affiliate link') });
+  }
+});
+
+router.post('/', requireAdmin, upload.single('image'), async (req, res) => {
+  const { name, brand, category, gender, price } = req.body;
+  if (!name || !brand || !category || !price) {
+    return res.status(400).json({ message: 'Name, brand, category, and price are required' });
+  }
+
+  let image;
+  if (req.file) {
+    image = {
+      filename: req.file.filename,
+      path: `uploads/${req.file.filename}`,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    };
+  } else if (req.body.remoteImageUrl) {
+    image = { remoteUrl: cleanUrl(req.body.remoteImageUrl) };
+  }
+
+  if (!image) return res.status(400).json({ message: 'Product image or fetched image URL is required' });
+
+  const product = await Product.create({
+    name,
+    brand,
+    category,
+    gender: gender || 'unisex',
+    price: Number(price),
+    compareAtPrice: req.body.compareAtPrice ? Number(req.body.compareAtPrice) : undefined,
+    currency: normalizeCurrency(req.body.currency) || 'USD',
+    rating: req.body.rating ? Number(req.body.rating) : 4.5,
+    ratingCount: req.body.ratingCount ? Number(req.body.ratingCount) : 0,
+    badge: req.body.badge,
+    affiliateLink: cleanUrl(req.body.affiliateLink),
+    sourceUrl: cleanUrl(req.body.sourceUrl),
+    description: req.body.description,
+    tags: splitList(req.body.tags),
+    colors: splitList(req.body.colors),
+    tryOnModel: normalizeTryOnModel(req.body.tryOnModel),
+    isFeatured: toBoolean(req.body.isFeatured),
+    isNewArrival: toBoolean(req.body.isNewArrival),
+    image
+  });
+
+  await clearReadCachesAfterProductWrite();
+  res.status(201).json({ product: product.toClient() });
+});
+
+router.patch('/:id/tryon-model', requireAdmin, async (req, res) => {
+  const product = await Product.findByIdAndUpdate(
+    req.params.id,
+    { tryOnModel: normalizeTryOnModel(req.body.tryOnModel) },
+    { new: true }
+  );
+  if (!product) return res.status(404).json({ message: 'Product not found' });
+  await clearReadCachesAfterProductWrite();
+  res.json({ product: product.toClient() });
+});
+
+router.delete('/', requireAdmin, async (_req, res) => {
+  const result = await Product.updateMany({ isActive: true }, { isActive: false });
+  await clearReadCachesAfterProductWrite();
+  res.json({ removed: result.modifiedCount || 0 });
+});
+
+router.delete('/:id', requireAdmin, async (req, res) => {
+  const product = await Product.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
+  if (!product) return res.status(404).json({ message: 'Product not found' });
+  await clearReadCachesAfterProductWrite();
+  res.json({ product: product.toClient() });
 });
 
 export default router;
