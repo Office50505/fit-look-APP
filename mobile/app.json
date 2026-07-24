@@ -21,7 +21,7 @@
     },
     "android": {
       "package": "com.fitlook.app",
-      "versionCode": 8,
+      "versionCode": 9,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#101820"
