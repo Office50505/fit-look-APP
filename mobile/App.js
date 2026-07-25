@@ -360,9 +360,9 @@ function ProductCard({ product, tryOn, loading, videoLoading, error, videoError,
         </View>
         {onTryOn ? (
           <AppButton
-            label={hasTryOnImage ? 'Try-On Ready' : loading ? 'Generating...' : 'Try On'}
+            label={loading ? 'Generating...' : hasTryOnImage ? 'Generate Again' : 'Try On'}
             icon="sparkles-outline"
-            disabled={loading || hasTryOnImage}
+            disabled={loading}
             onPress={onTryOn}
             style={styles.cardButton}
           />
@@ -589,11 +589,15 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate 
   };
 
   const generateTryOn = useCallback(async (product) => {
-    if (!user || !product?.id || tryOnLoading[product.id] || tryOns[product.id]) return;
+    if (!user || !product?.id || tryOnLoading[product.id]) return;
+    const existing = tryOns[product.id];
     setTryOnLoading((current) => ({ ...current, [product.id]: true }));
     setTryOnErrors((current) => ({ ...current, [product.id]: '' }));
     try {
-      const data = await api(`/tryons/${product.id}`, { method: 'POST' });
+      const data = await api(`/tryons/${product.id}`, {
+        method: 'POST',
+        body: existing?.imageUrl ? JSON.stringify({ force: true }) : undefined
+      });
       setTryOns((current) => ({ ...current, [product.id]: data.tryOn }));
       if (data.user) setUser(data.user);
     } catch (error) {
@@ -748,11 +752,14 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
       onNavigate('signup');
       return;
     }
-    if (tryOnLoading || tryOn?.imageUrl) return;
+    if (tryOnLoading || !state.product?.id) return;
     setTryOnLoading(true);
     setTryOnError('');
     try {
-      const data = await api(`/tryons/${state.product.id}`, { method: 'POST' });
+      const data = await api(`/tryons/${state.product.id}`, {
+        method: 'POST',
+        body: tryOn?.imageUrl ? JSON.stringify({ force: true }) : undefined
+      });
       setTryOn(data.tryOn);
       if (data.user) setUser(data.user);
     } catch (error) {
@@ -866,10 +873,10 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
         <View style={styles.detailActions}>
           {product.affiliateLink ? <AppButton label="Shop Brand" icon="open-outline" onPress={() => Linking.openURL(product.affiliateLink)} /> : null}
           <AppButton
-            label={tryOn?.imageUrl ? 'Try-On Ready' : tryOnLoading ? 'Generating...' : user ? 'Generate AI Try-On' : 'Create Profile'}
+            label={tryOnLoading ? 'Generating Try-On...' : tryOn?.imageUrl ? 'Generate Try-On Again' : user ? 'Generate AI Try-On' : 'Create Profile'}
             icon="sparkles-outline"
             variant={product.affiliateLink ? 'secondary' : 'primary'}
-            disabled={tryOnLoading || Boolean(tryOn?.imageUrl)}
+            disabled={tryOnLoading}
             onPress={generate}
           />
           {user && tryOn?.imageUrl ? (
@@ -2138,9 +2145,11 @@ function ProfileScreen({ user, setUser, setToken, onNavigate }) {
   const [profilePhotoMode, setProfilePhotoMode] = useState('ai-full-body');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [lightbox, setLightbox] = useState(null);
 
   if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
 
+  const previewUri = photo?.uri || (user.bodyPhotoUrl ? imageUrl(user.bodyPhotoUrl) : '');
   const photoSource = photo?.uri
     ? { uri: photo.uri }
     : user.bodyPhotoUrl
@@ -2199,6 +2208,23 @@ function ProfileScreen({ user, setUser, setToken, onNavigate }) {
         ))}
       </View>
 
+      {previewUri ? (
+        <View style={styles.fullBodyPreviewCard}>
+          <View style={styles.sectionHead}>
+            <View>
+              <Text style={styles.kicker}>Try-on photo</Text>
+              <Text style={styles.fullBodyPreviewTitle}>Full-body preview</Text>
+            </View>
+            <TouchableOpacity style={styles.previewIconButton} onPress={() => setLightbox(previewUri)}>
+              <Ionicons name="expand-outline" size={20} color="#111827" />
+            </TouchableOpacity>
+          </View>
+          <Pressable style={styles.fullBodyPreviewFrame} onPress={() => setLightbox(previewUri)}>
+            <Image source={{ uri: previewUri }} style={styles.fullBodyPreviewImage} resizeMode="contain" />
+          </Pressable>
+        </View>
+      ) : null}
+
       <View style={styles.profileActions}>
         <TouchableOpacity style={styles.uploadBox} onPress={async () => setPhoto(await pickImage())}>
           <Ionicons name={photo ? 'checkmark-circle-outline' : 'cloud-upload-outline'} size={30} color="#0f766e" />
@@ -2223,6 +2249,7 @@ function ProfileScreen({ user, setUser, setToken, onNavigate }) {
         <AppButton label="Browse Products" icon="search-outline" variant="secondary" onPress={() => onNavigate('shop')} />
         {message ? <Text style={[styles.formMessage, message.includes('updated') || message.includes('Updating') ? null : styles.errorText]}>{message}</Text> : null}
       </View>
+      <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </ScrollView>
   );
 }
@@ -3608,6 +3635,48 @@ const styles = StyleSheet.create({
     color: '#111827',
     fontSize: 17,
     fontWeight: '900'
+  },
+  fullBodyPreviewCard: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    gap: 12
+  },
+  fullBodyPreviewTitle: {
+    marginTop: 4,
+    color: '#111827',
+    fontSize: 22,
+    lineHeight: 26,
+    fontWeight: '900',
+    letterSpacing: 0
+  },
+  previewIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  fullBodyPreviewFrame: {
+    height: 360,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#f5efe7',
+    borderWidth: 1,
+    borderColor: '#e7d7c6',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  fullBodyPreviewImage: {
+    width: '100%',
+    height: '100%'
   },
   profileActions: {
     margin: 16,

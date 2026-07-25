@@ -63,3 +63,4 @@ mobile/android/
 # Deploy/provider local state
 .vercel/
 .netlify/
+*.env
