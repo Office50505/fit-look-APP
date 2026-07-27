@@ -15,6 +15,8 @@ let activeApiUrl = API_URL;
 
 export const API_ORIGIN = API_URL.replace(/\/api\/?$/, '');
 const TOKEN_KEY = 'fitlook_token';
+const DEFAULT_TIMEOUT_MS = 15000;
+const FORM_TIMEOUT_MS = 60000;
 
 export async function getToken() {
   return AsyncStorage.getItem(TOKEN_KEY);
@@ -65,26 +67,38 @@ function readableError(value, fallback = 'Request failed') {
 }
 
 export async function api(path, options = {}) {
+  const { timeoutMs, ...fetchOptions } = options;
   const token = await getToken();
-  const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const isForm = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
   const headers = isForm ? {} : { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
+  const requestTimeout = Number(timeoutMs || (isForm ? FORM_TIMEOUT_MS : DEFAULT_TIMEOUT_MS));
 
   const orderedUrls = [...new Set([activeApiUrl, ...apiUrls])];
   let networkError = null;
   for (const baseUrl of orderedUrls) {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller && Number.isFinite(requestTimeout) && requestTimeout > 0
+      ? setTimeout(() => controller.abort(), requestTimeout)
+      : null;
     try {
       const response = await fetch(`${baseUrl}${path}`, {
-        ...options,
-        headers: { ...headers, ...options.headers }
+        ...fetchOptions,
+        headers: { ...headers, ...fetchOptions.headers },
+        signal: controller?.signal || fetchOptions.signal
       });
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(readableError(data, `Request failed (${response.status})`));
       activeApiUrl = baseUrl;
       return data;
     } catch (error) {
-      if (!/network request failed|failed to fetch|load failed|networkerror/i.test(error?.message || '')) throw error;
-      networkError = error;
+      const message = error?.name === 'AbortError'
+        ? `Connection timed out after ${Math.round(requestTimeout / 1000)}s`
+        : error?.message || '';
+      if (!/network request failed|failed to fetch|load failed|networkerror|timed out/i.test(message)) throw error;
+      networkError = new Error(message || 'Unable to connect to FitLook API');
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
   throw networkError || new Error('Unable to connect to FitLook API');

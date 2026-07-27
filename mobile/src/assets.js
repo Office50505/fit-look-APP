@@ -1,5 +1,6 @@
 export const images = {
   hero: require('../assets/hero-room.png'),
+  homeAtelierHero: require('../assets/home-atelier-hero.png'),
   locked: require('../assets/search-locked-preview.jpg'),
   'arrival-1.jpg': require('../assets/arrival-1.jpg'),
   'arrival-2.jpg': require('../assets/arrival-2.jpg'),

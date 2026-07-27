@@ -561,7 +561,7 @@ function HomeScreen({ onNavigate }) {
       </View>
 
       <View style={styles.homeHero}>
-        <Image source={images['arrival-4.jpg']} style={styles.homeHeroImage} resizeMode="cover" />
+        <Image source={images.homeAtelierHero} style={styles.homeHeroImage} resizeMode="cover" />
         <View style={styles.homeHeroShade} />
         <View style={styles.homeHeroCopy}>
           <Text style={styles.homeHeroTitle}>SUMMER ESSENTIALS</Text>
@@ -849,7 +849,8 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate 
     try {
       const data = await api(`/tryons/${product.id}/video`, {
         method: 'POST',
-        body: existing.videoUrl ? JSON.stringify({ force: true }) : undefined
+        body: existing.videoUrl ? JSON.stringify({ force: true }) : undefined,
+        timeoutMs: 180000
       });
       setTryOns((current) => ({ ...current, [product.id]: data.tryOn }));
       if (data.user) setUser(data.user);
@@ -1130,7 +1131,8 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
     try {
       const data = await api(`/tryons/${state.product.id}/video`, {
         method: 'POST',
-        body: tryOn?.videoUrl ? JSON.stringify({ force: true }) : undefined
+        body: tryOn?.videoUrl ? JSON.stringify({ force: true }) : undefined,
+        timeoutMs: 180000
       });
       setTryOn(data.tryOn);
       if (data.user) setUser(data.user);
@@ -1153,7 +1155,12 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
   const originalUri = imageUrl(product.imageUrl);
   const tryOnUri = imageUrl(tryOn?.imageUrl);
   const tryOnVideoUri = imageUrl(tryOn?.videoUrl);
-  const displaySource = tryOnUri ? { uri: tryOnUri } : originalUri ? { uri: originalUri } : images['arrival-4.jpg'];
+  const mediaWidth = Math.max(1, Math.round(width - 28));
+  const mediaItems = [
+    tryOnVideoUri ? { key: 'video', label: 'Video Try-On', type: 'video', uri: tryOnVideoUri } : null,
+    tryOnUri ? { key: 'tryon', label: 'AI Try-On', source: { uri: tryOnUri }, uri: tryOnUri } : null,
+    { key: 'original', label: 'Original Product', source: originalUri ? { uri: originalUri } : images['arrival-4.jpg'], uri: originalUri }
+  ].filter(Boolean);
   const detailTags = [
     titleCase(product.category || 'Knitwear'),
     product.fit || 'Regular Fit',
@@ -1176,17 +1183,31 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
         <Text style={styles.productCrumbCurrent} numberOfLines={1}>{product.name}</Text>
       </View>
 
-      <Pressable style={[styles.productHeroMedia, { height: mediaHeight }]} onPress={() => (tryOnUri || originalUri) && setLightbox(tryOnUri || originalUri)}>
-        {tryOnVideoUri ? (
-          <TryOnVideoPlayer uri={tryOnVideoUri} style={styles.productHeroVideo} nativeControls={false} />
-        ) : (
-          <Image source={displaySource} style={styles.productHeroImage} resizeMode="cover" />
-        )}
+      <View style={[styles.productHeroMedia, { height: mediaHeight }]}>
+        <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.productMediaTrack}>
+          {mediaItems.map((item, index) => (
+            <Pressable key={item.key} style={[styles.productMediaSlide, { width: mediaWidth }]} onPress={() => item.type !== 'video' && item.uri && setLightbox(item.uri)}>
+              {item.type === 'video' ? (
+                <TryOnVideoPlayer uri={item.uri} style={styles.productHeroVideo} nativeControls />
+              ) : (
+                <Image source={item.source} style={styles.productHeroImage} resizeMode="contain" />
+              )}
+              <Text style={styles.productMediaBadge}>{item.label}</Text>
+              {mediaItems.length > 1 ? <Text style={styles.productMediaCount}>{index + 1}/{mediaItems.length}</Text> : null}
+            </Pressable>
+          ))}
+        </ScrollView>
         <TouchableOpacity style={styles.productFavoriteButton}>
           <Ionicons name="heart-outline" size={24} color="#5d5754" />
         </TouchableOpacity>
+        {mediaItems.length > 1 ? (
+          <View style={styles.productSwipeHint}>
+            <Ionicons name="swap-horizontal-outline" size={14} color="#111111" />
+            <Text style={styles.productSwipeText}>Slide to compare</Text>
+          </View>
+        ) : null}
         {tryOnLoading || tryOnVideoLoading ? <TryOnLoading text={tryOnVideoLoading ? 'Generating video' : 'Generating try-on'} large /> : null}
-      </Pressable>
+      </View>
 
       <View style={styles.productSummary}>
         <View style={styles.productSummaryTop}>
@@ -1408,7 +1429,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
         body.append('profilePhotoMode', profilePhotoMode);
         body.append('bodyPhoto', filePart(photo, 'body-photo.jpg'));
       }
-      const data = await api(isSignup ? '/auth/signup' : '/auth/login', { method: 'POST', body });
+      const data = await api(isSignup ? '/auth/signup' : '/auth/login', { method: 'POST', body, timeoutMs: isSignup ? 60000 : 12000 });
       await saveToken(data.token);
       setToken(data.token);
       setUser(data.user);
@@ -3521,12 +3542,15 @@ export default function App() {
 
   useEffect(() => {
     let alive = true;
-    api('/auth/me')
-      .then(async (data) => {
+    getToken()
+      .then(async (storedToken) => {
         if (!alive) return;
-      setUser(data.user);
-      setToken(await getToken());
-      setRouteStack((current) => (current.length === 1 && current[0]?.name === 'auth' ? [normalizeRoute('home')] : current));
+        setToken(storedToken);
+        if (!storedToken) return;
+        const data = await api('/auth/me', { timeoutMs: 3500 });
+        if (!alive) return;
+        setUser(data.user);
+        setRouteStack((current) => (current.length === 1 && current[0]?.name === 'auth' ? [normalizeRoute('home')] : current));
       })
       .catch(() => {})
       .finally(() => alive && setReady(true));
@@ -5657,7 +5681,15 @@ const styles = StyleSheet.create({
     marginHorizontal: 14,
     borderRadius: 7,
     overflow: 'hidden',
-    backgroundColor: '#eee8e3'
+    backgroundColor: '#050505'
+  },
+  productMediaTrack: {
+    alignItems: 'stretch'
+  },
+  productMediaSlide: {
+    height: '100%',
+    backgroundColor: '#f2f0ef',
+    position: 'relative'
   },
   productHeroImage: {
     width: '100%',
@@ -5667,6 +5699,32 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     backgroundColor: '#000'
+  },
+  productMediaBadge: {
+    position: 'absolute',
+    left: 12,
+    top: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    color: '#171412',
+    fontSize: 11,
+    fontWeight: '900'
+  },
+  productMediaCount: {
+    position: 'absolute',
+    right: 56,
+    top: 14,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(5, 5, 5, 0.72)',
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '900'
   },
   productFavoriteButton: {
     position: 'absolute',
@@ -5678,6 +5736,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.88)',
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  productSwipeHint: {
+    position: 'absolute',
+    left: 12,
+    bottom: 12,
+    minHeight: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.86)',
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5
+  },
+  productSwipeText: {
+    color: '#171412',
+    fontSize: 11,
+    fontWeight: '800'
   },
   productSummary: {
     paddingHorizontal: 14,
