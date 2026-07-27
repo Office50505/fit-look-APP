@@ -286,19 +286,31 @@ function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
 
 function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
   const activeRoute = route?.name || 'home';
-  const items = [
-    ['home', 'sparkles-outline', 'Curated'],
-    ['shop', 'grid-outline', 'Shop'],
-    ['tryon', 'shirt-outline', 'AI Try-On'],
-    ['profile', 'person-outline', 'Profile']
-  ];
+  const items = activeRoute === 'closet'
+    ? [
+      ['home', 'home-outline', 'Home'],
+      ['shop', 'search-outline', 'Explore'],
+      ['closet', 'shirt-outline', 'Wardrobe'],
+      ['tryon', 'sparkles-outline', 'Studio'],
+      ['profile', 'person-outline', 'Profile']
+    ]
+    : [
+      ['home', 'book-outline', 'Feed'],
+      ['shop', 'storefront-outline', 'Shop'],
+      ['tryon', 'sparkles-outline', 'AI Studio'],
+      ['closet', 'shirt-outline', 'Wardrobe'],
+      ['profile', 'person-outline', 'Profile']
+    ];
   return (
     <View style={styles.bottomNav}>
       {items.map(([name, icon, label]) => {
         const active = activeRoute === name;
+        const centerActive = activeRoute === 'closet' && name === 'closet';
         return (
-          <TouchableOpacity key={name} style={styles.navItem} onPress={() => onNavigate(name)}>
-            <Ionicons name={icon} size={21} color={active ? '#c17679' : '#8d8682'} />
+          <TouchableOpacity key={name} style={[styles.navItem, centerActive && styles.navItemCenterActive]} onPress={() => onNavigate(name)}>
+            <View style={[styles.navIconWrap, centerActive && styles.navIconWrapCenter]}>
+              <Ionicons name={icon} size={centerActive ? 27 : 21} color={centerActive ? '#ffffff' : active ? '#c17679' : '#8d8682'} />
+            </View>
             <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
           </TouchableOpacity>
         );
@@ -436,6 +448,51 @@ const homeCuratedItems = [
   ['OUTERWEAR', 'Nomad Gilet', '$310', 'trending-4.jpg', false],
   ['HERITAGE', 'Legacy Letterman', '$450', 'arrival-2.jpg', false]
 ];
+
+const shopCategoryItems = [
+  ['Tops', 'category-1.jpg', 'tops'],
+  ['Bottoms', 'category-3.jpg', 'bottoms'],
+  ['Dresses', 'arrival-4.jpg', 'dresses'],
+  ['Shoes', 'category-6.jpg', 'shoes']
+];
+
+const shopFallbackArrivals = [
+  { brand: 'FITLOOK ATELIER', name: 'Ribbed Knit Top', price: '$29.90', image: 'arrival-1.jpg', colors: ['#eadfdb', '#c2ae94', '#2f5959'] },
+  { brand: 'FITLOOK ATELIER', name: 'Wide-Leg Jeans', price: '$49.90', image: 'category-4.jpg', colors: ['#7ab4d5', '#5d9cc9'] },
+  { brand: 'FITLOOK ESSENTIALS', name: 'Oversized Sweater', price: '$39.90', image: 'arrival-2.jpg', colors: ['#304457', '#f3f2e8'] },
+  { brand: 'FITLOOK ACCESSORIES', name: 'Shoulder Bag', price: '$24.90', image: 'category-8.jpg', colors: ['#814347', '#111111'] }
+];
+
+function ShopTopBar({ onNavigate }) {
+  return (
+    <View style={styles.shopTopBar}>
+      <TouchableOpacity style={styles.shopTopIcon} onPress={() => onNavigate('profile')}>
+        <Ionicons name="menu-outline" size={22} color="#111111" />
+      </TouchableOpacity>
+      <Text style={styles.shopBrand}>FITLOOK</Text>
+      <TouchableOpacity style={styles.shopTopIcon} onPress={() => onNavigate('tokens')}>
+        <Ionicons name="bag-handle-outline" size={20} color="#111111" />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function ShopArrivalCard({ item, product, onPress }) {
+  const colors = item?.colors || ['#e8ded6', '#161616'];
+  return (
+    <TouchableOpacity style={styles.shopArrivalCard} activeOpacity={0.86} onPress={onPress}>
+      <View style={styles.shopArrivalImageWrap}>
+        <Image source={product ? productImageSource(product) : images[item.image]} style={styles.shopArrivalImage} resizeMode="cover" />
+      </View>
+      <Text style={styles.shopArrivalBrand} numberOfLines={1}>{product?.brand || item.brand}</Text>
+      <Text style={styles.shopArrivalName} numberOfLines={2}>{product?.name || item.name}</Text>
+      <Text style={styles.shopArrivalPrice}>{product ? formatMoney(product.price || 0, product.currency) : item.price}</Text>
+      <View style={styles.shopSwatches}>
+        {colors.map((color) => <View key={color} style={[styles.shopSwatch, { backgroundColor: color }]} />)}
+      </View>
+    </TouchableOpacity>
+  );
+}
 
 function HomeScreen({ onNavigate }) {
   const [atelierEmail, setAtelierEmail] = useState('');
@@ -756,9 +813,124 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate 
     trialProducts.filter((product) => !tryOns[product.id]).forEach((product) => generateTryOn(product));
   }, [user?.id, tryOnMode, hasSearchIntent, continueWithoutTryOn, state.loading, searchSignature, trialProducts.map((product) => product.id).join(','), Object.keys(tryOns).join(',')]);
 
+  const showStorefront = !tryOnMode && !hasSearchIntent && !filters.sort;
+  const storefrontProducts = state.products.slice(0, 4);
+
+  if (showStorefront) {
+    return (
+      <ScrollView style={styles.shopScreen} contentContainerStyle={styles.shopContent} showsVerticalScrollIndicator={false}>
+        <ShopTopBar onNavigate={onNavigate} />
+
+        <View style={styles.shopHero}>
+          <Image source={images['arrival-4.jpg']} style={styles.shopHeroImage} resizeMode="cover" />
+          <View style={styles.shopHeroShade} />
+          <View style={styles.shopHeroCopy}>
+            <Text style={styles.shopHeroTitle}>CONFIDENCE</Text>
+            <Text style={styles.shopHeroText}>Trendy pieces. Timeless style. FitLook has everything you need to look and feel your best.</Text>
+            <TouchableOpacity style={styles.shopHeroButton} onPress={() => onNavigate('shop', { newArrival: true })}>
+              <Text style={styles.shopHeroButtonText}>SHOP NEW IN</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.shopCategorySection}>
+          <View style={styles.shopSectionHead}>
+            <Text style={styles.shopSectionTitle}>Shop by Category</Text>
+            <TouchableOpacity onPress={() => onNavigate('shop', { sort: 'newest' })}>
+              <Text style={styles.shopViewAll}>View all -></Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.shopCategoryRow}>
+            {shopCategoryItems.map(([label, image, category]) => (
+              <TouchableOpacity key={label} style={styles.shopCategoryItem} onPress={() => onNavigate('shop', { category })}>
+                <Image source={images[image]} style={styles.shopCategoryImage} resizeMode="cover" />
+                <Text style={styles.shopCategoryLabel}>{label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.shopArrivalsSection}>
+          <View style={styles.shopArrivalsHead}>
+            <View>
+              <Text style={styles.shopSectionTitle}>New Arrivals</Text>
+              <Text style={styles.shopSectionSub}>Fresh styles. Just in.</Text>
+            </View>
+            <View style={styles.shopPager}>
+              <TouchableOpacity style={styles.shopPagerButton} onPress={() => onNavigate('shop', { sort: 'newest' })}>
+                <Ionicons name="chevron-back" size={16} color="#6c625e" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.shopPagerButton} onPress={() => onNavigate('shop', { newArrival: true })}>
+                <Ionicons name="chevron-forward" size={16} color="#6c625e" />
+              </TouchableOpacity>
+            </View>
+          </View>
+          <View style={styles.shopArrivalGrid}>
+            {shopFallbackArrivals.map((item, index) => {
+              const product = storefrontProducts[index];
+              return (
+                <ShopArrivalCard
+                  key={product?.id || item.name}
+                  item={item}
+                  product={product}
+                  onPress={() => (product ? onNavigate('product', { id: product.id }) : onNavigate('shop', { newArrival: true }))}
+                />
+              );
+            })}
+          </View>
+        </View>
+
+        <TouchableOpacity style={styles.shopDiscountCard} activeOpacity={0.88} onPress={() => onNavigate('shop', { q: 'student' })}>
+          <View style={styles.shopDiscountCopy}>
+            <Text style={styles.shopPromoEyebrow}>STUDENTS GET</Text>
+            <Text style={styles.shopDiscountTitle}>10% OFF</Text>
+            <Text style={styles.shopDiscountText}>Verify your student status.</Text>
+            <View style={styles.shopDiscountButton}>
+              <Text style={styles.shopDiscountButtonText}>Get Discount</Text>
+            </View>
+          </View>
+          <Image source={images['search-locked-preview.jpg']} style={styles.shopDiscountImage} resizeMode="cover" />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.shopLookCard} activeOpacity={0.88} onPress={() => onNavigate('shop', { sort: 'newest' })}>
+          <Image source={images.hero} style={styles.shopLookImage} resizeMode="cover" />
+          <View style={styles.shopLookShade} />
+          <View style={styles.shopLookCopy}>
+            <Text style={styles.shopLookEyebrow}>NEW SEASON</Text>
+            <Text style={styles.shopLookTitle}>NEW LOOK</Text>
+            <Text style={styles.shopLookAction}>Shop Now</Text>
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.shopExploreHead}>
+          <Text style={styles.shopSectionTitle}>Explore Collections</Text>
+          <Text style={styles.shopSectionSub}>Handpicked styles for every vibe.</Text>
+        </View>
+
+        <View style={styles.shopValuesBand}>
+          {[
+            ['leaf-outline', 'SUSTAINABLE MATERIALS', 'Better for you. Better for the planet. We prioritize organic and recycled fibers.'],
+            ['heart-outline', 'ETHICAL PRODUCTION', 'Made with care and respect. Ensuring fair labor and safe conditions everywhere.'],
+            ['people-outline', 'COMMUNITY FOCUSED', 'Fashion that gives back. Supporting local artisans and initiatives.']
+          ].map(([icon, title, text]) => (
+            <View key={title} style={styles.shopValueItem}>
+              <Ionicons name={icon} size={34} color="#b96568" />
+              <Text style={styles.shopValueTitle}>{title}</Text>
+              <Text style={styles.shopValueText}>{text}</Text>
+            </View>
+          ))}
+        </View>
+
+        <TouchableOpacity style={styles.shopFloatingButton} onPress={() => onNavigate('tryon')}>
+          <Ionicons name="sparkles" size={22} color="#ffffff" />
+        </TouchableOpacity>
+      </ScrollView>
+    );
+  }
+
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent}>
-      <Hero compact onNavigate={onNavigate} />
+    <ScrollView style={!tryOnMode && styles.shopScreen} contentContainerStyle={styles.scrollContent}>
+      {!tryOnMode ? <ShopTopBar onNavigate={onNavigate} /> : <Hero compact onNavigate={onNavigate} />}
       <View style={styles.searchPanel}>
         <View style={styles.searchRow}>
           <TextInput
@@ -1469,6 +1641,54 @@ const closetComboSlots = [
   { key: 'cap', label: 'Cap', helper: 'Caps and hats', short: 'Ca', categories: ['accessories'], keywords: ['cap', 'hat'] },
   { key: 'footwear', label: 'Footwear', helper: 'Shoes, boots, sandals', short: 'Fo', categories: ['shoes'] }
 ];
+const wardrobeCategoryTabs = [
+  { key: 'tops', label: 'Tops', icon: 'shirt-outline', slot: 'topwear' },
+  { key: 'bottoms', label: 'Bottoms', icon: 'accessibility-outline', slot: 'bottomwear' },
+  { key: 'outerwear', label: 'Outerwear', icon: 'body-outline', slot: 'topwear' },
+  { key: 'shoes', label: 'Shoes', icon: 'walk-outline', slot: 'footwear' },
+  { key: 'accessories', label: 'Accessori', icon: 'sparkles-outline', slot: 'goggles' }
+];
+const wardrobeFallbackRecommendations = [
+  { title: 'Urban Sophisticate', images: ['trending-2.jpg', 'category-3.jpg', 'category-6.jpg'] },
+  { title: 'Neutral Casual', images: ['arrival-1.jpg', 'arrival-2.jpg', 'category-8.jpg'] },
+  { title: 'Soft Gallery Fit', images: ['arrival-4.jpg', 'category-4.jpg', 'category-6.jpg'] }
+];
+
+function WardrobeTopBar({ user, onNavigate }) {
+  return (
+    <View style={styles.wardrobeTopBar}>
+      <Text style={styles.wardrobeBrand}>FitLook</Text>
+      <View style={styles.wardrobeTopActions}>
+        <TouchableOpacity style={styles.wardrobeTopIcon} onPress={() => onNavigate('tokens')}>
+          <Ionicons name="bag-handle-outline" size={24} color="#444444" />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.wardrobeAvatarButton} onPress={() => onNavigate('profile')}>
+          {user?.bodyPhotoUrl ? <Image source={{ uri: imageUrl(user.bodyPhotoUrl) }} style={styles.wardrobeAvatar} /> : <Ionicons name="person-outline" size={20} color="#444444" />}
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+function WardrobeRecommendationCard({ suggestion, fallback, onPress }) {
+  const suggestionItems = suggestion?.items || [];
+  const title = suggestion?.title || fallback.title;
+  const thumbnails = suggestionItems.length
+    ? suggestionItems.slice(0, 3).map((item) => ({ key: item.id, source: item.imageUrl ? { uri: imageUrl(item.imageUrl) } : images.hero }))
+    : fallback.images.map((image) => ({ key: image, source: images[image] }));
+
+  return (
+    <TouchableOpacity style={styles.wardrobeRecommendationCard} activeOpacity={0.86} onPress={onPress}>
+      <View style={styles.wardrobeRecommendationImages}>
+        {thumbnails.map((thumb) => <Image key={thumb.key} source={thumb.source} style={styles.wardrobeRecommendationImage} resizeMode="cover" />)}
+      </View>
+      <View style={styles.wardrobeRecommendationFooter}>
+        <Text style={styles.wardrobeRecommendationTitle} numberOfLines={1}>{title}</Text>
+        <Ionicons name="chevron-forward" size={25} color="#111111" />
+      </View>
+    </TouchableOpacity>
+  );
+}
 
 function slotMatchesItem(slot, item, strict = false) {
   if (!slot?.categories?.includes(item?.category)) return false;
@@ -1575,6 +1795,19 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
       items: items.slice(0, 4)
     }
   ];
+  const activeWardrobeCategory = wardrobeCategoryTabs.find((tab) => tab.key === filter) || wardrobeCategoryTabs.find((tab) => tab.slot === activeSlot) || wardrobeCategoryTabs[0];
+  const wardrobePreviewSource = mainPreview
+    ? { uri: imageUrl(mainPreview) }
+    : comboPreviewItems[0]?.imageUrl
+      ? { uri: imageUrl(comboPreviewItems[0].imageUrl) }
+      : images['arrival-4.jpg'];
+  const tryThisLookIds = selectedIds.length
+    ? selectedIds
+    : selectedIdsFromSlots(comboSlots).length
+      ? selectedIdsFromSlots(comboSlots)
+      : comboPreviewItems.map((item) => item.id).filter(Boolean);
+  const wardrobeScore = Math.min(96, 78 + Math.min(items.length, 4) * 2 + Math.min(selectedIds.length, 3));
+  const recommendationSource = suggestions.length ? suggestions.slice(0, 3) : wardrobeFallbackRecommendations;
 
   const toggleItem = (id) => {
     setSelectedIds((current) => current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id].slice(-5));
@@ -1794,180 +2027,105 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.toolHero}>
-          <Text style={styles.kicker}>AI Closet</Text>
-          <Text style={styles.screenTitle}>Your wardrobe, on you.</Text>
-          <Text style={styles.description}>Upload clothes, select a combo, and generate a FitRoom outfit preview from your saved profile.</Text>
-          <View style={styles.profileDetailsInline}>
-            <Text style={styles.statPill}>{items.length} items</Text>
-            <Text style={styles.statPill}>{outfits.length} looks</Text>
-            <Text style={styles.statPill}>{user.tokens} tokens</Text>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.wardrobeScreen}>
+      <ScrollView contentContainerStyle={styles.wardrobeContent} showsVerticalScrollIndicator={false}>
+        <WardrobeTopBar user={user} onNavigate={onNavigate} />
+
+        <View style={styles.wardrobeHeroHead}>
+          <View>
+            <Text style={styles.wardrobeTitle}>My Wardrobe</Text>
+            <Text style={styles.wardrobeSubtitle}>Curated Collection</Text>
           </View>
+          <TouchableOpacity style={styles.wardrobeAddButton} activeOpacity={0.85} onPress={() => setClosetView('add')}>
+            <Ionicons name="add" size={22} color="#ffffff" />
+            <Text style={styles.wardrobeAddText}>Add Item</Text>
+          </TouchableOpacity>
         </View>
 
-        <FilterChips
-          selected={closetView}
-          options={[['stylist', 'Stylist'], ['combo', 'Combo'], ['add', 'Add'], ['wardrobe', 'Wardrobe'], ['looks', 'Looks']]}
-          onSelect={setClosetView}
-          compact
-        />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wardrobeCategoryTrack}>
+          {wardrobeCategoryTabs.map((tab) => {
+            const active = activeWardrobeCategory.key === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={styles.wardrobeCategoryButton}
+                activeOpacity={0.82}
+                onPress={() => {
+                  setActiveSlot(tab.slot);
+                  setFilter(tab.key);
+                }}
+              >
+                <View style={[styles.wardrobeCategoryIcon, active && styles.wardrobeCategoryIconActive]}>
+                  <Ionicons name={tab.icon} size={28} color="#444444" />
+                </View>
+                <Text style={[styles.wardrobeCategoryLabel, active && styles.wardrobeCategoryLabelActive]}>{tab.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
-        {latestOutfit?.imageUrl ? (
-          <Pressable style={styles.latestOutfitCard} onPress={() => setLightbox(imageUrl(latestOutfit.imageUrl))}>
-            <Image source={{ uri: imageUrl(latestOutfit.imageUrl) }} style={styles.latestOutfitImage} resizeMode="cover" />
-            <View style={styles.latestOutfitCopy}>
-              <Text style={styles.kicker}>Latest Look</Text>
-              <Text style={styles.latestOutfitTitle}>{latestOutfit.title || 'Generated outfit'}</Text>
-              <Text style={styles.muted}>{latestOutfit.items?.map((item) => item.name).join(' + ') || 'Tap to view'}</Text>
-            </View>
-          </Pressable>
-        ) : null}
-
-        {closetView === 'stylist' ? <View style={styles.closetPanel}>
-          <View style={styles.panelHeaderRow}>
-            <View>
-              <Text style={styles.kicker}>BeSpoke AI Stylist</Text>
-              <Text style={styles.sectionTitle}>Daily Recommendations</Text>
-            </View>
-            <TouchableOpacity style={styles.smallOutlineButton} onPress={() => askForSuggestions('today casual')} disabled={busy === 'suggest'}>
-              <Ionicons name="sparkles-outline" size={16} color="#0f766e" />
-              <Text style={styles.smallOutlineText}>{busy === 'suggest' ? 'Finding...' : 'Daily'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.stylistBoard}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wardrobeRail}>
-              {slotItems.map((slot) => (
-                <TouchableOpacity
-                  key={slot.key}
-                  style={[styles.wardrobeRailItem, activeSlot === slot.key && styles.wardrobeRailItemActive, slot.selected && styles.wardrobeRailItemSelected]}
-                  onPress={() => setActiveSlot(slot.key)}
-                >
-                  <View style={styles.railThumb}>
-                    {slot.selected?.imageUrl || slot.options[0]?.imageUrl ? (
-                      <Image source={{ uri: imageUrl(slot.selected?.imageUrl || slot.options[0]?.imageUrl) }} style={styles.railThumbImage} resizeMode="cover" />
-                    ) : (
-                      <Text style={styles.railThumbText}>{slot.short}</Text>
-                    )}
-                  </View>
-                  <Text style={styles.railLabel}>{slot.label}</Text>
-                  <Text style={styles.railMeta} numberOfLines={1}>{slot.selected?.name || `${slot.options.length} options`}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <Pressable style={styles.stylistPreviewFrame} onPress={() => mainPreview && setLightbox(imageUrl(mainPreview))}>
-              {mainPreview ? <Image source={{ uri: imageUrl(mainPreview) }} style={styles.stylistPreviewImage} resizeMode="cover" /> : <Image source={images.hero} style={styles.stylistPreviewImage} resizeMode="cover" />}
-              {busy === 'generate' ? <View style={styles.previewGenerating}><ActivityIndicator color="#fff" /><Text style={styles.previewGeneratingText}>Generating outfit</Text></View> : null}
+        {closetView === 'stylist' ? (
+          <>
+            <Pressable style={styles.wardrobePreviewCard} onPress={() => mainPreview && setLightbox(imageUrl(mainPreview))}>
+              <Image source={wardrobePreviewSource} style={styles.wardrobePreviewImage} resizeMode="cover" />
+              <View style={styles.wardrobeSideTools}>
+                {['person-outline', 'happy-outline', 'body-outline'].map((icon) => (
+                  <TouchableOpacity key={icon} style={styles.wardrobeSideTool}>
+                    <Ionicons name={icon} size={24} color="#505050" />
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {busy === 'generate' ? <View style={styles.previewGenerating}><ActivityIndicator color="#fff" /><Text style={styles.previewGeneratingText}>Generating look</Text></View> : null}
+              <TouchableOpacity
+                style={[styles.wardrobeTryButton, (!tryThisLookIds.length || busy === 'generate') && styles.disabledButton]}
+                disabled={!tryThisLookIds.length || busy === 'generate'}
+                onPress={() => generateOutfit(tryThisLookIds, { title: 'My wardrobe look' })}
+              >
+                <Text style={styles.wardrobeTryText}>{busy === 'generate' ? 'Generating...' : 'Try This Look'}</Text>
+              </TouchableOpacity>
             </Pressable>
 
-            <View style={styles.lookbookRail}>
-              <Text style={styles.formLabel}>Lookbook & OOTD</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
-                {lookbookCards.length ? lookbookCards.map((card) => (
-                  <TouchableOpacity
-                    key={card.id}
-                    style={styles.lookbookCard}
-                    onPress={() => card.imageUrl ? setLightbox(imageUrl(card.imageUrl)) : applyComboItems(card.items || [])}
-                  >
-                    {card.imageUrl ? <Image source={{ uri: imageUrl(card.imageUrl) }} style={styles.lookbookImage} resizeMode="cover" /> : <Text style={styles.lookbookEmpty}>OOTD</Text>}
-                    <View style={styles.lookbookThumbs}>
-                      {(card.items || []).slice(0, 4).map((item) => <Image key={item.id} source={{ uri: imageUrl(item.imageUrl) }} style={styles.lookbookThumb} />)}
-                    </View>
-                  </TouchableOpacity>
-                )) : [0, 1, 2, 3].map((index) => (
-                  <TouchableOpacity key={index} style={styles.lookbookCard} onPress={() => askForSuggestions()}>
-                    <Text style={styles.lookbookEmpty}>OOTD</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-
-          <View style={styles.slotOptions}>
-            <View style={styles.panelHeaderRow}>
-              <View>
-                <Text style={styles.kicker}>Choose {activeWardrobeSlot.label}</Text>
-                <Text style={styles.latestOutfitTitle}>{activeWardrobeSlot.selected?.name || `Select ${activeWardrobeSlot.label}`}</Text>
-                <Text style={styles.muted}>{activeWardrobeSlot.helper}</Text>
+            <View style={styles.wardrobeScoreBlock}>
+              <View style={styles.wardrobeScoreCircle}>
+                <Text style={styles.wardrobeScoreNumber}>{wardrobeScore}</Text>
+                <Text style={styles.wardrobeScoreLabel}>SCORE</Text>
               </View>
-              {activeWardrobeSlot.selected ? (
-                <TouchableOpacity style={styles.smallOutlineButton} onPress={() => chooseSlotItem(activeWardrobeSlot.key, null)}>
-                  <Ionicons name="close-circle-outline" size={16} color="#0f766e" />
-                  <Text style={styles.smallOutlineText}>Clear</Text>
-                </TouchableOpacity>
-              ) : null}
+              <Text style={styles.wardrobeScoreText}>Great Choice!</Text>
             </View>
-            {activeWardrobeSlot.options.length ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
-                {activeWardrobeSlot.options.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[styles.slotOptionCard, comboSlots[activeWardrobeSlot.key] === item.id && styles.slotOptionActive]}
-                    onPress={() => chooseSlotItem(activeWardrobeSlot.key, item)}
-                  >
-                    <Image source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : images.hero} style={styles.slotOptionImage} resizeMode="cover" />
-                    <Text style={styles.slotOptionName} numberOfLines={2}>{item.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            ) : (
-              <TouchableOpacity style={styles.emptyActionBox} onPress={() => setClosetView('add')}>
-                <Ionicons name="add-circle-outline" size={22} color="#0f766e" />
-                <Text style={styles.emptyActionText}>Add {activeWardrobeSlot.label}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
 
-          <View style={styles.stylistConsoleActions}>
-            <View>
-              <Text style={styles.actionMetric}>{closet.data.stats?.total || items.length}</Text>
-              <Text style={styles.actionMetricLabel}>items in wardrobe</Text>
+            <View style={styles.wardrobeRecommendationsHead}>
+              <Text style={styles.wardrobeSectionTitle}>AI Recommendations</Text>
+              <TouchableOpacity style={styles.wardrobeGenerateLink} onPress={() => askForSuggestions('today casual')} disabled={busy === 'suggest'}>
+                <Ionicons name="refresh-outline" size={22} color="#9b5658" />
+                <Text style={styles.wardrobeGenerateText}>{busy === 'suggest' ? 'Generating' : 'Generate Look'}</Text>
+              </TouchableOpacity>
             </View>
-            <View>
-              <Text style={styles.actionMetric}>{user.tokens}</Text>
-              <Text style={styles.actionMetricLabel}>try-on tokens</Text>
-            </View>
-            <TouchableOpacity style={[styles.generateMiniButton, (!selectedIds.length || busy === 'generate') && styles.disabledButton]} disabled={!selectedIds.length || busy === 'generate'} onPress={() => generateOutfit(selectedIds, { title: 'My closet combo' })}>
-              <Text style={styles.generateMiniText}>{busy === 'generate' ? 'Generating...' : `Generate${selectedIds.length ? ` (${selectedIds.length})` : ''}`}</Text>
-            </TouchableOpacity>
-          </View>
-        </View> : null}
 
-        {closetView === 'stylist' ? <View style={styles.closetPanel}>
-          <View style={styles.panelHeaderRow}>
-            <View>
-              <Text style={styles.kicker}>Selection</Text>
-              <Text style={styles.sectionTitle}>Choose your closet action.</Text>
-            </View>
-            <Text style={styles.statPill}>{user.tokens} tokens</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wardrobeRecommendationTrack}>
+              {recommendationSource.map((entry, index) => {
+                const suggestion = suggestions.length ? entry : null;
+                const fallback = suggestions.length ? wardrobeFallbackRecommendations[index % wardrobeFallbackRecommendations.length] : entry;
+                return (
+                  <WardrobeRecommendationCard
+                    key={suggestion?.key || suggestion?.title || fallback.title}
+                    suggestion={suggestion}
+                    fallback={fallback}
+                    onPress={() => suggestion ? applySuggestion(suggestion) : askForSuggestions('today casual')}
+                  />
+                );
+              })}
+            </ScrollView>
+          </>
+        ) : (
+          <View style={styles.wardrobeModeTabs}>
+            <FilterChips
+              selected={closetView}
+              options={[['stylist', 'Preview'], ['combo', 'Combo'], ['add', 'Add'], ['wardrobe', 'Wardrobe'], ['looks', 'Looks']]}
+              onSelect={setClosetView}
+              compact
+            />
           </View>
-          <View style={styles.actionCardList}>
-            {selectionCards.map((card) => (
-              <TouchableOpacity key={card.key} style={[styles.closetActionCard, { borderTopColor: card.tone }]} onPress={() => setClosetView(card.key)}>
-                <View style={styles.closetActionTop}>
-                  <Text style={styles.actionStep}>{card.step}</Text>
-                  <Text style={styles.actionMeta}>{card.meta}</Text>
-                </View>
-                <View style={styles.actionPreview}>
-                  {card.items.length ? card.items.map((item) => <Image key={item.id} source={{ uri: imageUrl(item.imageUrl) }} style={styles.actionPreviewImage} />) : <Ionicons name={card.icon} size={34} color="#94a3b8" />}
-                </View>
-                <Text style={styles.latestOutfitTitle}>{card.title}</Text>
-                <Text style={styles.muted}>{card.copy}</Text>
-                <Text style={[styles.actionLink, { color: card.tone }]}>{card.action}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.suggestionRow}>
-            {closetOccasions.map((idea) => (
-              <TouchableOpacity key={idea} style={styles.occasionChip} onPress={() => askForSuggestions(idea)}>
-                <Text style={styles.occasionChipText}>{idea}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View> : null}
+        )}
 
         {closetView === 'add' ? <View style={styles.closetPanel}>
           <Text style={styles.sectionTitle}>Add Clothing</Text>
@@ -2091,7 +2249,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
           </View>
         </View> : null}
 
-        {closetView === 'combo' || closetView === 'stylist' ? <View style={styles.closetPanel}>
+        {closetView === 'combo' ? <View style={styles.closetPanel}>
           <View style={styles.panelHeaderRow}>
             <View>
               <Text style={styles.sectionTitle}>Closet Stylist</Text>
@@ -2124,7 +2282,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
           ) : null}
         </View> : null}
 
-        <StatusPanel loading={closet.loading} error={closet.error} empty={!closet.loading && !items.length} text="Add clothes to start building closet looks." />
+        {closetView !== 'stylist' ? <StatusPanel loading={closet.loading} error={closet.error} empty={!closet.loading && !items.length} text="Add clothes to start building closet looks." /> : null}
         {closetView === 'wardrobe' ? <View style={styles.closetPanel}>
           <View style={styles.panelHeaderRow}>
             <View>
@@ -2844,11 +3002,13 @@ export default function App() {
   const signupRoute = !user && currentRoute.name === 'signup';
   const loginRoute = !user && currentRoute.name === 'login';
   const homeRoute = currentRoute.name === 'home';
+  const shopRoute = currentRoute.name === 'shop';
+  const closetRoute = currentRoute.name === 'closet';
 
   return (
-    <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe]}>
+    <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe]}>
       <StatusBar style={welcomeRoute || loginRoute ? 'light' : 'dark'} />
-      {authOnlyRoute || homeRoute ? null : <Header user={user} canGoBack={routeStack.length > 1} onBack={goBack} onNavigate={navigate} onLogout={logout} />}
+      {authOnlyRoute || homeRoute || shopRoute || closetRoute ? null : <Header user={user} canGoBack={routeStack.length > 1} onBack={goBack} onNavigate={navigate} onLogout={logout} />}
       <View style={styles.content}>
         <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
           {screen}
@@ -2874,6 +3034,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#111111'
   },
   homeSafe: {
+    backgroundColor: '#fbf7f6'
+  },
+  shopSafe: {
+    backgroundColor: '#fbf7f6'
+  },
+  wardrobeSafe: {
     backgroundColor: '#fbf7f6'
   },
   flex: {
@@ -2962,6 +3128,24 @@ const styles = StyleSheet.create({
     minWidth: 62,
     alignItems: 'center',
     gap: 3
+  },
+  navItemCenterActive: {
+    marginTop: -30,
+    minWidth: 76
+  },
+  navIconWrap: {
+    width: 32,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  navIconWrapCenter: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#9b5658',
+    borderWidth: 5,
+    borderColor: '#fbf7f6'
   },
   navText: {
     fontSize: 10,
@@ -3349,6 +3533,648 @@ const styles = StyleSheet.create({
     color: '#b4aba6',
     fontSize: 10,
     fontWeight: '600'
+  },
+  shopScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  shopContent: {
+    paddingBottom: Platform.OS === 'android' ? 104 : 118,
+    backgroundColor: '#fbf7f6'
+  },
+  shopTopBar: {
+    height: 52,
+    paddingHorizontal: 16,
+    backgroundColor: '#fbf7f6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  shopTopIcon: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  shopBrand: {
+    color: '#111111',
+    fontSize: 19,
+    lineHeight: 23,
+    fontWeight: '700',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  shopHero: {
+    height: 252,
+    overflow: 'hidden',
+    backgroundColor: '#d7cabe'
+  },
+  shopHeroImage: {
+    width: '100%',
+    height: '100%'
+  },
+  shopHeroShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255, 249, 246, 0.18)'
+  },
+  shopHeroCopy: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    top: 26,
+    alignItems: 'center'
+  },
+  shopHeroTitle: {
+    color: '#070707',
+    textAlign: 'center',
+    fontSize: 38,
+    lineHeight: 43,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  shopHeroText: {
+    marginTop: 18,
+    maxWidth: 280,
+    color: 'rgba(25, 24, 23, 0.62)',
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 22,
+    fontWeight: '600'
+  },
+  shopHeroButton: {
+    marginTop: 29,
+    width: '100%',
+    maxWidth: 308,
+    minHeight: 48,
+    borderRadius: 8,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  shopHeroButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.1
+  },
+  shopCategorySection: {
+    marginTop: -1,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 22,
+    backgroundColor: '#ffffff'
+  },
+  shopSectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  shopSectionTitle: {
+    color: '#191513',
+    fontSize: 25,
+    lineHeight: 31,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  shopSectionSub: {
+    marginTop: 2,
+    color: '#645f5c',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500'
+  },
+  shopViewAll: {
+    color: '#4a4643',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  shopCategoryRow: {
+    marginTop: 23,
+    flexDirection: 'row',
+    justifyContent: 'space-between'
+  },
+  shopCategoryItem: {
+    width: 68,
+    alignItems: 'center'
+  },
+  shopCategoryImage: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#eee5df'
+  },
+  shopCategoryLabel: {
+    marginTop: 12,
+    color: '#48413e',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  shopArrivalsSection: {
+    paddingHorizontal: 18,
+    paddingTop: 60
+  },
+  shopArrivalsHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 34
+  },
+  shopPager: {
+    flexDirection: 'row',
+    gap: 14
+  },
+  shopPagerButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#ece5e1',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  shopArrivalGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 42
+  },
+  shopArrivalCard: {
+    width: '47%'
+  },
+  shopArrivalImageWrap: {
+    height: 118,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#ece4df'
+  },
+  shopArrivalImage: {
+    width: '100%',
+    height: '100%'
+  },
+  shopArrivalBrand: {
+    marginTop: 16,
+    color: '#55504d',
+    fontSize: 9,
+    fontWeight: '800'
+  },
+  shopArrivalName: {
+    marginTop: 4,
+    color: '#171412',
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: '600'
+  },
+  shopArrivalPrice: {
+    marginTop: 5,
+    color: '#a5676b',
+    fontSize: 14,
+    fontWeight: '600'
+  },
+  shopSwatches: {
+    marginTop: 13,
+    flexDirection: 'row',
+    gap: 8
+  },
+  shopSwatch: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: 'rgba(17, 17, 17, 0.05)'
+  },
+  shopDiscountCard: {
+    marginTop: 54,
+    marginHorizontal: 18,
+    minHeight: 136,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#090909',
+    flexDirection: 'row'
+  },
+  shopDiscountCopy: {
+    width: '54%',
+    paddingLeft: 23,
+    paddingVertical: 21,
+    justifyContent: 'center',
+    zIndex: 1
+  },
+  shopDiscountImage: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: '58%',
+    height: '100%',
+    opacity: 0.42
+  },
+  shopPromoEyebrow: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.2
+  },
+  shopDiscountTitle: {
+    marginTop: 8,
+    color: '#ffffff',
+    fontSize: 36,
+    lineHeight: 42,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  shopDiscountText: {
+    marginTop: 4,
+    color: '#8e8e8e',
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  shopDiscountButton: {
+    marginTop: 14,
+    width: 112,
+    minHeight: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  shopDiscountButtonText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  shopLookCard: {
+    marginTop: 22,
+    marginHorizontal: 18,
+    height: 235,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#e2d5cc'
+  },
+  shopLookImage: {
+    width: '100%',
+    height: '100%'
+  },
+  shopLookShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.18)'
+  },
+  shopLookCopy: {
+    position: 'absolute',
+    left: 28,
+    bottom: 28
+  },
+  shopLookEyebrow: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1
+  },
+  shopLookTitle: {
+    marginTop: 4,
+    color: '#ffffff',
+    fontSize: 30,
+    lineHeight: 36,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  shopLookAction: {
+    marginTop: 18,
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800',
+    textDecorationLine: 'underline'
+  },
+  shopExploreHead: {
+    paddingHorizontal: 18,
+    paddingTop: 30,
+    paddingBottom: 22
+  },
+  shopValuesBand: {
+    paddingHorizontal: 26,
+    paddingTop: 104,
+    paddingBottom: 52,
+    backgroundColor: '#f0e9e9',
+    gap: 58
+  },
+  shopValueItem: {
+    alignItems: 'center'
+  },
+  shopValueTitle: {
+    marginTop: 22,
+    color: '#2e2b29',
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.4
+  },
+  shopValueText: {
+    marginTop: 15,
+    maxWidth: 286,
+    color: '#5d5754',
+    textAlign: 'center',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600'
+  },
+  shopFloatingButton: {
+    position: 'absolute',
+    right: 18,
+    bottom: Platform.OS === 'ios' ? 91 : 82,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wardrobeScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  wardrobeContent: {
+    paddingBottom: Platform.OS === 'android' ? 112 : 126,
+    backgroundColor: '#fbf7f6'
+  },
+  wardrobeTopBar: {
+    height: 86,
+    paddingHorizontal: 28,
+    backgroundColor: '#fbf7f6',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ece5e1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  wardrobeBrand: {
+    color: '#111111',
+    fontSize: 30,
+    lineHeight: 36,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  wardrobeTopActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18
+  },
+  wardrobeTopIcon: {
+    width: 34,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wardrobeAvatarButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: 'hidden',
+    backgroundColor: '#f1e8e2',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wardrobeAvatar: {
+    width: '100%',
+    height: '100%'
+  },
+  wardrobeHeroHead: {
+    paddingHorizontal: 28,
+    paddingTop: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 18
+  },
+  wardrobeTitle: {
+    color: '#1b1715',
+    fontSize: 31,
+    lineHeight: 37,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  wardrobeSubtitle: {
+    marginTop: 4,
+    color: '#514f4e',
+    fontSize: 23,
+    lineHeight: 28,
+    fontWeight: '400'
+  },
+  wardrobeAddButton: {
+    minHeight: 42,
+    borderRadius: 22,
+    backgroundColor: '#050505',
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9
+  },
+  wardrobeAddText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '800'
+  },
+  wardrobeCategoryTrack: {
+    paddingHorizontal: 28,
+    paddingTop: 37,
+    paddingBottom: 55,
+    gap: 24
+  },
+  wardrobeCategoryButton: {
+    width: 78,
+    alignItems: 'center'
+  },
+  wardrobeCategoryIcon: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    borderWidth: 1,
+    borderColor: '#ebe6e3',
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wardrobeCategoryIconActive: {
+    borderWidth: 3,
+    borderColor: '#9b5658'
+  },
+  wardrobeCategoryLabel: {
+    marginTop: 11,
+    color: '#444140',
+    textAlign: 'center',
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '500'
+  },
+  wardrobeCategoryLabelActive: {
+    color: '#111111',
+    fontWeight: '900'
+  },
+  wardrobePreviewCard: {
+    marginHorizontal: 28,
+    aspectRatio: 0.75,
+    borderRadius: 26,
+    overflow: 'hidden',
+    backgroundColor: '#edf1f2',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2
+  },
+  wardrobePreviewImage: {
+    width: '100%',
+    height: '100%'
+  },
+  wardrobeSideTools: {
+    position: 'absolute',
+    right: 24,
+    top: '35%',
+    gap: 16
+  },
+  wardrobeSideTool: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: 'rgba(255, 255, 255, 0.84)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wardrobeTryButton: {
+    position: 'absolute',
+    alignSelf: 'center',
+    bottom: 31,
+    minHeight: 42,
+    minWidth: 164,
+    borderRadius: 22,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20
+  },
+  wardrobeTryText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '800'
+  },
+  wardrobeScoreBlock: {
+    paddingTop: 49,
+    alignItems: 'center'
+  },
+  wardrobeScoreCircle: {
+    width: 121,
+    height: 121,
+    borderRadius: 61,
+    borderWidth: 5,
+    borderColor: '#9b5658',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fbf7f6'
+  },
+  wardrobeScoreNumber: {
+    color: '#171210',
+    fontSize: 31,
+    lineHeight: 35,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  wardrobeScoreLabel: {
+    marginTop: 1,
+    color: '#56504d',
+    fontSize: 13,
+    fontWeight: '500',
+    letterSpacing: 2.3
+  },
+  wardrobeScoreText: {
+    marginTop: 23,
+    color: '#9b5658',
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: '900'
+  },
+  wardrobeRecommendationsHead: {
+    paddingHorizontal: 28,
+    paddingTop: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14
+  },
+  wardrobeSectionTitle: {
+    flex: 1,
+    color: '#1b1715',
+    fontSize: 30,
+    lineHeight: 36,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  wardrobeGenerateLink: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5
+  },
+  wardrobeGenerateText: {
+    color: '#9b5658',
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: '500'
+  },
+  wardrobeRecommendationTrack: {
+    paddingHorizontal: 28,
+    paddingTop: 27,
+    gap: 22,
+    paddingRight: 48
+  },
+  wardrobeRecommendationCard: {
+    width: 344,
+    minHeight: 165,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#f1ece9',
+    backgroundColor: '#ffffff',
+    overflow: 'hidden'
+  },
+  wardrobeRecommendationImages: {
+    height: 105,
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    flexDirection: 'row',
+    gap: 13
+  },
+  wardrobeRecommendationImage: {
+    flex: 1,
+    height: '100%',
+    borderRadius: 8,
+    backgroundColor: '#f2eeeb'
+  },
+  wardrobeRecommendationFooter: {
+    minHeight: 59,
+    paddingHorizontal: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  wardrobeRecommendationTitle: {
+    flex: 1,
+    color: '#504c4a',
+    fontSize: 23,
+    lineHeight: 28,
+    fontWeight: '400'
+  },
+  wardrobeModeTabs: {
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 14
   },
   hero: {
     margin: 16,
