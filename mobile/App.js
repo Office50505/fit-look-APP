@@ -216,6 +216,20 @@ async function pickImage() {
   return result.assets?.[0] || null;
 }
 
+async function takePhoto() {
+  const permission = await ImagePicker.requestCameraPermissionsAsync();
+  if (!permission.granted) {
+    Alert.alert('Camera access needed', 'Allow camera access to take a FitLook profile photo.');
+    return null;
+  }
+  const result = await ImagePicker.launchCameraAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    quality: 0.9
+  });
+  if (result.canceled) return null;
+  return result.assets?.[0] || null;
+}
+
 function AppButton({ label, icon, variant = 'primary', disabled, onPress, style }) {
   return (
     <TouchableOpacity
@@ -273,11 +287,9 @@ function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
 function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
   const activeRoute = route?.name || 'home';
   const items = [
-    ['home', 'home-outline', 'Home'],
-    ['shop', 'search-outline', 'Shop'],
-    ['tryon', 'shirt-outline', 'Try-On'],
-    ['closet', 'grid-outline', 'Closet'],
-    ['stylebot', 'chatbubble-ellipses-outline', 'Bot'],
+    ['home', 'sparkles-outline', 'Curated'],
+    ['shop', 'grid-outline', 'Shop'],
+    ['tryon', 'shirt-outline', 'AI Try-On'],
     ['profile', 'person-outline', 'Profile']
   ];
   return (
@@ -286,7 +298,7 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
         const active = activeRoute === name;
         return (
           <TouchableOpacity key={name} style={styles.navItem} onPress={() => onNavigate(name)}>
-            <Ionicons name={icon} size={21} color={active ? '#0f766e' : '#6b7280'} />
+            <Ionicons name={icon} size={21} color={active ? '#c17679' : '#8d8682'} />
             <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
           </TouchableOpacity>
         );
@@ -410,38 +422,148 @@ function ProductRow({ title, state, onNavigate, user, token }) {
   );
 }
 
-function HomeScreen({ onNavigate, user, token }) {
-  const trending = useProducts({ limit: 6 }, token);
-  const arrivals = useProducts({ newArrival: 'true', sort: 'newest', limit: 6 }, token);
-  const recommended = useApiState('/recommendations/for-you?limit=6', token, Boolean(user), { products: [] });
-  const recommendedState = {
-    products: recommended.data.products || [],
-    total: recommended.data.products?.length || 0,
-    loading: recommended.loading,
-    error: recommended.error
-  };
+const homeCategoryItems = [
+  ['TOPS', 'category-1.jpg', 'tops'],
+  ['BOTTOMS', 'category-3.jpg', 'bottoms'],
+  ['DRESSES', 'arrival-4.jpg', 'dresses'],
+  ['SHOES', 'category-6.jpg', 'shoes'],
+  ['BAGS', 'category-8.jpg', 'accessories']
+];
+
+const homeCuratedItems = [
+  ['ELITE SERIES', 'Aura Runner Elite', '$240', 'category-6.jpg', false],
+  ['STREETWEAR', 'Chaotic Oversize\nHoodie', '$185', 'trending-2.jpg', true],
+  ['OUTERWEAR', 'Nomad Gilet', '$310', 'trending-4.jpg', false],
+  ['HERITAGE', 'Legacy Letterman', '$450', 'arrival-2.jpg', false]
+];
+
+function HomeScreen({ onNavigate }) {
+  const [atelierEmail, setAtelierEmail] = useState('');
+
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent}>
-      <Hero onNavigate={onNavigate} />
-      {user && (recommended.loading || recommendedState.products.length > 0) ? (
-        <ProductRow title="Recommended For You" state={recommendedState} onNavigate={onNavigate} user={user} token={token} />
-      ) : null}
-      <ProductRow title="Trending Now" state={trending} onNavigate={onNavigate} user={user} token={token} />
-      <ProductRow title="New Arrivals" state={arrivals} onNavigate={onNavigate} user={user} token={token} />
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Shop by Category</Text>
-        <View style={styles.categoryGrid}>
-          {categories.map(([label, image, category]) => (
-            <View key={label} style={styles.categoryCell}>
-              <Pressable style={styles.categoryCard} onPress={() => onNavigate('shop', { category })}>
-              <Image source={images[image]} style={styles.categoryImage} />
-              <Text style={styles.categoryText}>{label}</Text>
-              </Pressable>
-            </View>
-          ))}
+    <ScrollView style={styles.homeScreen} contentContainerStyle={styles.homeContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.homeTopBar}>
+        <TouchableOpacity style={styles.homeTopIcon} onPress={() => onNavigate('profile')}>
+          <Ionicons name="menu-outline" size={22} color="#111111" />
+        </TouchableOpacity>
+        <Text style={styles.homeBrand}>FitLook</Text>
+        <TouchableOpacity style={styles.homeTopIcon} onPress={() => onNavigate('shop')}>
+          <Ionicons name="bag-handle-outline" size={20} color="#111111" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.homeHero}>
+        <Image source={images['arrival-4.jpg']} style={styles.homeHeroImage} resizeMode="cover" />
+        <View style={styles.homeHeroShade} />
+        <View style={styles.homeHeroCopy}>
+          <Text style={styles.homeHeroTitle}>SUMMER ESSENTIALS</Text>
+          <TouchableOpacity style={styles.homeHeroButton} onPress={() => onNavigate('shop')}>
+            <Text style={styles.homeHeroButtonText}>SHOP NOW</Text>
+          </TouchableOpacity>
         </View>
       </View>
-      <FeatureBand />
+
+      <View style={styles.homeSection}>
+        <View style={styles.homeSectionHead}>
+          <Text style={styles.homeSectionTitle}>Categories</Text>
+          <TouchableOpacity onPress={() => onNavigate('shop')}>
+            <Text style={styles.homeViewAll}>VIEW ALL</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.homeCategoryTrack}>
+          {homeCategoryItems.map(([label, image, category]) => (
+            <TouchableOpacity key={label} style={styles.homeCategoryItem} onPress={() => onNavigate('shop', { category })}>
+              <Image source={images[image]} style={styles.homeCategoryImage} />
+              <Text style={styles.homeCategoryLabel}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      <Text style={styles.homeCurationTitle}>The Curation</Text>
+      <View style={styles.homeCuratedGrid}>
+        {homeCuratedItems.map(([eyebrow, title, price, image, isNew]) => (
+          <TouchableOpacity key={`${eyebrow}-${title}`} style={styles.homeProductCard} onPress={() => onNavigate('shop')}>
+            <View style={styles.homeProductImageWrap}>
+              <Image source={images[image]} style={styles.homeProductImage} resizeMode="cover" />
+              {isNew ? <Text style={styles.homeNewBadge}>NEW</Text> : null}
+              {eyebrow === 'ELITE SERIES' ? (
+                <View style={styles.homeTryBadge}>
+                  <Ionicons name="sparkles" size={12} color="#111111" />
+                </View>
+              ) : null}
+            </View>
+            <Text style={styles.homeProductEyebrow}>{eyebrow}</Text>
+            <Text style={styles.homeProductTitle}>{title}</Text>
+            <Text style={styles.homeProductPrice}>{price}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View style={styles.homeSaleCard}>
+        <Text style={styles.homeSaleText}>UP TO 50%{'\n'}OFF</Text>
+        <Text style={styles.homeSaleSub}>SEASONAL ARCHIVE SALE</Text>
+      </View>
+
+      <View style={styles.homeShippingCard}>
+        <View>
+          <Text style={styles.homeShippingTitle}>FREE SHIPPING</Text>
+          <Text style={styles.homeShippingText}>On orders over $250</Text>
+        </View>
+        <Ionicons name="cube-outline" size={28} color="#111111" />
+      </View>
+
+      <View style={styles.homeJournalBand}>
+        <Text style={styles.homeJournalTitle}>Visual Journal</Text>
+        <View style={styles.homeJournalGrid}>
+          <View style={styles.homeJournalColumn}>
+            <Image source={images['arrival-5.jpg']} style={[styles.homeJournalImage, styles.homeJournalTall]} resizeMode="cover" />
+            <Image source={images['hero']} style={[styles.homeJournalImage, styles.homeJournalTall]} resizeMode="cover" />
+          </View>
+          <View style={styles.homeJournalColumn}>
+            <Image source={images['search-shirt-3.jpg']} style={[styles.homeJournalImage, styles.homeJournalTall]} resizeMode="cover" />
+            <Image source={images['search-shirt-4.jpg']} style={[styles.homeJournalImage, styles.homeJournalShort]} resizeMode="cover" />
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.homeAtelier}>
+        <View style={styles.homeDivider} />
+        <Text style={styles.homeAtelierTitle}>Join the Atelier</Text>
+        <Text style={styles.homeAtelierText}>Receive early access to seasonal curations{'\n'}and exclusive AI styling insights.</Text>
+        <TextInput
+          style={styles.homeEmailInput}
+          value={atelierEmail}
+          onChangeText={setAtelierEmail}
+          placeholder="Your Email Address"
+          placeholderTextColor="#8c8c8c"
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
+        <TouchableOpacity style={styles.homeSubscribeButton}>
+          <Text style={styles.homeSubscribeText}>SUBSCRIBE</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.homeFooterLinks}>
+        <View>
+          <Text style={styles.homeFooterHead}>INFO</Text>
+          <Text style={styles.homeFooterLink}>About FitLook</Text>
+          <Text style={styles.homeFooterLink}>Journal</Text>
+          <Text style={styles.homeFooterLink}>Careers</Text>
+        </View>
+        <View>
+          <Text style={styles.homeFooterHead}>HELP</Text>
+          <Text style={styles.homeFooterLink}>Shipping</Text>
+          <Text style={styles.homeFooterLink}>Returns</Text>
+          <Text style={styles.homeFooterLink}>Contact</Text>
+        </View>
+      </View>
+
+      <View style={styles.homeFooterBottom}>
+        <Text style={styles.homeFooterBrand}>FitLook</Text>
+        <Text style={styles.homeCopyright}>© 2027 Altair Digital</Text>
+      </View>
     </ScrollView>
   );
 }
@@ -917,6 +1039,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
 
 function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   const isSignup = mode === 'signup';
+  const { width, height } = useWindowDimensions();
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
   const [usernameTouched, setUsernameTouched] = useState(false);
@@ -924,10 +1047,28 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   const [genderPreference, setGenderPreference] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [photo, setPhoto] = useState(null);
   const [profilePhotoMode, setProfilePhotoMode] = useState('ai-full-body');
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const authScreenPadding = clamp(width * 0.075, 24, 40);
+  const signupTitleSize = clamp(width * 0.145, 44, 60);
+  const signupSubtitleSize = clamp(width * 0.055, 18, 23);
+  const signupInputHeight = clamp(height * 0.072, 62, 77);
+  const signupInputFontSize = clamp(width * 0.054, 18, 22);
+  const signupButtonTextSize = clamp(width * 0.048, 16, 20);
+  const loginHeroHeight = clamp(height * 0.38, 300, 540);
+  const loginHeroTitleSize = clamp(width * 0.112, 36, 54);
+  const loginHeroTextSize = clamp(width * 0.049, 17, 24);
+  const loginTitleSize = clamp(width * 0.086, 30, 43);
+  const loginInputHeight = clamp(height * 0.064, 60, 76);
+  const loginPanelTop = clamp(height * 0.043, 34, 60);
+  const loginTabTop = clamp(height * 0.052, 40, 76);
+  const loginFieldTop = clamp(height * 0.043, 34, 62);
+  const loginFieldGap = clamp(height * 0.024, 22, 32);
 
   useEffect(() => {
     if (!isSignup) return undefined;
@@ -961,6 +1102,10 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       setMessage(isSignup ? 'Name, username, gender preference, email, password, and profile photo are required.' : 'Email/username and password are required.');
       return;
     }
+    if (isSignup && !termsAccepted) {
+      setMessage('Please agree to the Terms & Conditions and Privacy Policy.');
+      return;
+    }
     setLoading(true);
     setMessage('Working...');
     try {
@@ -978,7 +1123,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       await saveToken(data.token);
       setToken(data.token);
       setUser(data.user);
-      onNavigate('shop');
+      onNavigate('home');
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -986,72 +1131,244 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     }
   };
 
-  return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.authCard}>
-          <Text style={styles.kicker}>{isSignup ? 'Create Profile' : 'Welcome Back'}</Text>
-          <Text style={styles.authTitle}>{isSignup ? 'Build your AI fitting room.' : 'Log in to your fitting room.'}</Text>
-          <Text style={styles.description}>{isSignup ? 'Upload a selfie or body photo. FitLook can create a full-body profile for realistic outfit previews.' : 'Continue browsing, unlock saved looks, and generate AI previews.'}</Text>
-          {isSignup ? <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Full name" placeholderTextColor="#94a3b8" /> : null}
-          {isSignup ? (
-            <>
+  if (isSignup) {
+    const inputFields = [
+      {
+        key: 'name',
+        icon: 'person-outline',
+        placeholder: 'Full Name',
+        value: name,
+        onChangeText: setName,
+        autoCapitalize: 'words'
+      },
+      {
+        key: 'username',
+        icon: 'person-circle-outline',
+        placeholder: 'Choose a Username',
+        value: username,
+        onChangeText: (value) => {
+          setUsernameTouched(true);
+          setUsername(value.toLowerCase().replace(/[^a-z0-9_]/g, ''));
+        },
+        autoCapitalize: 'none'
+      },
+      {
+        key: 'email',
+        icon: 'mail-outline',
+        placeholder: 'Email Address',
+        value: email,
+        onChangeText: setEmail,
+        autoCapitalize: 'none',
+        keyboardType: 'email-address'
+      }
+    ];
+
+    return (
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.signupScreen}>
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[styles.signupContent, { paddingHorizontal: authScreenPadding, paddingTop: clamp(height * 0.045, 28, 54) }]}
+        >
+          <Text style={styles.signupBrand}>FitLook</Text>
+          <Text style={[styles.signupTitle, { fontSize: signupTitleSize, lineHeight: signupTitleSize * 1.2 }]} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.86}>
+            Create Your{'\n'}Account
+          </Text>
+          <Text style={[styles.signupSubtitle, { fontSize: signupSubtitleSize, lineHeight: signupSubtitleSize * 1.35 }]}>Join FitLook and elevate your fashion game</Text>
+
+          <View style={styles.signupFieldStack}>
+            {inputFields.map((field) => (
+              <View key={field.key} style={[styles.signupInputWrap, { minHeight: signupInputHeight }]}>
+                <Ionicons name={field.icon} size={25} color="#7a7d80" />
+                <TextInput
+                  style={[styles.signupInput, { fontSize: signupInputFontSize }]}
+                  value={field.value}
+                  onChangeText={field.onChangeText}
+                  placeholder={field.placeholder}
+                  placeholderTextColor="#6f7687"
+                  autoCapitalize={field.autoCapitalize}
+                  keyboardType={field.keyboardType || 'default'}
+                />
+              </View>
+            ))}
+            {usernameSuggestions.length ? (
+              <View style={styles.signupSuggestionRow}>
+                {usernameSuggestions.slice(0, 3).map((item) => (
+                  <TouchableOpacity key={item} style={styles.signupSuggestionChip} onPress={() => { setUsernameTouched(true); setUsername(item); }}>
+                    <Text style={styles.signupSuggestionText}>{item}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : null}
+            <View style={[styles.signupInputWrap, { minHeight: signupInputHeight }]}>
+              <Ionicons name="lock-closed-outline" size={25} color="#7a7d80" />
               <TextInput
-                style={styles.input}
-                value={username}
-                onChangeText={(value) => {
-                  setUsernameTouched(true);
-                  setUsername(value.toLowerCase().replace(/[^a-z0-9_]/g, ''));
-                }}
-                placeholder="Username"
-                autoCapitalize="none"
-                placeholderTextColor="#94a3b8"
+                style={[styles.signupInput, { fontSize: signupInputFontSize }]}
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Create Password"
+                placeholderTextColor="#6f7687"
+                secureTextEntry={!passwordVisible}
               />
-              {usernameSuggestions.length ? <FilterChips selected={username} options={usernameSuggestions.map((item) => [item, item])} onSelect={(item) => { setUsernameTouched(true); setUsername(item); }} compact /> : null}
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>Gender preference</Text>
-                <FilterChips
-                  selected={genderPreference}
-                  options={[['male', 'Male'], ['female', 'Female'], ['other', 'Other']]}
-                  onSelect={setGenderPreference}
-                  compact
-                />
-              </View>
-            </>
-          ) : null}
-          <TextInput style={styles.input} value={email} onChangeText={setEmail} placeholder={isSignup ? 'Email address' : 'Email or username'} autoCapitalize="none" keyboardType={isSignup ? 'email-address' : 'default'} placeholderTextColor="#94a3b8" />
-          <TextInput style={styles.input} value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry placeholderTextColor="#94a3b8" />
-          {isSignup ? (
-            <>
-              <TouchableOpacity style={styles.uploadBox} onPress={async () => setPhoto(await pickImage())}>
-                {photo?.uri ? <Image source={{ uri: photo.uri }} style={styles.uploadPreview} /> : <Ionicons name="cloud-upload-outline" size={30} color="#0f766e" />}
-                <View style={styles.uploadCopy}>
-                  <Text style={styles.uploadTitle}>{photo ? 'Profile photo selected' : 'Upload a selfie or photo'}</Text>
-                  <View style={styles.photoGuide}>
-                    <Text style={styles.photoGuideTitle}>Best photo for AI try-on</Text>
-                    <Text style={styles.photoGuideText}>Use a single-person selfie, portrait, or body photo.</Text>
-                    <Text style={styles.photoGuideText}>Face the camera with your face clearly visible.</Text>
-                    <Text style={styles.photoGuideText}>Choose bright lighting and a simple background.</Text>
-                    <Text style={styles.photoGuideText}>Avoid heavy filters, group photos, covered faces, or very blurry images.</Text>
-                  </View>
-                </View>
+              <TouchableOpacity style={styles.signupInlineIcon} onPress={() => setPasswordVisible((current) => !current)}>
+                <Ionicons name={passwordVisible ? 'eye-outline' : 'eye-off-outline'} size={26} color="#7a7d80" />
               </TouchableOpacity>
-              <View style={styles.formGroup}>
-                <Text style={styles.formLabel}>Profile photo mode</Text>
-                <FilterChips
-                  selected={profilePhotoMode}
-                  options={[['ai-full-body', 'Create full-body AI profile'], ['exact', 'Use exact photo']]}
-                  onSelect={setProfilePhotoMode}
-                  compact
-                  wrap
-                />
+            </View>
+          </View>
+
+          <Text style={styles.signupSectionLabel}>GENDER PREFERENCE</Text>
+          <View style={styles.signupGenderRow}>
+            {[
+              ['female', 'Woman'],
+              ['male', 'Man'],
+              ['other', 'Non-binary']
+            ].map(([value, label]) => {
+              const active = genderPreference === value;
+              return (
+                <TouchableOpacity key={value} style={[styles.signupGenderButton, active && styles.signupGenderButtonActive]} onPress={() => setGenderPreference(value)}>
+                  <Text style={[styles.signupGenderText, { fontSize: signupButtonTextSize }, active && styles.signupGenderTextActive]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78}>
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.signupPhotoRow}>
+            <TouchableOpacity style={styles.signupPhotoButton} onPress={async () => setPhoto(await pickImage())}>
+              <Ionicons name={photo ? 'checkmark-circle-outline' : 'share-outline'} size={25} color="#111111" />
+              <Text style={[styles.signupPhotoButtonText, { fontSize: signupButtonTextSize }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.76}>
+                {photo ? 'Photo Selected' : 'Upload a Photo'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.signupPhotoButton} onPress={async () => setPhoto(await takePhoto())}>
+              <Ionicons name="camera-outline" size={25} color="#111111" />
+              <Text style={[styles.signupPhotoButtonText, { fontSize: signupButtonTextSize }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.76}>
+                Take a Photo
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.signupModeRow}>
+            {[
+              ['ai-full-body', 'Create Full Body AI\nProfile'],
+              ['exact', 'Use Current Photo']
+            ].map(([value, label]) => {
+              const active = profilePhotoMode === value;
+              return (
+                <TouchableOpacity key={value} style={[styles.signupModeButton, active && styles.signupModeButtonActive]} onPress={() => setProfilePhotoMode(value)}>
+                  <Text style={[styles.signupModeText, active && styles.signupModeTextActive]}>{label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <TouchableOpacity style={styles.signupTermsRow} activeOpacity={0.75} onPress={() => setTermsAccepted((current) => !current)}>
+            <View style={[styles.signupCheckbox, termsAccepted && styles.signupCheckboxActive]}>
+              {termsAccepted ? <Ionicons name="checkmark" size={17} color="#ffffff" /> : null}
+            </View>
+            <Text style={styles.signupTermsText}>
+              I agree to the <Text style={styles.signupTermsLink}>Terms & Conditions</Text> and <Text style={styles.signupTermsLink}>Privacy{'\n'}Policy</Text>
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.signupSubmit, loading && styles.signupSubmitDisabled]} activeOpacity={0.88} disabled={loading} onPress={submit}>
+            <Text style={styles.signupSubmitText}>{loading ? 'Working...' : 'Sign Up'}</Text>
+            <Ionicons name="arrow-forward" size={20} color="#ffffff" />
+          </TouchableOpacity>
+
+          {message ? <Text style={[styles.formMessage, styles.signupMessage, message === 'Working...' ? null : styles.errorText]}>{message}</Text> : null}
+
+          <TouchableOpacity style={styles.signupSwitch} onPress={() => onNavigate('login')}>
+            <Text style={styles.signupSwitchText}>Already have an account? <Text style={styles.signupSwitchLink}>Login</Text></Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.loginScreen}>
+      <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.loginContent}>
+        <View style={[styles.loginHero, { height: loginHeroHeight }]}>
+          <Image source={images.hero} style={styles.loginHeroImage} resizeMode="cover" />
+          <View style={styles.loginHeroOverlay} />
+          <View style={[styles.loginHeroCopy, { paddingHorizontal: authScreenPadding }]}>
+            <Text style={[styles.loginHeroTitle, { fontSize: loginHeroTitleSize, lineHeight: loginHeroTitleSize * 1.2 }]} numberOfLines={4} adjustsFontSizeToFit minimumFontScale={0.82}>
+              FITLOOK{'\n'}AI FASHION{'\n'}TRY-ON{'\n'}EXPERIENCE
+            </Text>
+            <Text style={[styles.loginHeroText, { marginTop: clamp(height * 0.045, 28, 64), fontSize: loginHeroTextSize, lineHeight: loginHeroTextSize * 1.5 }]}>
+              See it on you before you buy it.{'\n'}Experience the future of personal{'\n'}styling.
+            </Text>
+          </View>
+        </View>
+
+        <View style={[styles.loginPanel, { paddingHorizontal: authScreenPadding, paddingTop: loginPanelTop }]}>
+          <Text style={[styles.loginTitle, { fontSize: loginTitleSize, lineHeight: loginTitleSize * 1.18 }]}>Welcome Back</Text>
+          <Text style={[styles.loginSubtitle, { fontSize: clamp(width * 0.045, 17, 21), lineHeight: clamp(width * 0.06, 23, 28) }]}>Login to continue your fashion journey</Text>
+
+          <View style={[styles.loginTabWrap, { marginTop: loginTabTop }]}>
+            <Text style={styles.loginTabText}>Email</Text>
+            <View style={styles.loginTabLine} />
+            <View style={styles.loginTabFaintLine} />
+          </View>
+
+          <View style={[styles.loginFieldStack, { marginTop: loginFieldTop, gap: loginFieldGap }]}>
+            <View style={[styles.loginInputWrap, { minHeight: loginInputHeight }]}>
+              <Ionicons name="mail-outline" size={25} color="#555a5d" />
+              <TextInput
+                style={styles.loginInput}
+                value={email}
+                onChangeText={setEmail}
+                placeholder="Enter your email"
+                placeholderTextColor="#6f7687"
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+            </View>
+
+            <View style={[styles.loginInputWrap, { minHeight: loginInputHeight }]}>
+              <Ionicons name="lock-closed-outline" size={25} color="#555a5d" />
+              <TextInput
+                style={styles.loginInput}
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Enter your password"
+                placeholderTextColor="#6f7687"
+                secureTextEntry={!passwordVisible}
+              />
+              <TouchableOpacity style={styles.signupInlineIcon} onPress={() => setPasswordVisible((current) => !current)}>
+                <Ionicons name={passwordVisible ? 'eye-outline' : 'eye-off-outline'} size={26} color="#555a5d" />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <View style={styles.loginOptionsRow}>
+            <TouchableOpacity style={styles.loginRemember} activeOpacity={0.75} onPress={() => setRememberMe((current) => !current)}>
+              <View style={[styles.loginCheckbox, rememberMe && styles.signupCheckboxActive]}>
+                {rememberMe ? <Ionicons name="checkmark" size={16} color="#ffffff" /> : null}
               </View>
-            </>
-          ) : null}
-          <AppButton label={loading ? 'Working...' : isSignup ? 'Create Account' : 'Log In'} icon="person-outline" disabled={loading} onPress={submit} />
-          {message ? <Text style={[styles.formMessage, message === 'Working...' ? null : styles.errorText]}>{message}</Text> : null}
-          <TouchableOpacity onPress={() => onNavigate(isSignup ? 'login' : 'signup')}>
-            <Text style={styles.switchText}>{isSignup ? 'Already have an account? Log in' : 'New to FitLook? Create an account'}</Text>
+              <Text style={styles.loginOptionText}>Remember me</Text>
+            </TouchableOpacity>
+            <TouchableOpacity activeOpacity={0.75}>
+              <Text style={styles.loginForgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.loginTermsText}>
+            By continuing, you agree to our <Text style={styles.loginTermsLink}>Terms & Conditions</Text>{'\n'}and Privacy Policy
+          </Text>
+          <View style={styles.loginTermsUnderline} />
+
+          <TouchableOpacity style={[styles.loginSubmit, loading && styles.signupSubmitDisabled]} activeOpacity={0.88} disabled={loading} onPress={submit}>
+            <Text style={styles.loginSubmitText}>{loading ? 'Working...' : 'Login'}</Text>
+            <Ionicons name="arrow-forward" size={22} color="#ffffff" />
+          </TouchableOpacity>
+
+          {message ? <Text style={[styles.formMessage, styles.signupMessage, message === 'Working...' ? null : styles.errorText]}>{message}</Text> : null}
+
+          <TouchableOpacity style={styles.loginSwitch} onPress={() => onNavigate('signup')}>
+            <Text style={styles.loginSwitchText}>New to FitLook? <Text style={styles.loginSwitchLink}>Sign up</Text></Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -2433,9 +2750,9 @@ export default function App() {
     api('/auth/me')
       .then(async (data) => {
         if (!alive) return;
-        setUser(data.user);
-        setToken(await getToken());
-        setRouteStack((current) => (current.length === 1 && current[0]?.name === 'auth' ? [normalizeRoute('shop')] : current));
+      setUser(data.user);
+      setToken(await getToken());
+      setRouteStack((current) => (current.length === 1 && current[0]?.name === 'auth' ? [normalizeRoute('home')] : current));
       })
       .catch(() => {})
       .finally(() => alive && setReady(true));
@@ -2479,7 +2796,7 @@ export default function App() {
     const routeParams = currentRoute.params || {};
     switch (currentRoute.name) {
       case 'auth':
-        return user ? <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={navigate} /> : <AuthEntryScreen onNavigate={navigate} />;
+        return user ? <HomeScreen onNavigate={navigate} user={user} token={token} /> : <AuthEntryScreen onNavigate={navigate} />;
       case 'home':
         return <HomeScreen onNavigate={navigate} user={user} token={token} />;
       case 'shop':
@@ -2524,11 +2841,14 @@ export default function App() {
 
   const authOnlyRoute = !user && ['auth', 'login', 'signup'].includes(currentRoute.name);
   const welcomeRoute = !user && currentRoute.name === 'auth';
+  const signupRoute = !user && currentRoute.name === 'signup';
+  const loginRoute = !user && currentRoute.name === 'login';
+  const homeRoute = currentRoute.name === 'home';
 
   return (
-    <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe]}>
-      <StatusBar style={welcomeRoute ? 'light' : 'dark'} />
-      {authOnlyRoute ? null : <Header user={user} canGoBack={routeStack.length > 1} onBack={goBack} onNavigate={navigate} onLogout={logout} />}
+    <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe]}>
+      <StatusBar style={welcomeRoute || loginRoute ? 'light' : 'dark'} />
+      {authOnlyRoute || homeRoute ? null : <Header user={user} canGoBack={routeStack.length > 1} onBack={goBack} onNavigate={navigate} onLogout={logout} />}
       <View style={styles.content}>
         <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
           {screen}
@@ -2546,6 +2866,15 @@ const styles = StyleSheet.create({
   },
   authEntrySafe: {
     backgroundColor: '#111111'
+  },
+  signupSafe: {
+    backgroundColor: '#fbf7f6'
+  },
+  loginSafe: {
+    backgroundColor: '#111111'
+  },
+  homeSafe: {
+    backgroundColor: '#fbf7f6'
   },
   flex: {
     flex: 1
@@ -2623,24 +2952,403 @@ const styles = StyleSheet.create({
     bottom: 0,
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 22 : 8,
-    backgroundColor: '#ffffff',
+    paddingTop: 9,
+    paddingBottom: Platform.OS === 'ios' ? 22 : 10,
+    backgroundColor: '#fbf7f6',
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb'
+    borderTopColor: '#ece5e1'
   },
   navItem: {
-    minWidth: 50,
+    minWidth: 62,
     alignItems: 'center',
     gap: 3
   },
   navText: {
-    fontSize: 11,
-    color: '#6b7280',
-    fontWeight: '700'
+    fontSize: 10,
+    color: '#8d8682',
+    fontWeight: '600'
   },
   navTextActive: {
-    color: '#0f766e'
+    color: '#c17679'
+  },
+  homeScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  homeContent: {
+    paddingBottom: Platform.OS === 'android' ? 96 : 108,
+    backgroundColor: '#fbf7f6'
+  },
+  homeTopBar: {
+    height: 52,
+    paddingHorizontal: 16,
+    backgroundColor: '#fbf7f6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  homeTopIcon: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  homeBrand: {
+    color: '#111111',
+    fontSize: 19,
+    lineHeight: 23,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  homeHero: {
+    marginHorizontal: 16,
+    height: 205,
+    overflow: 'hidden',
+    backgroundColor: '#d8c5b6'
+  },
+  homeHeroImage: {
+    width: '100%',
+    height: '100%'
+  },
+  homeHeroShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.22)'
+  },
+  homeHeroCopy: {
+    position: 'absolute',
+    left: 20,
+    bottom: 20
+  },
+  homeHeroTitle: {
+    color: '#ffffff',
+    fontSize: 28,
+    lineHeight: 33,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  homeHeroButton: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    minWidth: 132,
+    minHeight: 44,
+    borderRadius: 6,
+    backgroundColor: '#1f1f1f',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20
+  },
+  homeHeroButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1
+  },
+  homeSection: {
+    marginTop: 36,
+    paddingHorizontal: 20
+  },
+  homeSectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  homeSectionTitle: {
+    color: '#1f1b19',
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  homeViewAll: {
+    color: '#1f1b19',
+    fontSize: 10,
+    fontWeight: '800',
+    textDecorationLine: 'underline',
+    letterSpacing: 0.8
+  },
+  homeCategoryTrack: {
+    paddingTop: 22,
+    gap: 22,
+    paddingRight: 22
+  },
+  homeCategoryItem: {
+    width: 68,
+    alignItems: 'center'
+  },
+  homeCategoryImage: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#eee5df'
+  },
+  homeCategoryLabel: {
+    marginTop: 12,
+    color: '#1f1b19',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6
+  },
+  homeCurationTitle: {
+    marginTop: 35,
+    marginBottom: 27,
+    color: '#1f1b19',
+    textAlign: 'center',
+    fontSize: 25,
+    lineHeight: 31,
+    fontWeight: '400',
+    fontStyle: 'italic',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  homeCuratedGrid: {
+    paddingHorizontal: 22,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 38
+  },
+  homeProductCard: {
+    width: '47%'
+  },
+  homeProductImageWrap: {
+    aspectRatio: 0.78,
+    borderRadius: 9,
+    overflow: 'hidden',
+    backgroundColor: '#eee7e2'
+  },
+  homeProductImage: {
+    width: '100%',
+    height: '100%'
+  },
+  homeNewBadge: {
+    position: 'absolute',
+    left: 8,
+    top: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#8e343c',
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: '900'
+  },
+  homeTryBadge: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  homeProductEyebrow: {
+    marginTop: 13,
+    color: '#a39b96',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5
+  },
+  homeProductTitle: {
+    marginTop: 3,
+    color: '#171717',
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '500',
+    letterSpacing: 0
+  },
+  homeProductPrice: {
+    marginTop: 3,
+    color: '#171717',
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 0
+  },
+  homeSaleCard: {
+    marginTop: 275,
+    marginHorizontal: 22,
+    minHeight: 142,
+    borderRadius: 8,
+    backgroundColor: '#202020',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  homeSaleText: {
+    color: '#ffffff',
+    textAlign: 'center',
+    fontSize: 37,
+    lineHeight: 45,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  homeSaleSub: {
+    marginTop: 12,
+    color: '#d6d2cf',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2
+  },
+  homeShippingCard: {
+    marginTop: 26,
+    marginHorizontal: 22,
+    minHeight: 105,
+    borderRadius: 8,
+    backgroundColor: '#f4eded',
+    paddingHorizontal: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  homeShippingTitle: {
+    color: '#1f1b19',
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  homeShippingText: {
+    marginTop: 4,
+    color: '#55514f',
+    fontSize: 12,
+    fontWeight: '500'
+  },
+  homeJournalBand: {
+    marginTop: 96,
+    paddingTop: 55,
+    paddingHorizontal: 22,
+    paddingBottom: 74,
+    backgroundColor: '#f6efeb'
+  },
+  homeJournalTitle: {
+    color: '#1f1b19',
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  homeJournalGrid: {
+    marginTop: 34,
+    flexDirection: 'row',
+    gap: 24
+  },
+  homeJournalColumn: {
+    flex: 1,
+    gap: 22
+  },
+  homeJournalImage: {
+    width: '100%',
+    borderRadius: 8,
+    backgroundColor: '#e7ded7'
+  },
+  homeJournalTall: {
+    height: 210
+  },
+  homeJournalShort: {
+    height: 104
+  },
+  homeAtelier: {
+    paddingHorizontal: 22,
+    paddingTop: 70,
+    paddingBottom: 65,
+    alignItems: 'center',
+    backgroundColor: '#fbf7f6'
+  },
+  homeDivider: {
+    width: '100%',
+    height: 1,
+    backgroundColor: '#ece5e1',
+    marginBottom: 58
+  },
+  homeAtelierTitle: {
+    color: '#1f1b19',
+    textAlign: 'center',
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' })
+  },
+  homeAtelierText: {
+    marginTop: 21,
+    color: '#5c5754',
+    textAlign: 'center',
+    fontSize: 13,
+    lineHeight: 21,
+    fontWeight: '500'
+  },
+  homeEmailInput: {
+    marginTop: 34,
+    width: '100%',
+    minHeight: 68,
+    borderWidth: 1,
+    borderColor: '#ded7d3',
+    backgroundColor: '#fbf7f6',
+    color: '#111111',
+    textAlign: 'center',
+    fontSize: 13,
+    fontWeight: '500'
+  },
+  homeSubscribeButton: {
+    marginTop: 25,
+    width: '100%',
+    minHeight: 58,
+    borderRadius: 7,
+    backgroundColor: '#050606',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  homeSubscribeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.4
+  },
+  homeFooterLinks: {
+    paddingHorizontal: 24,
+    paddingBottom: 55,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#fbf7f6'
+  },
+  homeFooterHead: {
+    color: '#111111',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1
+  },
+  homeFooterLink: {
+    marginTop: 12,
+    color: '#4b4846',
+    fontSize: 12,
+    fontWeight: '500'
+  },
+  homeFooterBottom: {
+    marginHorizontal: 22,
+    paddingTop: 28,
+    paddingBottom: 38,
+    borderTopWidth: 1,
+    borderTopColor: '#ece5e1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  homeFooterBrand: {
+    color: '#1f1b19',
+    fontSize: 16,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' })
+  },
+  homeCopyright: {
+    color: '#b4aba6',
+    fontSize: 10,
+    fontWeight: '600'
   },
   hero: {
     margin: 16,
@@ -3306,6 +4014,446 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 999,
     backgroundColor: 'rgba(255, 255, 255, 0.28)'
+  },
+  signupScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  signupContent: {
+    flexGrow: 1,
+    paddingTop: Platform.OS === 'android' ? 34 : 54,
+    paddingBottom: 34
+  },
+  signupBrand: {
+    color: '#050505',
+    fontSize: 30,
+    lineHeight: 35,
+    fontWeight: '800',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  signupTitle: {
+    marginTop: 50,
+    color: '#050505',
+    fontSize: 60,
+    lineHeight: 72,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  signupSubtitle: {
+    marginTop: 22,
+    color: '#4b4b4d',
+    fontSize: 23,
+    lineHeight: 31,
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  signupFieldStack: {
+    marginTop: 55,
+    gap: 27
+  },
+  signupInputWrap: {
+    minHeight: 77,
+    borderRadius: 15,
+    borderWidth: 1.3,
+    borderColor: '#c8cacc',
+    backgroundColor: '#fbf7f6',
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 17
+  },
+  signupInput: {
+    flex: 1,
+    minHeight: 52,
+    color: '#111111',
+    fontSize: 22,
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  signupInlineIcon: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  signupSuggestionRow: {
+    marginTop: -14,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  signupSuggestionChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d7d8da',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: '#ffffff'
+  },
+  signupSuggestionText: {
+    color: '#555b66',
+    fontWeight: '700'
+  },
+  signupSectionLabel: {
+    marginTop: 37,
+    color: '#4b4b4d',
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '700',
+    letterSpacing: 1.2
+  },
+  signupGenderRow: {
+    marginTop: 16,
+    flexDirection: 'row',
+    gap: 11
+  },
+  signupGenderButton: {
+    flex: 1,
+    minHeight: 67,
+    borderRadius: 15,
+    borderWidth: 1.3,
+    borderColor: '#c8cacc',
+    backgroundColor: '#fbf7f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8
+  },
+  signupGenderButtonActive: {
+    backgroundColor: '#111111',
+    borderColor: '#111111'
+  },
+  signupGenderText: {
+    color: '#111111',
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  signupGenderTextActive: {
+    color: '#ffffff'
+  },
+  signupPhotoRow: {
+    marginTop: 38,
+    flexDirection: 'row',
+    gap: 17
+  },
+  signupPhotoButton: {
+    flex: 1,
+    minHeight: 68,
+    borderRadius: 15,
+    borderWidth: 1.3,
+    borderColor: '#c8cacc',
+    backgroundColor: '#fbf7f6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    gap: 10
+  },
+  signupPhotoButtonText: {
+    color: '#19191b',
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '800',
+    letterSpacing: 0
+  },
+  signupModeRow: {
+    marginTop: 18,
+    flexDirection: 'row',
+    gap: 17
+  },
+  signupModeButton: {
+    flex: 1,
+    minHeight: 72,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#d9dadd',
+    backgroundColor: '#fbf7f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12
+  },
+  signupModeButtonActive: {
+    borderColor: '#111111'
+  },
+  signupModeText: {
+    color: '#4c4d50',
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: 0
+  },
+  signupModeTextActive: {
+    color: '#111111'
+  },
+  signupTermsRow: {
+    marginTop: 41,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 16
+  },
+  signupCheckbox: {
+    marginTop: 1,
+    width: 27,
+    height: 27,
+    borderRadius: 4,
+    borderWidth: 1.3,
+    borderColor: '#c8cacc',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  signupCheckboxActive: {
+    backgroundColor: '#111111',
+    borderColor: '#111111'
+  },
+  signupTermsText: {
+    flex: 1,
+    color: '#3c3d40',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  signupTermsLink: {
+    color: '#050505',
+    textDecorationLine: 'underline'
+  },
+  signupSubmit: {
+    marginTop: 40,
+    minHeight: 76,
+    borderRadius: 15,
+    backgroundColor: '#050606',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 22
+  },
+  signupSubmitDisabled: {
+    opacity: 0.62
+  },
+  signupSubmitText: {
+    color: '#ffffff',
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: '800',
+    letterSpacing: 0
+  },
+  signupMessage: {
+    marginTop: 14,
+    textAlign: 'center'
+  },
+  signupSwitch: {
+    marginTop: 25,
+    alignItems: 'center'
+  },
+  signupSwitchText: {
+    color: '#4c4d50',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '400'
+  },
+  signupSwitchLink: {
+    color: '#050505'
+  },
+  loginScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  loginContent: {
+    flexGrow: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  loginHero: {
+    position: 'relative',
+    overflow: 'hidden',
+    backgroundColor: '#1f1f1f'
+  },
+  loginHeroImage: {
+    width: '100%',
+    height: '100%',
+    transform: [{ scale: 1.06 }]
+  },
+  loginHeroOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.42)'
+  },
+  loginHeroCopy: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    paddingTop: 18,
+    paddingBottom: 28
+  },
+  loginHeroTitle: {
+    color: '#ffffff',
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  loginHeroText: {
+    marginTop: 64,
+    color: 'rgba(255, 255, 255, 0.92)',
+    fontSize: 24,
+    lineHeight: 36,
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  loginPanel: {
+    paddingTop: 60,
+    paddingBottom: 38,
+    backgroundColor: '#fbf7f6'
+  },
+  loginTitle: {
+    color: '#111111',
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  loginSubtitle: {
+    marginTop: 22,
+    color: '#4b4b4d',
+    fontSize: 21,
+    lineHeight: 28,
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  loginTabWrap: {
+    marginTop: 76,
+    height: 48,
+    position: 'relative',
+    justifyContent: 'flex-start'
+  },
+  loginTabText: {
+    marginLeft: 58,
+    color: '#111111',
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '800',
+    letterSpacing: 0
+  },
+  loginTabLine: {
+    position: 'absolute',
+    left: 0,
+    bottom: 0,
+    width: '34%',
+    height: 3,
+    backgroundColor: '#111111'
+  },
+  loginTabFaintLine: {
+    position: 'absolute',
+    left: '34%',
+    right: 0,
+    bottom: 0,
+    height: 1,
+    backgroundColor: '#e4e1e0'
+  },
+  loginFieldStack: {
+    marginTop: 62,
+    gap: 32
+  },
+  loginInputWrap: {
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: '#dedfde',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 20
+  },
+  loginInput: {
+    flex: 1,
+    minHeight: 50,
+    color: '#111111',
+    fontSize: 21,
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  loginOptionsRow: {
+    marginTop: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16
+  },
+  loginRemember: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12
+  },
+  loginCheckbox: {
+    width: 27,
+    height: 27,
+    borderRadius: 4,
+    borderWidth: 1.3,
+    borderColor: '#c8cacc',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  loginOptionText: {
+    color: '#4b4b4d',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '400'
+  },
+  loginForgotText: {
+    color: '#7a3a31',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '700'
+  },
+  loginTermsText: {
+    marginTop: 30,
+    color: '#96999c',
+    fontSize: 16,
+    lineHeight: 25,
+    fontWeight: '400',
+    textAlign: 'center'
+  },
+  loginTermsLink: {
+    color: '#8c8f92',
+    textDecorationLine: 'underline'
+  },
+  loginTermsUnderline: {
+    alignSelf: 'center',
+    marginTop: 0,
+    width: '64%',
+    height: 1,
+    backgroundColor: '#b8b8b8'
+  },
+  loginSubmit: {
+    marginTop: 34,
+    minHeight: 66,
+    borderRadius: 14,
+    backgroundColor: '#050606',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 22
+  },
+  loginSubmitText: {
+    color: '#ffffff',
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '800',
+    letterSpacing: 0
+  },
+  loginSwitch: {
+    marginTop: 27,
+    alignItems: 'center'
+  },
+  loginSwitchText: {
+    color: '#4c4d50',
+    fontSize: 19,
+    lineHeight: 25,
+    fontWeight: '400'
+  },
+  loginSwitchLink: {
+    color: '#050505'
   },
   authCard: {
     margin: 16,
