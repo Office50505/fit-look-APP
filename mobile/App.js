@@ -33,7 +33,7 @@ const sortOptions = [
   ['price-asc', 'Price low'],
   ['price-desc', 'Price high']
 ];
-const validRoutes = new Set(['auth', 'home', 'shop', 'tryon', 'closet', 'custom', 'stylebot', 'tokens', 'profile', 'product', 'signup', 'login', 'how', 'info']);
+const validRoutes = new Set(['auth', 'home', 'shop', 'tryon', 'closet', 'custom', 'stylebot', 'tokens', 'profile', 'product', 'wishlist', 'orders', 'signup', 'login', 'how', 'info']);
 
 function normalizeRoute(name, params = {}) {
   const routeName = typeof name === 'string' && validRoutes.has(name) ? name : 'home';
@@ -285,31 +285,23 @@ function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
 }
 
 function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
-  const activeRoute = route?.name || 'home';
-  const items = activeRoute === 'closet'
-    ? [
-      ['home', 'home-outline', 'Home'],
-      ['shop', 'search-outline', 'Explore'],
-      ['closet', 'shirt-outline', 'Wardrobe'],
-      ['tryon', 'sparkles-outline', 'Studio'],
-      ['profile', 'person-outline', 'Profile']
-    ]
-    : [
-      ['home', 'book-outline', 'Feed'],
-      ['shop', 'storefront-outline', 'Shop'],
-      ['tryon', 'sparkles-outline', 'AI Studio'],
-      ['closet', 'shirt-outline', 'Wardrobe'],
-      ['profile', 'person-outline', 'Profile']
-    ];
+  const routeName = route?.name || 'home';
+  const activeRoute = routeName === 'product' ? 'shop' : routeName === 'wishlist' ? 'closet' : routeName === 'orders' ? 'profile' : routeName;
+  const items = [
+    ['home', 'book-outline', 'Feed'],
+    ['shop', 'storefront-outline', 'Shop'],
+    ['closet', 'shirt-outline', 'Wardrobe'],
+    ['tryon', 'sparkles-outline', 'AI Studio'],
+    ['profile', 'person-outline', 'Profile']
+  ];
   return (
     <View style={styles.bottomNav}>
       {items.map(([name, icon, label]) => {
         const active = activeRoute === name;
-        const centerActive = activeRoute === 'closet' && name === 'closet';
         return (
-          <TouchableOpacity key={name} style={[styles.navItem, centerActive && styles.navItemCenterActive]} onPress={() => onNavigate(name)}>
-            <View style={[styles.navIconWrap, centerActive && styles.navIconWrapCenter]}>
-              <Ionicons name={icon} size={centerActive ? 27 : 21} color={centerActive ? '#ffffff' : active ? '#c17679' : '#8d8682'} />
+          <TouchableOpacity key={name} style={[styles.navItem, active && styles.navItemCenterActive]} onPress={() => onNavigate(name)}>
+            <View style={[styles.navIconWrap, active && styles.navIconWrapCenter]}>
+              <Ionicons name={icon} size={active ? 27 : 21} color={active ? '#ffffff' : '#8d8682'} />
             </View>
             <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
           </TouchableOpacity>
@@ -489,6 +481,65 @@ function ShopArrivalCard({ item, product, onPress }) {
       <Text style={styles.shopArrivalPrice}>{product ? formatMoney(product.price || 0, product.currency) : item.price}</Text>
       <View style={styles.shopSwatches}>
         {colors.map((color) => <View key={color} style={[styles.shopSwatch, { backgroundColor: color }]} />)}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function ProductTopBar({ onNavigate }) {
+  return (
+    <View style={styles.productTopBar}>
+      <TouchableOpacity style={styles.productTopIcon} onPress={() => onNavigate('shop')}>
+        <Ionicons name="search-outline" size={18} color="#4c4845" />
+      </TouchableOpacity>
+      <Text style={styles.productTopBrand}>FitLook</Text>
+      <TouchableOpacity style={styles.productTopIcon} onPress={() => onNavigate('tokens')}>
+        <Ionicons name="bag-handle-outline" size={18} color="#4c4845" />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function ProductActionButton({ label, icon, active, disabled, onPress }) {
+  return (
+    <TouchableOpacity style={[styles.productActionButton, active && styles.productActionButtonActive, disabled && styles.disabledButton]} activeOpacity={0.85} disabled={disabled} onPress={onPress}>
+      <Ionicons name={icon} size={15} color={active ? '#ffffff' : '#4f4a48'} />
+      <Text style={[styles.productActionText, active && styles.productActionTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function CompleteLookCard({ product, fallback, onPress }) {
+  const source = product ? productImageSource(product) : images[fallback.image];
+  return (
+    <TouchableOpacity style={styles.completeLookCard} activeOpacity={0.86} onPress={onPress}>
+      <Image source={source} style={styles.completeLookImage} resizeMode="cover" />
+      <Text style={styles.completeLookBrand} numberOfLines={1}>{product?.brand || fallback.brand}</Text>
+      <Text style={styles.completeLookName} numberOfLines={2}>{product?.name || fallback.name}</Text>
+      <Text style={styles.completeLookPrice}>{product ? formatMoney(product.price || 0, product.currency) : fallback.price}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function ConciergeSuggestionCard({ product, fallback, featured, onShop, onTryOn }) {
+  const source = product ? productImageSource(product) : images[fallback.image];
+  return (
+    <TouchableOpacity style={styles.conciergeSuggestionCard} activeOpacity={0.88} onPress={onTryOn || onShop}>
+      <View style={styles.conciergeSuggestionImageWrap}>
+        <Image source={source} style={styles.conciergeSuggestionImage} resizeMode="cover" />
+        {featured ? (
+          <TouchableOpacity style={styles.conciergeSparkButton} onPress={onTryOn || onShop}>
+            <Ionicons name="sparkles" size={24} color="#050505" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      <View style={styles.conciergeSuggestionBody}>
+        <Text style={styles.conciergeSuggestionBrand} numberOfLines={1}>{product?.brand || fallback.brand}</Text>
+        <Text style={styles.conciergeSuggestionName} numberOfLines={2}>{product?.name || fallback.name}</Text>
+        <Text style={styles.conciergeSuggestionPrice}>{product ? formatMoney(product.price || 0, product.currency) : fallback.price}</Text>
+        <TouchableOpacity style={styles.conciergeShopButton} onPress={onShop}>
+          <Text style={styles.conciergeShopText}>Shop Suggestion</Text>
+        </TouchableOpacity>
       </View>
     </TouchableOpacity>
   );
@@ -716,6 +767,10 @@ function TryOnVideoPlayer({ uri, style, nativeControls = true }) {
 }
 
 function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate }) {
+  if (tryOnMode) {
+    return <StyleBotScreen user={user} setUser={setUser} token={token} onNavigate={onNavigate} />;
+  }
+
   const [draft, setDraft] = useState(initial.q || '');
   const [filters, setFilters] = useState({
     q: initial.q || '',
@@ -1011,6 +1066,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
   const [tryOnVideoLoading, setTryOnVideoLoading] = useState(false);
   const [tryOnError, setTryOnError] = useState('');
   const [tryOnVideoError, setTryOnVideoError] = useState('');
+  const [selectedSize, setSelectedSize] = useState('Medium');
   const [lightbox, setLightbox] = useState(null);
   const related = useProducts({ category: state.product?.category || '', limit: 5 }, token);
   const relatedProducts = related.products.filter((item) => item.id !== id).slice(0, 4);
@@ -1094,116 +1150,177 @@ function ProductScreen({ id, user, setUser, token, onNavigate }) {
   }
 
   const product = state.product;
-  const tags = (product.tags || []).filter(Boolean).slice(0, 10);
-  const mediaWidth = Math.max(1, Math.round(width - 32));
-  const mediaHeight = Math.min(640, Math.max(500, Math.round(mediaWidth * 1.42)));
   const originalUri = imageUrl(product.imageUrl);
   const tryOnUri = imageUrl(tryOn?.imageUrl);
   const tryOnVideoUri = imageUrl(tryOn?.videoUrl);
-  const mediaItems = [
-    tryOnVideoUri ? { key: 'video', label: 'Video Try-On', type: 'video', uri: tryOnVideoUri } : null,
-    tryOnUri ? { key: 'tryon', label: 'AI Try-On', source: { uri: tryOnUri }, uri: tryOnUri } : null,
-    { key: 'original', label: 'Original Product', source: originalUri ? { uri: originalUri } : images.hero, uri: originalUri }
-  ].filter(Boolean);
+  const displaySource = tryOnUri ? { uri: tryOnUri } : originalUri ? { uri: originalUri } : images['arrival-4.jpg'];
+  const detailTags = [
+    titleCase(product.category || 'Knitwear'),
+    product.fit || 'Regular Fit',
+    titleCase(product.gender || 'Women')
+  ].filter(Boolean).slice(0, 3);
+  const colorLabel = (product.color || product.primaryColor || 'Charcoal').toString().toUpperCase();
+  const completeFallback = [
+    { brand: 'FITLOOK ACCESSORIES', name: 'Sculptural Leather Boot', price: '$620.00', image: 'category-6.jpg' },
+    { brand: 'FITLOOK JEWELRY', name: 'Geometric Aura Choker', price: '$290.00', image: 'category-8.jpg' }
+  ];
+  const detailRows = ['PRODUCT DETAILS', 'FIT & CARE', 'SHIPPING & RETURNS'];
+  const mediaHeight = Math.min(520, Math.max(360, Math.round((width - 28) * 1.31)));
+
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent}>
-      <View style={[styles.detailMedia, { height: mediaHeight }]}>
-        <ScrollView
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.detailMediaTrack}
-        >
-          {mediaItems.map((item, index) => (
-            <Pressable key={item.key} style={[styles.detailSlide, { width: mediaWidth }]} onPress={() => item.type !== 'video' && item.uri && setLightbox(item.uri)}>
-              {item.type === 'video' ? (
-                <TryOnVideoPlayer uri={item.uri} />
-              ) : (
-                <Image source={item.source} style={styles.detailImage} resizeMode="contain" />
-              )}
-              <Text style={styles.detailImageBadge}>{item.label}</Text>
-              {mediaItems.length > 1 ? <Text style={styles.detailImageCount}>{index + 1}/{mediaItems.length}</Text> : null}
-            </Pressable>
-          ))}
-        </ScrollView>
-        {mediaItems.length > 1 ? (
-          <View style={styles.detailSwipeHint}>
-            <Ionicons name="swap-horizontal-outline" size={16} color="#111827" />
-            <Text style={styles.detailSwipeText}>Slide to compare</Text>
-          </View>
-        ) : null}
-        {tryOnLoading || tryOnVideoLoading ? <TryOnLoading text={tryOnVideoLoading ? 'Generating video' : 'Generating try-on'} large /> : null}
+    <ScrollView style={styles.productDetailScreen} contentContainerStyle={styles.productDetailContent} showsVerticalScrollIndicator={false}>
+      <ProductTopBar onNavigate={onNavigate} />
+      <View style={styles.productBreadcrumb}>
+        <TouchableOpacity onPress={() => onNavigate('home')}><Text style={styles.productCrumbText}>Home</Text></TouchableOpacity>
+        <Text style={styles.productCrumbText}>Collections</Text>
+        <Text style={styles.productCrumbCurrent} numberOfLines={1}>{product.name}</Text>
       </View>
-      <View style={styles.detailBody}>
-        <Text style={styles.kicker}>{product.brand}</Text>
-        <Text style={styles.detailTitle}>{product.name}</Text>
-        <View style={styles.ratingRow}>
-          <Ionicons name="star" size={15} color="#f59e0b" />
-          <Text style={styles.ratingText}>{Number(product.rating || 0).toFixed(1)} {product.ratingCount ? `(${product.ratingCount} reviews)` : ''}</Text>
-        </View>
-        <View style={styles.priceRow}>
-          <Text style={styles.detailPrice}>{formatMoney(product.price || 0, product.currency)}</Text>
-          {product.compareAtPrice ? <Text style={styles.wasPrice}>{formatMoney(product.compareAtPrice, product.currency)}</Text> : null}
-        </View>
-        <Text style={styles.description}>{product.description || 'No product description has been added yet.'}</Text>
-        <View style={styles.factGrid}>
-          {[
-            ['Brand', product.brand],
-            ['Category', product.category],
-            ['For', product.gender],
-            ['Model', product.tryOnModel]
-          ].filter(([, value]) => value).map(([label, value]) => (
-            <View key={label} style={styles.factItem}>
-              <Text style={styles.factLabel}>{label}</Text>
-              <Text style={styles.factValue}>{String(value)}</Text>
+
+      <Pressable style={[styles.productHeroMedia, { height: mediaHeight }]} onPress={() => (tryOnUri || originalUri) && setLightbox(tryOnUri || originalUri)}>
+        {tryOnVideoUri ? (
+          <TryOnVideoPlayer uri={tryOnVideoUri} style={styles.productHeroVideo} nativeControls={false} />
+        ) : (
+          <Image source={displaySource} style={styles.productHeroImage} resizeMode="cover" />
+        )}
+        <TouchableOpacity style={styles.productFavoriteButton}>
+          <Ionicons name="heart-outline" size={24} color="#5d5754" />
+        </TouchableOpacity>
+        {tryOnLoading || tryOnVideoLoading ? <TryOnLoading text={tryOnVideoLoading ? 'Generating video' : 'Generating try-on'} large /> : null}
+      </Pressable>
+
+      <View style={styles.productSummary}>
+        <View style={styles.productSummaryTop}>
+          <View style={styles.productSummaryTitleBlock}>
+            <Text style={styles.productBrandLabel}>{product.brand || 'FITLOOK SIGNATURE'}</Text>
+            <Text style={styles.productNameText}>{product.name}</Text>
+          </View>
+          <View style={styles.productPriceBlock}>
+            <Text style={styles.productDetailPrice}>{formatMoney(product.price || 0, product.currency)}</Text>
+            <View style={styles.productRatingLine}>
+              <Ionicons name="star" size={12} color="#9b5658" />
+              <Text style={styles.productRatingText}>{Number(product.rating || 4.8).toFixed(1)} {product.ratingCount ? `(${product.ratingCount})` : '(164)'}</Text>
             </View>
+          </View>
+        </View>
+        <View style={styles.productTagRow}>
+          {detailTags.map((tag) => <Text key={tag} style={styles.productSoftTag}>{tag}</Text>)}
+        </View>
+
+        <Text style={styles.productOptionLabel}>COLOR: <Text style={styles.productOptionValue}>{colorLabel}</Text></Text>
+        <View style={styles.productSwatchRow}>
+          {['#262626', '#f1f5f1', '#8b8f91'].map((color, index) => <View key={color} style={[styles.productColorSwatch, index === 0 && styles.productColorSwatchActive, { backgroundColor: color }]} />)}
+        </View>
+
+        <View style={styles.productSizeHead}>
+          <Text style={styles.productOptionLabel}>SELECT SIZE</Text>
+          <TouchableOpacity><Text style={styles.productSizeGuide}>Size Guide</Text></TouchableOpacity>
+        </View>
+        <View style={styles.productSizeRow}>
+          {['Small', 'Medium', 'Large'].map((size) => (
+            <TouchableOpacity key={size} style={[styles.productSizeButton, selectedSize === size && styles.productSizeButtonActive]} onPress={() => setSelectedSize(size)}>
+              <Text style={[styles.productSizeText, selectedSize === size && styles.productSizeTextActive]}>{size}</Text>
+            </TouchableOpacity>
           ))}
         </View>
-        {tags.length ? (
-          <View style={styles.tagWrap}>
-            {tags.map((tag) => <Text key={tag} style={styles.tag}>{tag}</Text>)}
-          </View>
-        ) : null}
-        <View style={styles.detailActions}>
-          {product.affiliateLink ? <AppButton label="Shop Brand" icon="open-outline" onPress={() => Linking.openURL(product.affiliateLink)} /> : null}
-          <AppButton
-            label={tryOnLoading ? 'Generating Try-On...' : tryOn?.imageUrl ? 'Generate Try-On Again' : user ? 'Generate AI Try-On' : 'Create Profile'}
+
+        <View style={styles.productActionRow}>
+          <ProductActionButton label="Shop" icon="bag-handle-outline" active onPress={() => product.affiliateLink ? Linking.openURL(product.affiliateLink) : onNavigate('shop')} />
+          <ProductActionButton
+            label={tryOnLoading ? 'Trying...' : 'Try On'}
             icon="sparkles-outline"
-            variant={product.affiliateLink ? 'secondary' : 'primary'}
             disabled={tryOnLoading}
             onPress={generate}
           />
-          {user && tryOn?.imageUrl ? (
-            <AppButton
-              label={tryOnVideoLoading ? 'Generating Video...' : tryOn?.videoUrl ? 'Generate Video Again' : 'Generate Video Try-On'}
-              icon="videocam-outline"
-              variant="secondary"
-              disabled={tryOnLoading || tryOnVideoLoading}
-              onPress={generateVideo}
-            />
-          ) : null}
+          <ProductActionButton
+            label={tryOnVideoLoading ? 'Video...' : 'Video'}
+            icon="play-circle-outline"
+            disabled={tryOnLoading || tryOnVideoLoading || !tryOn?.imageUrl}
+            onPress={generateVideo}
+          />
         </View>
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
         {tryOnVideoError ? <Text style={styles.errorText}>{tryOnVideoError}</Text> : null}
       </View>
-      {relatedProducts.length ? (
-        <View style={styles.section}>
-          <View style={styles.sectionHead}>
-            <Text style={styles.sectionTitle}>More in {product.category}</Text>
-            <TouchableOpacity onPress={() => onNavigate('shop', { category: product.category })}>
-              <Text style={styles.viewAll}>View all</Text>
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            horizontal
-            data={relatedProducts}
-            keyExtractor={(item) => item.id}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.horizontalList}
-            renderItem={({ item }) => <ProductCard product={item} tryOn={relatedTryOns[item.id]} onPress={() => onNavigate('product', { id: item.id })} />}
-          />
+
+      <View style={styles.productBenefitsBand}>
+        <View style={styles.productBenefitItem}>
+          <Ionicons name="leaf-outline" size={22} color="#9b5658" />
+          <Text style={styles.productBenefitTitle}>SUSTAINABILITY</Text>
+          <Text style={styles.productBenefitText}>100% Traceable Wool</Text>
         </View>
-      ) : null}
+        <View style={styles.productBenefitItem}>
+          <Ionicons name="construct-outline" size={22} color="#9b5658" />
+          <Text style={styles.productBenefitTitle}>CRAFTSMANSHIP</Text>
+          <Text style={styles.productBenefitText}>Made in Florence</Text>
+        </View>
+      </View>
+
+      <View style={styles.productAccordion}>
+        {detailRows.map((row) => (
+          <TouchableOpacity key={row} style={styles.productAccordionRow}>
+            <Text style={styles.productAccordionText}>{row}</Text>
+            <Ionicons name="add" size={17} color="#4f4a48" />
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View style={styles.productStorySection}>
+        <Text style={styles.productStoryTitle}>The Fabric of Modernity</Text>
+        <Text style={styles.productStoryText}>
+          {product.description || 'In an age of transience, we seek the enduring. Each stitch represents a dialogue between historical craftsmanship and contemporary silhouette, a garment designed to exist outside of trends.'}
+        </Text>
+        <Image source={images['search-shirt-3.jpg']} style={styles.productStoryImage} resizeMode="cover" />
+      </View>
+
+      <View style={styles.completeLookSection}>
+        <View style={styles.completeLookHead}>
+          <Text style={styles.completeLookTitle}>Complete the Look</Text>
+          <TouchableOpacity onPress={() => onNavigate('shop', { category: product.category })}>
+            <Text style={styles.completeLookAll}>SHOP ALL</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.completeLookGrid}>
+          {[0, 1].map((index) => {
+            const item = relatedProducts[index];
+            return (
+              <CompleteLookCard
+                key={item?.id || completeFallback[index].name}
+                product={item}
+                fallback={completeFallback[index]}
+                onPress={() => item ? onNavigate('product', { id: item.id }) : onNavigate('shop')}
+              />
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={styles.productAtelierFooter}>
+        <Text style={styles.productAtelierTitle}>Join the Atelier</Text>
+        <Text style={styles.productAtelierCopy}>Receive curated collection previews and editorial insights directly to your inbox.</Text>
+        <View style={styles.productEmailBox}>
+          <TextInput style={styles.productEmailInput} placeholder="email@example.com" placeholderTextColor="#6d6d6d" autoCapitalize="none" keyboardType="email-address" />
+          <TouchableOpacity style={styles.productSubmitButton}>
+            <Text style={styles.productSubmitText}>Submit</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.productFooterDivider} />
+        <Text style={styles.productFooterBrand}>FITLOOK</Text>
+        <Text style={styles.productFooterCopy}>© 2024 DESIGNED IN MILAN</Text>
+        <View style={styles.productFooterLinks}>
+          <View>
+            <Text style={styles.productFooterHead}>THE HOUSE</Text>
+            <Text style={styles.productFooterLink}>Philosophy</Text>
+            <Text style={styles.productFooterLink}>Sustainability</Text>
+            <Text style={styles.productFooterLink}>Stores</Text>
+          </View>
+          <View>
+            <Text style={styles.productFooterHead}>SUPPORT</Text>
+            <Text style={styles.productFooterLink}>Care Guide</Text>
+            <Text style={styles.productFooterLink}>Concierge</Text>
+            <Text style={styles.productFooterLink}>Shipping</Text>
+          </View>
+        </View>
+      </View>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </ScrollView>
   );
@@ -1706,21 +1823,21 @@ function optionsForSlot(slot, items) {
   return exactOptions.length ? exactOptions : items.filter((item) => slotMatchesItem(slot, item));
 }
 
-function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
+function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {} }) {
   const emptyCloset = { items: [], outfits: [], suggestions: [], stats: {} };
   const closet = useApiState('/closet', token, Boolean(user), emptyCloset);
-  const [closetView, setClosetView] = useState('stylist');
+  const [closetView, setClosetView] = useState(initial.view === 'add' ? 'add' : 'stylist');
   const [selectedIds, setSelectedIds] = useState([]);
   const [comboSlots, setComboSlots] = useState({});
   const [activeSlot, setActiveSlot] = useState('topwear');
   const [filter, setFilter] = useState('all');
   const [itemPhoto, setItemPhoto] = useState(null);
   const [itemName, setItemName] = useState('');
-  const [itemCategory, setItemCategory] = useState('tops');
+  const [itemCategory, setItemCategory] = useState(initial.view === 'add' ? 'dresses' : 'tops');
   const [itemColor, setItemColor] = useState('');
   const [itemFabric, setItemFabric] = useState('');
   const [itemPattern, setItemPattern] = useState('');
-  const [itemSeason, setItemSeason] = useState('all-season');
+  const [itemSeason, setItemSeason] = useState(initial.view === 'add' ? 'summer' : 'all-season');
   const [itemFormality, setItemFormality] = useState('any');
   const [itemOccasions, setItemOccasions] = useState('');
   const [itemTags, setItemTags] = useState('');
@@ -1740,7 +1857,14 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
   const [busy, setBusy] = useState('');
   const [lightbox, setLightbox] = useState(null);
 
+  useEffect(() => {
+    if (initial.view === 'add') setClosetView('add');
+    else setClosetView((current) => current === 'add' ? 'stylist' : current);
+  }, [initial.view]);
+
   if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
+
+  const isAddStudio = initial.view === 'add' || closetView === 'add';
 
   const items = closet.data.items || [];
   const outfits = closet.data.outfits || [];
@@ -1801,10 +1925,11 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
     : comboPreviewItems[0]?.imageUrl
       ? { uri: imageUrl(comboPreviewItems[0].imageUrl) }
       : images['arrival-4.jpg'];
+  const comboSlotSelectedIds = [...new Set(Object.values(comboSlots).filter(Boolean))];
   const tryThisLookIds = selectedIds.length
     ? selectedIds
-    : selectedIdsFromSlots(comboSlots).length
-      ? selectedIdsFromSlots(comboSlots)
+    : comboSlotSelectedIds.length
+      ? comboSlotSelectedIds
       : comboPreviewItems.map((item) => item.id).filter(Boolean);
   const wardrobeScore = Math.min(96, 78 + Math.min(items.length, 4) * 2 + Math.min(selectedIds.length, 3));
   const recommendationSource = suggestions.length ? suggestions.slice(0, 3) : wardrobeFallbackRecommendations;
@@ -2026,6 +2151,169 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
     }
   };
 
+  const discardAddDraft = () => {
+    setItemPhoto(null);
+    setItemName('');
+    setItemColor('');
+    setItemFabric('');
+    setItemPattern('');
+    setItemSeason('all-season');
+    setItemFormality('any');
+    setItemOccasions('');
+    setItemTags('');
+    setMessage('');
+    onNavigate('closet');
+  };
+
+  const cycleItemCategory = () => {
+    const order = ['dresses', 'tops', 'bottoms', 'outerwear', 'shoes', 'accessories'];
+    const currentIndex = order.indexOf(itemCategory);
+    setItemCategory(order[(currentIndex + 1) % order.length]);
+  };
+
+  if (isAddStudio) {
+    return (
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.addStudioScreen}>
+        <ScrollView contentContainerStyle={styles.addStudioContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <View style={styles.addStudioTopBar}>
+            <TouchableOpacity style={styles.addStudioTopButton} onPress={discardAddDraft}>
+              <Ionicons name="close" size={24} color="#171412" />
+            </TouchableOpacity>
+            <Text style={styles.addStudioBrand}>FitLook</Text>
+            <TouchableOpacity style={styles.addStudioTopButton} onPress={() => onNavigate('closet')}>
+              <Ionicons name="cube-outline" size={22} color="#171412" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.addStudioIntro}>
+            <Text style={styles.addStudioTitle}>Curate Your Studio</Text>
+            <Text style={styles.addStudioSubtitle}>Build your Atelier Digital. High-fidelity archives enable precise AI styling and virtual try-on sessions.</Text>
+          </View>
+
+          <TouchableOpacity style={styles.addStudioUploadBox} activeOpacity={0.84} onPress={async () => setItemPhoto(await pickImage())}>
+            {itemPhoto?.uri ? (
+              <Image source={{ uri: itemPhoto.uri }} style={styles.addStudioUploadImage} resizeMode="cover" />
+            ) : (
+              <View style={styles.addStudioUploadCopy}>
+                <Ionicons name="camera-outline" size={32} color="#57514f" />
+                <Text style={styles.addStudioUploadTitle}>Upload Clothing Photo</Text>
+                <Text style={styles.addStudioUploadText}>High resolution, neutral background preferred</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.addStudioThumbRow}>
+            <TouchableOpacity style={styles.addStudioAddThumb} onPress={async () => setItemPhoto(await pickImage())}>
+              <Ionicons name="add" size={24} color="#171412" />
+            </TouchableOpacity>
+            {[itemPhoto?.uri ? { uri: itemPhoto.uri } : images['arrival-1.jpg'], images['arrival-4.jpg']].map((source, index) => (
+              <View key={index} style={styles.addStudioThumbWrap}>
+                <Image source={source} style={styles.addStudioThumbImage} resizeMode="cover" />
+                <TouchableOpacity style={styles.addStudioThumbClose} onPress={() => index === 0 && setItemPhoto(null)}>
+                  <Ionicons name="close" size={12} color="#6c625e" />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.addStudioArchiveHead}>
+            <Text style={styles.addStudioArchiveTitle}>Archive Entry: {titleCase(itemCategory || 'Dress').replace(/s$/, '')}</Text>
+            <View style={styles.addStudioArchiveLine} />
+          </View>
+
+          <Text style={styles.addStudioSectionLabel}>ITEM SPECIFICATIONS</Text>
+          <View style={styles.addStudioForm}>
+            <Text style={styles.addStudioFieldLabel}>Dress Name</Text>
+            <TextInput style={styles.addStudioInput} value={itemName} onChangeText={setItemName} placeholder="L'Artiste Evening Gown" placeholderTextColor="#2b2a29" />
+
+            <View style={styles.addStudioTwoCol}>
+              <View style={styles.addStudioFieldHalf}>
+                <Text style={styles.addStudioFieldLabel}>Type</Text>
+                <TouchableOpacity style={styles.addStudioSelectInput} onPress={cycleItemCategory}>
+                  <Text style={styles.addStudioInputText}>{itemCategory === 'dresses' ? 'Evening' : titleCase(itemCategory || 'dresses')}</Text>
+                  <Ionicons name="chevron-down" size={18} color="#6f7680" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.addStudioFieldHalf}>
+                <Text style={styles.addStudioFieldLabel}>Color</Text>
+                <View style={styles.addStudioColorInput}>
+                  <View style={styles.addStudioColorDot} />
+                  <TextInput style={styles.addStudioColorTextInput} value={itemColor} onChangeText={setItemColor} placeholder="Charcoal" placeholderTextColor="#2b2a29" />
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.addStudioTwoCol}>
+              <View style={styles.addStudioFieldHalf}>
+                <Text style={styles.addStudioFieldLabel}>Fabric</Text>
+                <TextInput style={styles.addStudioInput} value={itemFabric} onChangeText={setItemFabric} placeholder="Heavy Crepe Silk" placeholderTextColor="#2b2a29" />
+              </View>
+              <View style={styles.addStudioFieldHalf}>
+                <Text style={styles.addStudioFieldLabel}>Pattern</Text>
+                <TextInput style={styles.addStudioInput} value={itemPattern} onChangeText={setItemPattern} placeholder="Solid" placeholderTextColor="#2b2a29" />
+              </View>
+            </View>
+
+            <Text style={styles.addStudioFieldLabel}>Season</Text>
+            <View style={styles.addStudioSegmented}>
+              {[
+                ['summer', 'S/S'],
+                ['winter', 'A/W'],
+                ['resort', 'Resort'],
+                ['all-season', 'All']
+              ].map(([value, label]) => {
+                const active = itemSeason === value;
+                return (
+                  <TouchableOpacity key={value} style={[styles.addStudioSegment, active && styles.addStudioSegmentActive]} onPress={() => setItemSeason(value)}>
+                    <Text style={[styles.addStudioSegmentText, active && styles.addStudioSegmentTextActive]}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.addStudioTwoCol}>
+              <View style={styles.addStudioFieldHalf}>
+                <Text style={styles.addStudioFieldLabel}>Vibe</Text>
+                <TextInput style={styles.addStudioInput} value={itemFormality === 'any' ? '' : itemFormality} onChangeText={setItemFormality} placeholder="E.g. Brutalist" placeholderTextColor="#9ca3af" />
+              </View>
+              <View style={styles.addStudioFieldHalf}>
+                <Text style={styles.addStudioFieldLabel}>Occasion</Text>
+                <TextInput style={styles.addStudioInput} value={itemOccasions} onChangeText={setItemOccasions} placeholder="Gala" placeholderTextColor="#2b2a29" />
+              </View>
+            </View>
+
+            <Text style={styles.addStudioFieldLabel}>Metadata Tags</Text>
+            <View style={styles.addStudioTagInput}>
+              <TextInput style={styles.addStudioTagTextInput} value={itemTags} onChangeText={setItemTags} placeholder="Add tags..." placeholderTextColor="#8d939f" />
+              <TouchableOpacity style={styles.addStudioTagAdd}>
+                <Ionicons name="add" size={17} color="#4f4a48" />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.addStudioTagRow}>
+              {['#minimalism', '#architectural'].map((tag) => (
+                <View key={tag} style={styles.addStudioTagPill}>
+                  <Text style={styles.addStudioTagPillText}>{tag}</Text>
+                  <Ionicons name="close" size={12} color="#6f6864" />
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {message ? <Text style={[styles.formMessage, styles.addStudioMessage, /failed|missing|error|upload/i.test(message) ? styles.errorText : null]}>{message}</Text> : null}
+        </ScrollView>
+
+        <View style={styles.addStudioFooter}>
+          <TouchableOpacity style={styles.addStudioDiscardButton} onPress={discardAddDraft}>
+            <Text style={styles.addStudioDiscardText}>DISCARD DRAFT</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.addStudioSaveButton, busy === 'add' && styles.disabledButton]} disabled={busy === 'add'} onPress={addItem}>
+            <Text style={styles.addStudioSaveText}>{busy === 'add' ? 'SAVING...' : 'SAVE CLOTHING\nITEM'}</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    );
+  }
+
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.wardrobeScreen}>
       <ScrollView contentContainerStyle={styles.wardrobeContent} showsVerticalScrollIndicator={false}>
@@ -2036,7 +2324,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate }) {
             <Text style={styles.wardrobeTitle}>My Wardrobe</Text>
             <Text style={styles.wardrobeSubtitle}>Curated Collection</Text>
           </View>
-          <TouchableOpacity style={styles.wardrobeAddButton} activeOpacity={0.85} onPress={() => setClosetView('add')}>
+          <TouchableOpacity style={styles.wardrobeAddButton} activeOpacity={0.85} onPress={() => onNavigate('closet', { view: 'add' })}>
             <Ionicons name="add" size={22} color="#ffffff" />
             <Text style={styles.wardrobeAddText}>Add Item</Text>
           </TouchableOpacity>
@@ -2481,12 +2769,17 @@ function VtoTrialScreen({ user, setUser, setToken, onNavigate }) {
   );
 }
 
-function StyleBotScreen({ user, setUser, setToken, onNavigate }) {
+function StyleBotScreen({ user, setUser, setToken, token, onNavigate }) {
   const [query, setQuery] = useState('');
   const [runs, setRuns] = useState([]);
   const [busy, setBusy] = useState(false);
   const [lightbox, setLightbox] = useState(null);
-  const ideas = ['linen shirts under 1500', 'black party dress', 'gold sunglasses', 'oversized denim jacket'];
+  const ideas = ['black blazer Zara', 'ivory trousers H&M', 'silver heels Mango', 'blue party dress'];
+  const fallbackSuggestions = [
+    { brand: 'ATELIER V', name: 'Sculpted Wool Blazer', price: '$890', image: 'trending-4.jpg' },
+    { brand: 'LOOM HOUSE', name: 'Ivory Column Trouser', price: '$450', image: 'arrival-1.jpg' },
+    { brand: 'FITLOOK SIGNATURE', name: 'Archive Knit Dress', price: '$485', image: 'arrival-4.jpg' }
+  ];
 
   if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
 
@@ -2530,51 +2823,71 @@ function StyleBotScreen({ user, setUser, setToken, onNavigate }) {
     }
   };
 
+  const latestRun = runs[runs.length - 1];
+  const conciergeCards = (latestRun?.products?.length ? latestRun.products : fallbackSuggestions).slice(0, 3);
+
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.toolHero}>
-          <Text style={styles.kicker}>Style Bot</Text>
-          <Text style={styles.screenTitle}>Tell FitLook what to find.</Text>
-          <Text style={styles.description}>The bot searches public Amazon pages, pulls the top two product details, and auto-generates try-ons. Each new try-on costs 1 token.</Text>
-          <FilterChips selected="" options={ideas.map((idea) => [idea, idea])} onSelect={setQuery} compact />
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.aiStudioScreen}>
+      <ProductTopBar onNavigate={onNavigate} />
+      <ScrollView contentContainerStyle={styles.aiStudioContent} showsVerticalScrollIndicator={false}>
+        <Text style={styles.aiStudioEyebrow}>FITLOOK CONCIERGE</Text>
+        <View style={styles.aiGreetingCard}>
+          <Text style={styles.aiGreetingText}>Good evening, {user.name?.split(' ')?.[0] || 'Elena'}. Tell me a clothing name, brand, color, or occasion and I will find options, generate try-ons, and show them here.</Text>
         </View>
-        <View style={styles.chatPanel}>
-          <View style={styles.chatBubbleAssistant}><Text style={styles.chatText}>Tell me the item, vibe, color, budget, or occasion. I will find two options and generate the try-on here.</Text></View>
-          {runs.map((run) => (
-            <View key={run.id}>
-              <View style={styles.chatBubbleUser}><Text style={styles.chatUserText}>{run.query}</Text></View>
-              <View style={styles.chatBubbleAssistant}>
-                {run.loading ? <StatusPanel loading text="Searching Amazon public pages..." /> : null}
-                {run.searchError ? <Text style={styles.errorText}>{run.searchError}</Text> : null}
-                {!run.loading && !run.searchError ? <Text style={styles.muted}>Found {run.products.length} products. Try-ons generate automatically.</Text> : null}
-                {run.products.map((product) => (
-                  <View key={product.id} style={styles.styleResult}>
-                    <View style={styles.styleImages}>
-                      <View style={styles.styleImageBox}>
-                        <Image source={product.imageUrl ? { uri: imageUrl(product.imageUrl) } : images.hero} style={styles.styleImage} resizeMode="contain" />
-                      </View>
-                      <Pressable style={styles.styleImageBox} onPress={() => run.tryOns[product.id]?.imageUrl && setLightbox(imageUrl(run.tryOns[product.id].imageUrl))}>
-                        {run.generating[product.id] ? <TryOnLoading text="Generating" /> : run.tryOns[product.id]?.imageUrl ? <Image key={imageUrl(run.tryOns[product.id].imageUrl)} source={{ uri: imageUrl(run.tryOns[product.id].imageUrl) }} style={styles.styleImage} resizeMode="contain" /> : <Text style={styles.previewPlaceholder}>On you</Text>}
-                      </Pressable>
-                    </View>
-                    <Text style={styles.productTitle}>{product.name}</Text>
-                    <Text style={styles.productBrand}>{product.brand} | {product.category}</Text>
-                    <Text style={styles.styleModelBadge}>{tryOnModelLabel(product.tryOnModel)}</Text>
-                    <Text style={styles.price}>{formatMoney(product.price, product.currency)}</Text>
-                    {run.errors[product.id] ? <Text style={styles.errorText}>{run.errors[product.id]}</Text> : null}
-                    {product.affiliateLink ? <AppButton label="Shop" variant="secondary" icon="open-outline" onPress={() => Linking.openURL(product.affiliateLink)} /> : null}
-                  </View>
-                ))}
-              </View>
-            </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.conciergeSuggestionTrack}>
+          {conciergeCards.map((entry, index) => {
+            const product = entry.id ? entry : null;
+            const fallback = product ? fallbackSuggestions[index % fallbackSuggestions.length] : entry;
+            return (
+              <ConciergeSuggestionCard
+                key={product?.id || fallback.name}
+                product={product}
+                fallback={fallback}
+                featured={index === 0}
+                onShop={() => product?.affiliateLink ? Linking.openURL(product.affiliateLink) : product ? onNavigate('product', { id: product.id }) : onNavigate('shop')}
+                onTryOn={() => product ? onNavigate('product', { id: product.id }) : setQuery(fallback.name)}
+              />
+            );
+          })}
+        </ScrollView>
+
+        <View style={styles.aiUserMessage}>
+          <Text style={styles.aiUserMessageText}>{latestRun?.query || 'Try a black blazer from Zara on me, then suggest matching trousers.'}</Text>
+        </View>
+
+        {latestRun?.loading ? <Text style={styles.aiStatusText}>Searching public product pages...</Text> : null}
+        {latestRun?.searchError ? <Text style={[styles.aiStatusText, styles.errorText]}>{latestRun.searchError}</Text> : null}
+        {latestRun && !latestRun.loading && !latestRun.searchError ? <Text style={styles.aiStatusText}>Found {latestRun.products.length} suggestions. Try-ons generate automatically.</Text> : null}
+
+        <View style={styles.aiIdeaRow}>
+          {ideas.slice(0, 2).map((idea) => (
+            <TouchableOpacity key={idea} style={styles.aiIdeaChip} onPress={() => setQuery(idea)}>
+              <Ionicons name="sparkles-outline" size={16} color="#9b5658" />
+              <Text style={styles.aiIdeaText}>{idea}</Text>
+            </TouchableOpacity>
           ))}
         </View>
+
+        {latestRun?.products?.length ? (
+          <View style={styles.aiRunPreviewGrid}>
+            {latestRun.products.map((product) => (
+              <Pressable key={product.id} style={styles.aiRunPreviewCard} onPress={() => latestRun.tryOns[product.id]?.imageUrl ? setLightbox(imageUrl(latestRun.tryOns[product.id].imageUrl)) : onNavigate('product', { id: product.id })}>
+                {latestRun.generating[product.id] ? <TryOnLoading text="Generating" /> : latestRun.tryOns[product.id]?.imageUrl ? <Image source={{ uri: imageUrl(latestRun.tryOns[product.id].imageUrl) }} style={styles.aiRunPreviewImage} resizeMode="cover" /> : <Image source={productImageSource(product)} style={styles.aiRunPreviewImage} resizeMode="cover" />}
+                <Text style={styles.aiRunPreviewName} numberOfLines={1}>{product.name}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </ScrollView>
-      <View style={styles.composer}>
-        <TextInput style={styles.composerInput} value={query} onChangeText={setQuery} placeholder="Describe an item or look" placeholderTextColor="#94a3b8" />
-        <TouchableOpacity style={[styles.composerButton, (!query.trim() || busy) && styles.disabledButton]} disabled={!query.trim() || busy} onPress={submit}>
-          <Ionicons name={busy ? 'hourglass-outline' : 'send'} size={19} color="#fff" />
+
+      <View style={styles.aiComposer}>
+        <TouchableOpacity style={styles.aiImageButton} onPress={() => onNavigate('custom')}>
+          <Ionicons name="image-outline" size={25} color="#55514f" />
+        </TouchableOpacity>
+        <TextInput style={styles.aiComposerInput} value={query} onChangeText={setQuery} placeholder="Ask your stylist..." placeholderTextColor="#858999" returnKeyType="send" onSubmitEditing={submit} />
+        <TouchableOpacity style={[styles.aiSendButton, (!query.trim() || busy) && styles.disabledButton]} disabled={!query.trim() || busy} onPress={submit}>
+          <Ionicons name={busy ? 'hourglass-outline' : 'send'} size={27} color="#ffffff" />
         </TouchableOpacity>
       </View>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
@@ -2585,8 +2898,34 @@ function StyleBotScreen({ user, setUser, setToken, onNavigate }) {
 function TokensScreen({ user, setUser, onNavigate }) {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const subscription = user?.subscription;
-  const isActive = subscription?.status === 'active' && (!subscription.currentPeriodEnd || new Date(subscription.currentPeriodEnd) > new Date());
+  const [selectedTierId, setSelectedTierId] = useState('atelier');
+  const creditTiers = [
+    {
+      id: 'essentials',
+      name: 'Essentials',
+      price: 25,
+      credits: 500,
+      description: 'Ideal for seasonal wardrobe refreshes and basic fit analysis.'
+    },
+    {
+      id: 'atelier',
+      name: 'Atelier',
+      price: 60,
+      credits: 1500,
+      description: 'Comprehensive styling for power users and fashion enthusiasts.',
+      badge: 'MOST SELECTED'
+    },
+    {
+      id: 'master',
+      name: 'Master',
+      price: 180,
+      credits: 5000,
+      description: 'The ultimate tier for unlimited virtual try-ons and high-fidelity rendering.'
+    }
+  ];
+  const selectedTier = creditTiers.find((tier) => tier.id === selectedTierId) || creditTiers[1];
+  const estimatedTax = selectedTier.price * 0.08;
+  const totalAmount = selectedTier.price + estimatedTax;
 
   const startCheckout = async () => {
     if (!user) {
@@ -2610,45 +2949,89 @@ function TokensScreen({ user, setUser, onNavigate }) {
     }
   };
 
-  const refreshAccount = async () => {
-    setMessage('Refreshing account...');
-    try {
-      const data = await api('/auth/me');
-      if (data.user) setUser(data.user);
-      setMessage('Account refreshed.');
-    } catch (error) {
-      setMessage(error.message);
-    }
-  };
-
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent}>
-      <View style={styles.toolHero}>
-        <Text style={styles.kicker}>FitLook Tokens</Text>
-        <Text style={styles.screenTitle}>One token, one AI try-on.</Text>
-        <Text style={styles.description}>Get 20 free tokens on signup. Subscribe for Rs 1000/month to receive 100 try-on tokens for the month.</Text>
-        <View style={styles.balanceCard}>
-          <Text style={styles.balanceNumber}>{user ? user.tokens : 20}</Text>
-          <Text style={styles.balanceLabel}>{user ? 'tokens available' : 'free tokens on signup'}</Text>
+    <ScrollView style={styles.creditsScreen} contentContainerStyle={styles.creditsContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.creditsTopBar}>
+        <TouchableOpacity style={styles.creditsTopIcon} onPress={() => onNavigate('home')}>
+          <Ionicons name="menu-outline" size={22} color="#111111" />
+        </TouchableOpacity>
+        <Text style={styles.creditsBrand}>FitLook</Text>
+        <View style={styles.creditsHeaderActions}>
+          <TouchableOpacity style={styles.creditsTopIcon} onPress={() => onNavigate('shop')}>
+            <Ionicons name="bag-handle-outline" size={20} color="#111111" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.creditsTopIcon} onPress={() => onNavigate('profile')}>
+            <Ionicons name="person-outline" size={20} color="#111111" />
+          </TouchableOpacity>
         </View>
-        {message ? <Text style={[styles.formMessage, /failed|missing|not|error|Could not/i.test(message) ? styles.errorText : null]}>{message}</Text> : null}
       </View>
-      <View style={[styles.tokenPack, styles.subscriptionPack]}>
-        <View style={styles.planHead}>
-          <Text style={styles.tokenName}>Monthly</Text>
-          {isActive ? <Text style={styles.activePill}>Active</Text> : null}
+
+      <View style={styles.creditsIntro}>
+        <Text style={styles.creditsIntroTitle}>Atmospheric Intelligence Credits</Text>
+        <Text style={styles.creditsIntroText}>Elevate your digital wardrobe with AI-powered fit predictions, virtual material simulations, and bespoke stylistic rendering.</Text>
+      </View>
+
+      <Text style={styles.creditsSectionLabel}>SELECT A CREDIT TIER</Text>
+      <View style={styles.creditTierStack}>
+        {creditTiers.map((tier) => {
+          const selected = selectedTier.id === tier.id;
+          return (
+            <TouchableOpacity key={tier.id} activeOpacity={0.88} style={[styles.creditTierCard, selected && styles.creditTierCardSelected]} onPress={() => setSelectedTierId(tier.id)}>
+              {tier.badge ? <Text style={styles.creditTierBadge}>{tier.badge}</Text> : null}
+              <View style={styles.creditTierTop}>
+                <Text style={styles.creditTierName}>{tier.name}</Text>
+                <Text style={styles.creditTierPrice}>${tier.price}</Text>
+              </View>
+              <View style={styles.creditAmountRow}>
+                <Text style={styles.creditAmount}>{tier.credits}</Text>
+                <Text style={styles.creditAmountLabel}> CREDITS</Text>
+              </View>
+              <Text style={styles.creditTierDescription}>{tier.description}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <Text style={styles.creditsSectionLabel}>PAYMENT METHOD</Text>
+      <View style={styles.paymentMethodCard}>
+        <View style={styles.paymentMethodLeft}>
+          <Ionicons name="card-outline" size={22} color="#111111" />
+          <Text style={styles.paymentMethodText}>Visa ending in 4242</Text>
         </View>
-        <Text style={styles.tokenAmount}>100 tokens every month</Text>
-        <Text style={styles.detailPrice}>Rs 1000</Text>
-        <Text style={styles.muted}>PhonePe checkout opens securely. Tokens are added only after payment is confirmed.</Text>
-        {isActive && subscription.currentPeriodEnd ? <Text style={styles.muted}>Current month ends {formatDate(subscription.currentPeriodEnd)}</Text> : null}
-        <AppButton label={checkoutLoading ? 'Opening PhonePe...' : user ? 'Subscribe with PhonePe' : 'Create Account First'} icon="card-outline" disabled={checkoutLoading} onPress={startCheckout} />
-        <AppButton label="Refresh Account" icon="refresh-outline" variant="secondary" onPress={refreshAccount} />
+        <Ionicons name="radio-button-on" size={22} color="#111111" />
       </View>
-      <View style={styles.infoGrid}>
-        <InfoCard title="What costs tokens?" text="Generating a product, custom, external, or closet try-on costs 1 token." />
-        <InfoCard title="What is free?" text="New accounts start with 20 free tokens. Browsing, search, product pages, and viewing saved try-ons are free." />
-        <InfoCard title="How payment works" text="FitLook verifies PhonePe order status before adding subscription tokens." />
+      <TouchableOpacity style={styles.addPaymentCard} activeOpacity={0.84}>
+        <Ionicons name="add-circle-outline" size={21} color="#55514f" />
+        <Text style={styles.addPaymentText}>Add New Payment Method</Text>
+      </TouchableOpacity>
+
+      <View style={styles.orderSummaryCard}>
+        <Text style={styles.orderSummaryTitle}>Order Summary</Text>
+        <View style={styles.orderSummaryRow}>
+          <Text style={styles.orderSummaryText}>{selectedTier.name} Package ({selectedTier.credits.toLocaleString()} Credits)</Text>
+          <Text style={styles.orderSummaryText}>${selectedTier.price.toFixed(2)}</Text>
+        </View>
+        <View style={styles.orderSummaryRow}>
+          <Text style={styles.orderSummaryText}>Estimated Tax (8%)</Text>
+          <Text style={styles.orderSummaryText}>${estimatedTax.toFixed(2)}</Text>
+        </View>
+        <View style={styles.orderSummaryDivider} />
+        <View style={styles.orderSummaryRow}>
+          <Text style={styles.totalAmountLabel}>TOTAL AMOUNT</Text>
+          <Text style={styles.totalAmountValue}>${totalAmount.toFixed(2)}</Text>
+        </View>
+      </View>
+
+      {message ? <Text style={[styles.creditsMessage, /failed|missing|not|error|Could not/i.test(message) ? styles.errorText : null]}>{message}</Text> : null}
+
+      <TouchableOpacity style={[styles.secureCheckoutButton, checkoutLoading && styles.disabledButton]} activeOpacity={0.88} disabled={checkoutLoading} onPress={startCheckout}>
+        <Text style={styles.secureCheckoutText}>{checkoutLoading ? 'OPENING CHECKOUT' : 'SECURE CHECKOUT'}</Text>
+      </TouchableOpacity>
+
+      <View style={styles.creditsFooterLinks}>
+        <Text style={styles.creditsFooterLink}>TERMS OF SALE</Text>
+        <Text style={styles.creditsFooterLink}>PRIVACY POLICY</Text>
+        <Text style={styles.creditsFooterLink}>HELP CENTER</Text>
       </View>
     </ScrollView>
   );
@@ -2668,7 +3051,151 @@ function formatFileSize(value) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function ProfileScreen({ user, setUser, setToken, onNavigate }) {
+const wishlistItems = [
+  { brand: 'MANGO', name: 'Ribbed Knit Sweater', price: '$59.99', image: 'arrival-1.jpg', sizes: ['S', 'M', 'L'] },
+  { brand: 'ZARA', name: 'Wool Blend Overcoat', price: '$129.00', image: 'category-5.jpg', sizes: ['M', 'L'] },
+  { brand: 'NIKE', name: 'Air Max Dawn', price: '$115.00', image: 'category-6.jpg', sizes: ['US 9', 'US 10'] },
+  { brand: 'MASSIMO DUTTI', name: 'Geometric Silk Scarf', price: '$89.00', image: 'category-8.jpg', sizes: ['OS'] }
+];
+
+const wishlistRecommended = [
+  { brand: 'ARKET', price: '$35.00', image: 'category-2.jpg' },
+  { brand: 'COS', price: '$115.00', image: 'category-3.jpg' },
+  { brand: 'G.H.', price: '$125.00', image: 'arrival-3.jpg' }
+];
+
+function WishlistScreen({ onNavigate }) {
+  return (
+    <ScrollView style={styles.wishlistScreen} contentContainerStyle={styles.wishlistContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.wishlistTopBar}>
+        <TouchableOpacity style={styles.wishlistTopIcon} onPress={() => onNavigate('profile')}>
+          <Ionicons name="menu-outline" size={19} color="#55514f" />
+        </TouchableOpacity>
+        <Text style={styles.wishlistBrand}>FitLook</Text>
+        <View style={styles.wishlistTopActions}>
+          <TouchableOpacity style={styles.wishlistTopIcon} onPress={() => onNavigate('shop')}>
+            <Ionicons name="search-outline" size={19} color="#55514f" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.wishlistTopIcon} onPress={() => onNavigate('tokens')}>
+            <Ionicons name="bag-handle-outline" size={18} color="#55514f" />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.wishlistBody}>
+        <Text style={styles.wishlistTitle}>My Wishlist <Text style={styles.wishlistCount}>(12)</Text></Text>
+        <View style={styles.wishlistActionRow}>
+          <TouchableOpacity style={styles.wishlistCreateButton}>
+            <Ionicons name="add" size={18} color="#ffffff" />
+            <Text style={styles.wishlistCreateText}>Create Collection</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.wishlistShareButton}>
+            <Ionicons name="share-social-outline" size={16} color="#111111" />
+            <Text style={styles.wishlistShareText}>Share</Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wishlistTabs}>
+          {['All Items', 'Clothing', 'Footwear', 'Accessories'].map((tab, index) => (
+            <TouchableOpacity key={tab} style={styles.wishlistTab}>
+              <Text style={[styles.wishlistTabText, index === 0 && styles.wishlistTabTextActive]}>{tab}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        <View style={styles.wishlistSortRow}>
+          <Text style={styles.wishlistSortText}>Sort: <Text style={styles.wishlistSortStrong}>Recently Added</Text></Text>
+          <View style={styles.wishlistViewToggle}>
+            <Ionicons name="grid-outline" size={17} color="#3f3937" />
+            <Ionicons name="list-outline" size={19} color="#3f3937" />
+          </View>
+        </View>
+
+        <View style={styles.wishlistGrid}>
+          {wishlistItems.map((item) => <WishlistProductCard key={`${item.brand}-${item.name}`} item={item} onMove={() => onNavigate('shop')} />)}
+        </View>
+
+        <View style={styles.wishlistProCard}>
+          <Text style={styles.wishlistProBadge}>PRO FEATURE</Text>
+          <Text style={styles.wishlistProTitle}>Unlock Smart Wardrobe AI</Text>
+          <Text style={styles.wishlistProText}>Get virtual try-on access for all wishlist items and personalized fit recommendations.</Text>
+          <TouchableOpacity style={styles.wishlistUpgradeButton} onPress={() => onNavigate('tokens')}>
+            <Text style={styles.wishlistUpgradeText}>Upgrade Now</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.wishlistSectionTitle}>You May Also Like</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.wishlistRecommendedTrack}>
+          {wishlistRecommended.map((item) => (
+            <TouchableOpacity key={`${item.brand}-${item.price}`} style={styles.wishlistRecommendedCard} onPress={() => onNavigate('shop')}>
+              <Image source={images[item.image]} style={styles.wishlistRecommendedImage} resizeMode="cover" />
+              <Text style={styles.wishlistRecommendedBrand}>{item.brand}</Text>
+              <Text style={styles.wishlistRecommendedPrice}>{item.price}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    </ScrollView>
+  );
+}
+
+function WishlistProductCard({ item, onMove }) {
+  return (
+    <View style={styles.wishlistProductCard}>
+      <View style={styles.wishlistProductImageWrap}>
+        <Image source={images[item.image]} style={styles.wishlistProductImage} resizeMode="cover" />
+        <TouchableOpacity style={styles.wishlistHeartButton}>
+          <Ionicons name="heart" size={22} color="#9b5658" />
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.wishlistProductBrand}>{item.brand}</Text>
+      <Text style={styles.wishlistProductName}>{item.name}</Text>
+      <Text style={styles.wishlistProductPrice}>{item.price}</Text>
+      <View style={styles.wishlistSizeRow}>
+        {item.sizes.map((size, index) => <Text key={size} style={[styles.wishlistSizeChip, index === item.sizes.length - 1 && styles.wishlistSizeChipActive]}>{size}</Text>)}
+      </View>
+      <TouchableOpacity style={styles.wishlistMoveButton} onPress={onMove}>
+        <Text style={styles.wishlistMoveText}>Move to Bag</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function OrdersScreen({ onNavigate }) {
+  return (
+    <ScrollView style={styles.ordersScreen} contentContainerStyle={styles.ordersContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.wishlistTopBar}>
+        <TouchableOpacity style={styles.wishlistTopIcon} onPress={() => onNavigate('profile')}>
+          <Ionicons name="chevron-back" size={24} color="#111111" />
+        </TouchableOpacity>
+        <Text style={styles.wishlistBrand}>FitLook</Text>
+        <TouchableOpacity style={styles.wishlistTopIcon} onPress={() => onNavigate('tokens')}>
+          <Ionicons name="bag-handle-outline" size={18} color="#55514f" />
+        </TouchableOpacity>
+      </View>
+      <View style={styles.ordersBody}>
+        <Text style={styles.wishlistTitle}>My Orders</Text>
+        {[
+          ['Archive Knit Dress', 'Delivered', 'Jul 12, 2026', '$485.00'],
+          ['Ribbed Knit Sweater', 'In Transit', 'Jul 20, 2026', '$59.99']
+        ].map(([name, status, date, price]) => (
+          <TouchableOpacity key={name} style={styles.orderCard} activeOpacity={0.84}>
+            <View style={styles.orderIconBox}>
+              <Ionicons name="cube-outline" size={23} color="#9b5658" />
+            </View>
+            <View style={styles.orderCopy}>
+              <Text style={styles.orderName}>{name}</Text>
+              <Text style={styles.orderMeta}>{status} · {date}</Text>
+            </View>
+            <Text style={styles.orderPrice}>{price}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+function ProfileScreen({ user, setUser, setToken, onNavigate, onLogout }) {
   const [photo, setPhoto] = useState(null);
   const [profilePhotoMode, setProfilePhotoMode] = useState('ai-full-body');
   const [message, setMessage] = useState('');
@@ -2682,7 +3209,18 @@ function ProfileScreen({ user, setUser, setToken, onNavigate }) {
     ? { uri: photo.uri }
     : user.bodyPhotoUrl
       ? { uri: imageUrl(user.bodyPhotoUrl) }
-      : images.hero;
+      : images['arrival-5.jpg'];
+  const displayName = user.name || 'Aarav Sharma';
+  const username = user.username || (user.email ? user.email.split('@')[0] : 'aaravsharma');
+  const remainingCredits = user.devMode ? 1200 : Math.min(user.tokens ?? 0, 2000);
+  const creditTotal = 2000;
+  const creditProgress = `${Math.max(4, Math.min(100, (remainingCredits / creditTotal) * 100))}%`;
+  const portraitItems = [
+    photo?.uri ? { uri: photo.uri } : null,
+    user.bodyPhotoUrl ? { uri: imageUrl(user.bodyPhotoUrl) } : null,
+    images['arrival-2.jpg'],
+    images['arrival-4.jpg']
+  ].filter(Boolean);
 
   const updatePhoto = async () => {
     if (!photo) {
@@ -2707,78 +3245,156 @@ function ProfileScreen({ user, setUser, setToken, onNavigate }) {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent}>
+    <ScrollView style={styles.profileScreen} contentContainerStyle={styles.profileContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.profileTopBar}>
+        <TouchableOpacity style={styles.profileTopIcon} onPress={() => onNavigate('home')}>
+          <Ionicons name="menu-outline" size={22} color="#111111" />
+        </TouchableOpacity>
+        <Text style={styles.profileTopBrand}>FitLook</Text>
+        <TouchableOpacity style={styles.profileTopIcon} onPress={() => onNavigate('tokens')}>
+          <Ionicons name="bag-handle-outline" size={20} color="#111111" />
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.profileHero}>
         <TouchableOpacity style={styles.profilePhotoWrap} onPress={async () => setPhoto(await pickImage())}>
           <Image source={photoSource} style={styles.profilePhoto} />
           <View style={styles.profilePhotoAction}>
-            <Ionicons name="camera-outline" size={18} color="#fff" />
+            <Ionicons name="create-outline" size={13} color="#ffffff" />
           </View>
         </TouchableOpacity>
-        <View style={styles.profileCopy}>
-          <Text style={styles.kicker}>Profile</Text>
-          <Text style={styles.profileName}>{user.name || 'FitLook member'}</Text>
-          <Text style={styles.profileEmail}>{user.email}</Text>
-        </View>
-      </View>
-
-      <View style={styles.profileDetails}>
-        {[
-          ['Tokens', user.devMode ? 'Dev mode' : `${user.tokens ?? 0}`],
-          ['Preference', titleCase(user.genderPreference || 'other')],
-          ['Photo', titleCase(user.bodyPhotoStatus || 'uploaded')],
-          ['Joined', formatDate(user.joinedAt || user.createdAt)]
-        ].map(([label, value]) => (
-          <View key={label} style={styles.profileStat}>
-            <Text style={styles.profileStatLabel}>{label}</Text>
-            <Text style={styles.profileStatValue}>{value}</Text>
-          </View>
-        ))}
-      </View>
-
-      {previewUri ? (
-        <View style={styles.fullBodyPreviewCard}>
-          <View style={styles.sectionHead}>
-            <View>
-              <Text style={styles.kicker}>Try-on photo</Text>
-              <Text style={styles.fullBodyPreviewTitle}>Full-body preview</Text>
-            </View>
-            <TouchableOpacity style={styles.previewIconButton} onPress={() => setLightbox(previewUri)}>
-              <Ionicons name="expand-outline" size={20} color="#111827" />
-            </TouchableOpacity>
-          </View>
-          <Pressable style={styles.fullBodyPreviewFrame} onPress={() => setLightbox(previewUri)}>
-            <Image source={{ uri: previewUri }} style={styles.fullBodyPreviewImage} resizeMode="contain" />
-          </Pressable>
-        </View>
-      ) : null}
-
-      <View style={styles.profileActions}>
-        <TouchableOpacity style={styles.uploadBox} onPress={async () => setPhoto(await pickImage())}>
-          <Ionicons name={photo ? 'checkmark-circle-outline' : 'cloud-upload-outline'} size={30} color="#0f766e" />
-          <View style={styles.uploadCopy}>
-            <Text style={styles.uploadTitle}>{photo ? 'New photo selected' : 'Change try-on photo'}</Text>
-            <Text style={styles.photoGuideText}>Use a clear single-person selfie, portrait, or body photo with your face visible.</Text>
-          </View>
+        <Text style={styles.profileName}>{displayName}</Text>
+        <Text style={styles.profileRole}>FASHION LOVER</Text>
+        <Text style={styles.profileBio}>Curating timeless silhouettes and exploring the intersection of digital craft and high-street style.</Text>
+        <TouchableOpacity style={styles.profileEditButton} onPress={async () => setPhoto(await pickImage())}>
+          <Text style={styles.profileEditText}>Edit Profile</Text>
         </TouchableOpacity>
-        {user.bodyPhotoStatus === 'generating' ? <Text style={styles.formMessage}>Full-body try-on profile is preparing in the background.</Text> : null}
-        {user.bodyPhotoStatus === 'failed' ? <Text style={[styles.formMessage, styles.errorText]}>Full-body profile generation failed. Upload a clearer profile photo.</Text> : null}
-        <View style={styles.formGroup}>
-          <Text style={styles.formLabel}>Profile photo mode</Text>
-          <FilterChips
-            selected={profilePhotoMode}
-            options={[['ai-full-body', 'Create full-body AI profile'], ['exact', 'Use exact photo']]}
-            onSelect={setProfilePhotoMode}
-            compact
-            wrap
-          />
-        </View>
-        <AppButton label={loading ? 'Saving...' : 'Save Profile Photo'} icon="save-outline" disabled={loading || !photo} onPress={updatePhoto} />
-        <AppButton label="Browse Products" icon="search-outline" variant="secondary" onPress={() => onNavigate('shop')} />
-        {message ? <Text style={[styles.formMessage, message.includes('updated') || message.includes('Updating') ? null : styles.errorText]}>{message}</Text> : null}
       </View>
+
+      <View style={styles.profileCreditsCard}>
+        <View style={styles.profileCreditsHead}>
+          <Text style={styles.profileCreditsLabel}>Remaining Credits</Text>
+          <Ionicons name="sparkles" size={23} color="#9b5658" />
+        </View>
+        <View style={styles.profileCreditsAmountRow}>
+          <Text style={styles.profileCreditsAmount}>{remainingCredits}</Text>
+          <Text style={styles.profileCreditsTotal}> / {creditTotal}</Text>
+        </View>
+        <View style={styles.profileCreditTrack}>
+          <View style={[styles.profileCreditFill, { width: creditProgress }]} />
+        </View>
+        <TouchableOpacity style={styles.profileBuyButton} onPress={() => onNavigate('tokens')}>
+          <Text style={styles.profileBuyText}>Buy More Credits</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.profileSection}>
+        <View style={styles.profileSectionHead}>
+          <Text style={styles.profileSectionTitle}>Try-On Portraits</Text>
+          <Text style={styles.profilePhotoCount}>6 Photos</Text>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.profilePortraitTrack}>
+          <TouchableOpacity style={styles.profileUploadPortrait} onPress={async () => setPhoto(await pickImage())}>
+            <Ionicons name="camera-outline" size={24} color="#7d7a79" />
+            <Text style={styles.profileUploadPortraitText}>Upload New Photo</Text>
+          </TouchableOpacity>
+          {portraitItems.slice(0, 3).map((source, index) => (
+            <Pressable key={index} style={styles.profilePortraitCard} onPress={() => source.uri && setLightbox(source.uri)}>
+              <Image source={source} style={styles.profilePortraitImage} resizeMode="cover" />
+            </Pressable>
+          ))}
+        </ScrollView>
+        {photo ? (
+          <TouchableOpacity style={[styles.profileSavePhotoButton, loading && styles.disabledButton]} disabled={loading} onPress={updatePhoto}>
+            <Text style={styles.profileSavePhotoText}>{loading ? 'Saving Photo...' : 'Save New Portrait'}</Text>
+          </TouchableOpacity>
+        ) : null}
+        {user.bodyPhotoStatus === 'generating' ? <Text style={styles.profileInlineMessage}>Full-body try-on profile is preparing in the background.</Text> : null}
+        {user.bodyPhotoStatus === 'failed' ? <Text style={[styles.profileInlineMessage, styles.errorText]}>Full-body profile generation failed. Upload a clearer profile photo.</Text> : null}
+        {message ? <Text style={[styles.profileInlineMessage, message.includes('updated') || message.includes('saved') ? null : styles.errorText]}>{message}</Text> : null}
+      </View>
+
+      <View style={styles.profileQuickOptions}>
+        <TouchableOpacity style={styles.profileQuickCard} activeOpacity={0.86} onPress={() => onNavigate('orders')}>
+          <View style={styles.profileQuickIcon}>
+            <Ionicons name="receipt-outline" size={23} color="#9b5658" />
+          </View>
+          <View style={styles.profileQuickCopy}>
+            <Text style={styles.profileQuickTitle}>My Orders</Text>
+            <Text style={styles.profileQuickSub}>Track purchases</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#77716f" />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.profileQuickCard} activeOpacity={0.86} onPress={() => onNavigate('wishlist')}>
+          <View style={styles.profileQuickIcon}>
+            <Ionicons name="heart-outline" size={23} color="#9b5658" />
+          </View>
+          <View style={styles.profileQuickCopy}>
+            <Text style={styles.profileQuickTitle}>My Wishlist</Text>
+            <Text style={styles.profileQuickSub}>Saved styles</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#77716f" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.profileSection}>
+        <Text style={styles.profileSectionTitle}>Payment Methods</Text>
+        <TouchableOpacity style={styles.profilePaymentCard} onPress={() => onNavigate('tokens')}>
+          <View style={styles.profileVisaBadge}>
+            <Text style={styles.profileVisaText}>VISA</Text>
+          </View>
+          <View style={styles.profilePaymentCopy}>
+            <Text style={styles.profilePaymentTitle}>Visa ending in 4242</Text>
+            <Text style={styles.profilePaymentSub}>Default Payment Method</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={22} color="#55514f" />
+        </TouchableOpacity>
+      </View>
+
+      <ProfileSettingsSection
+        title="Account Settings"
+        rows={[
+          ['Username', `@${username}`],
+          ['Email Address', user.email || 'aarav.sharma@domain.com'],
+          ['Change Password', '']
+        ]}
+      />
+
+      <ProfileSettingsSection
+        title="Security & Legal"
+        rows={[
+          ['Security Center', ''],
+          ['Two-Factor Authentication', ''],
+          ['Data & Privacy', ''],
+          ['Terms of Service', ''],
+          ['Privacy Policy', '']
+        ]}
+      />
+
+      <TouchableOpacity style={styles.profileLogoutButton} onPress={onLogout}>
+        <Text style={styles.profileLogoutText}>Logout</Text>
+      </TouchableOpacity>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </ScrollView>
+  );
+}
+
+function ProfileSettingsSection({ title, rows }) {
+  return (
+    <View style={styles.profileSection}>
+      <Text style={styles.profileSectionTitle}>{title}</Text>
+      <View style={styles.profileSettingsList}>
+        {rows.map(([label, value]) => (
+          <TouchableOpacity key={label} style={styles.profileSettingsRow} activeOpacity={0.8}>
+            <View style={styles.profileSettingsCopy}>
+              <Text style={styles.profileSettingsLabel}>{label}</Text>
+              {value ? <Text style={styles.profileSettingsValue}>{value}</Text> : null}
+            </View>
+            <Ionicons name="chevron-forward" size={21} color="#55514f" />
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
   );
 }
 
@@ -2960,17 +3576,21 @@ export default function App() {
       case 'shop':
         return <ShopScreen initial={routeParams} user={user} setUser={setUser} token={token} onNavigate={navigate} />;
       case 'tryon':
-        return user ? <ShopScreen tryOnMode initial={routeParams} user={user} setUser={setUser} token={token} onNavigate={navigate} /> : <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={navigate} /> : <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'closet':
-        return <ClosetScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={navigate} />;
+        return <ClosetScreen initial={routeParams} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={navigate} />;
       case 'custom':
         return <CustomTryOnScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'stylebot':
-        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={navigate} />;
       case 'tokens':
         return <TokensScreen user={user} setUser={setUser} onNavigate={navigate} />;
       case 'profile':
-        return <ProfileScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return <ProfileScreen user={user} setUser={setUser} setToken={setToken} onNavigate={navigate} onLogout={logout} />;
+      case 'wishlist':
+        return <WishlistScreen onNavigate={navigate} />;
+      case 'orders':
+        return <OrdersScreen onNavigate={navigate} />;
       case 'product':
         return routeParams.id ? <ProductScreen id={routeParams.id} user={user} setUser={setUser} token={token} onNavigate={navigate} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={navigate} />;
       case 'signup':
@@ -3004,17 +3624,25 @@ export default function App() {
   const homeRoute = currentRoute.name === 'home';
   const shopRoute = currentRoute.name === 'shop';
   const closetRoute = currentRoute.name === 'closet';
+  const closetAddRoute = closetRoute && currentRoute.params?.view === 'add';
+  const productRoute = currentRoute.name === 'product';
+  const aiStudioRoute = currentRoute.name === 'tryon';
+  const tokensRoute = currentRoute.name === 'tokens';
+  const profileRoute = currentRoute.name === 'profile';
+  const wishlistRoute = currentRoute.name === 'wishlist';
+  const ordersRoute = currentRoute.name === 'orders';
+  const accountChildRoute = wishlistRoute || ordersRoute;
 
   return (
-    <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe]}>
+    <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe]}>
       <StatusBar style={welcomeRoute || loginRoute ? 'light' : 'dark'} />
-      {authOnlyRoute || homeRoute || shopRoute || closetRoute ? null : <Header user={user} canGoBack={routeStack.length > 1} onBack={goBack} onNavigate={navigate} onLogout={logout} />}
+      {authOnlyRoute || homeRoute || shopRoute || closetRoute || productRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : <Header user={user} canGoBack={routeStack.length > 1} onBack={goBack} onNavigate={navigate} onLogout={logout} />}
       <View style={styles.content}>
         <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
           {screen}
         </ScreenErrorBoundary>
       </View>
-      {authOnlyRoute ? null : <BottomNav route={currentRoute} onNavigate={navigate} />}
+      {authOnlyRoute || closetAddRoute || tokensRoute ? null : <BottomNav route={currentRoute} onNavigate={navigate} />}
     </SafeAreaView>
   );
 }
@@ -3040,6 +3668,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#fbf7f6'
   },
   wardrobeSafe: {
+    backgroundColor: '#fbf7f6'
+  },
+  productSafe: {
+    backgroundColor: '#fbf7f6'
+  },
+  aiStudioSafe: {
+    backgroundColor: '#fbf7f6'
+  },
+  creditsSafe: {
+    backgroundColor: '#fbf7f6'
+  },
+  profileSafe: {
     backgroundColor: '#fbf7f6'
   },
   flex: {
@@ -3125,13 +3765,13 @@ const styles = StyleSheet.create({
     borderTopColor: '#ece5e1'
   },
   navItem: {
-    minWidth: 62,
+    flex: 1,
+    minWidth: 0,
     alignItems: 'center',
     gap: 3
   },
   navItemCenterActive: {
-    marginTop: -30,
-    minWidth: 76
+    marginTop: -30
   },
   navIconWrap: {
     width: 32,
@@ -4176,6 +4816,351 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 14
   },
+  addStudioScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  addStudioContent: {
+    paddingBottom: 132,
+    backgroundColor: '#fbf7f6'
+  },
+  addStudioTopBar: {
+    height: 62,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7dfdb',
+    backgroundColor: '#fbf7f6',
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  addStudioTopButton: {
+    width: 34,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  addStudioBrand: {
+    flex: 1,
+    color: '#171412',
+    fontSize: 25,
+    lineHeight: 31,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  addStudioIntro: {
+    paddingHorizontal: 20,
+    paddingTop: 35
+  },
+  addStudioTitle: {
+    color: '#171412',
+    fontSize: 27,
+    lineHeight: 33,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  addStudioSubtitle: {
+    marginTop: 9,
+    color: '#55514f',
+    fontSize: 14,
+    lineHeight: 22,
+    fontWeight: '500'
+  },
+  addStudioUploadBox: {
+    marginTop: 44,
+    marginHorizontal: 20,
+    height: 424,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#b8b8b8',
+    overflow: 'hidden',
+    backgroundColor: '#fbf7f6',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  addStudioUploadImage: {
+    width: '100%',
+    height: '100%'
+  },
+  addStudioUploadCopy: {
+    alignItems: 'center',
+    paddingHorizontal: 34
+  },
+  addStudioUploadTitle: {
+    marginTop: 11,
+    color: '#171412',
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '900'
+  },
+  addStudioUploadText: {
+    marginTop: 5,
+    color: '#55514f',
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500'
+  },
+  addStudioThumbRow: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    flexDirection: 'row',
+    gap: 12
+  },
+  addStudioAddThumb: {
+    width: 80,
+    height: 96,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#d0d0d0',
+    backgroundColor: '#e6e3e1',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  addStudioThumbWrap: {
+    width: 80,
+    height: 96,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#d0d0d0',
+    overflow: 'hidden',
+    backgroundColor: '#ece7e3'
+  },
+  addStudioThumbImage: {
+    width: '100%',
+    height: '100%'
+  },
+  addStudioThumbClose: {
+    position: 'absolute',
+    right: 4,
+    top: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255, 255, 255, 0.88)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  addStudioArchiveHead: {
+    paddingHorizontal: 20,
+    paddingTop: 52
+  },
+  addStudioArchiveTitle: {
+    color: '#171412',
+    fontSize: 23,
+    lineHeight: 29,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  addStudioArchiveLine: {
+    marginTop: 11,
+    width: 48,
+    height: 1,
+    backgroundColor: '#9b5658'
+  },
+  addStudioSectionLabel: {
+    marginTop: 38,
+    paddingHorizontal: 20,
+    color: '#4f4a48',
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 3
+  },
+  addStudioForm: {
+    paddingHorizontal: 20,
+    paddingTop: 22
+  },
+  addStudioFieldLabel: {
+    marginBottom: 8,
+    color: '#4f4a48',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700'
+  },
+  addStudioInput: {
+    minHeight: 48,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#c9cdd2',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 16,
+    color: '#171412',
+    fontSize: 16,
+    fontWeight: '400'
+  },
+  addStudioTwoCol: {
+    marginTop: 20,
+    flexDirection: 'row',
+    gap: 14
+  },
+  addStudioFieldHalf: {
+    flex: 1
+  },
+  addStudioSelectInput: {
+    minHeight: 48,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#c9cdd2',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  addStudioInputText: {
+    color: '#171412',
+    fontSize: 16,
+    fontWeight: '400'
+  },
+  addStudioColorInput: {
+    minHeight: 48,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#c9cdd2',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11
+  },
+  addStudioColorDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#050505'
+  },
+  addStudioColorTextInput: {
+    flex: 1,
+    minHeight: 44,
+    color: '#171412',
+    fontSize: 16,
+    fontWeight: '400'
+  },
+  addStudioSegmented: {
+    minHeight: 38,
+    borderRadius: 10,
+    backgroundColor: '#e9e3e3',
+    padding: 4,
+    flexDirection: 'row'
+  },
+  addStudioSegment: {
+    flex: 1,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  addStudioSegmentActive: {
+    backgroundColor: '#1f1f1f'
+  },
+  addStudioSegmentText: {
+    color: '#171412',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  addStudioSegmentTextActive: {
+    color: '#ffffff'
+  },
+  addStudioTagInput: {
+    minHeight: 48,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#c9cdd2',
+    backgroundColor: '#ffffff',
+    paddingLeft: 16,
+    paddingRight: 7,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  addStudioTagTextInput: {
+    flex: 1,
+    minHeight: 44,
+    color: '#171412',
+    fontSize: 16,
+    fontWeight: '400'
+  },
+  addStudioTagAdd: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#eee8e8',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  addStudioTagRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    gap: 8
+  },
+  addStudioTagPill: {
+    minHeight: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#d4cecb',
+    backgroundColor: '#eee8e8',
+    paddingHorizontal: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5
+  },
+  addStudioTagPillText: {
+    color: '#4f4a48',
+    fontSize: 12,
+    fontWeight: '500'
+  },
+  addStudioMessage: {
+    marginHorizontal: 20,
+    marginTop: 18
+  },
+  addStudioFooter: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    minHeight: 96,
+    borderTopWidth: 1,
+    borderTopColor: '#e1dad7',
+    backgroundColor: '#fbf7f6',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 14,
+    flexDirection: 'row',
+    gap: 16
+  },
+  addStudioDiscardButton: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#9b5658',
+    backgroundColor: '#fbf7f6',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  addStudioDiscardText: {
+    color: '#9b5658',
+    fontSize: 14,
+    fontWeight: '500',
+    letterSpacing: 1.2
+  },
+  addStudioSaveButton: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: 10,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  addStudioSaveText: {
+    color: '#ffffff',
+    textAlign: 'center',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+    letterSpacing: 0.8
+  },
   hero: {
     margin: 16,
     height: 240,
@@ -4618,6 +5603,687 @@ const styles = StyleSheet.create({
   lockedActions: {
     flexDirection: 'row',
     gap: 10
+  },
+  productDetailScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  productDetailContent: {
+    paddingBottom: Platform.OS === 'android' ? 102 : 116,
+    backgroundColor: '#fbf7f6'
+  },
+  productTopBar: {
+    height: 42,
+    paddingHorizontal: 14,
+    backgroundColor: '#fbf7f6',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee7e2',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  productTopIcon: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  productTopBrand: {
+    color: '#111111',
+    fontSize: 12,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  productBreadcrumb: {
+    height: 34,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14
+  },
+  productCrumbText: {
+    color: '#57514d',
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  productCrumbCurrent: {
+    flex: 1,
+    color: '#171412',
+    fontSize: 10,
+    fontWeight: '900'
+  },
+  productHeroMedia: {
+    marginHorizontal: 14,
+    borderRadius: 7,
+    overflow: 'hidden',
+    backgroundColor: '#eee8e3'
+  },
+  productHeroImage: {
+    width: '100%',
+    height: '100%'
+  },
+  productHeroVideo: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#000'
+  },
+  productFavoriteButton: {
+    position: 'absolute',
+    right: 13,
+    top: 14,
+    width: 39,
+    height: 39,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.88)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  productSummary: {
+    paddingHorizontal: 14,
+    paddingTop: 19,
+    paddingBottom: 24
+  },
+  productSummaryTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 14
+  },
+  productSummaryTitleBlock: {
+    flex: 1
+  },
+  productBrandLabel: {
+    color: '#9b5658',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5
+  },
+  productNameText: {
+    marginTop: 4,
+    color: '#171412',
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600'
+  },
+  productPriceBlock: {
+    alignItems: 'flex-end'
+  },
+  productDetailPrice: {
+    color: '#171412',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  productRatingLine: {
+    marginTop: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3
+  },
+  productRatingText: {
+    color: '#5b5551',
+    fontSize: 11,
+    fontWeight: '700'
+  },
+  productTagRow: {
+    marginTop: 13,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 9
+  },
+  productSoftTag: {
+    minHeight: 22,
+    borderRadius: 11,
+    overflow: 'hidden',
+    backgroundColor: '#eee9e7',
+    color: '#7a716d',
+    paddingHorizontal: 12,
+    paddingTop: 5,
+    fontSize: 10,
+    fontWeight: '800'
+  },
+  productOptionLabel: {
+    marginTop: 25,
+    color: '#423d3a',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.6
+  },
+  productOptionValue: {
+    color: '#5c5754',
+    fontWeight: '800'
+  },
+  productSwatchRow: {
+    marginTop: 13,
+    flexDirection: 'row',
+    gap: 14
+  },
+  productColorSwatch: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    borderColor: '#d9d2ce'
+  },
+  productColorSwatchActive: {
+    borderWidth: 2,
+    borderColor: '#050505'
+  },
+  productSizeHead: {
+    marginTop: 21,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  productSizeGuide: {
+    color: '#9b5658',
+    fontSize: 11,
+    fontWeight: '800',
+    textDecorationLine: 'underline'
+  },
+  productSizeRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    gap: 10
+  },
+  productSizeButton: {
+    flex: 1,
+    minHeight: 45,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eadfdb',
+    backgroundColor: '#fbf7f6',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  productSizeButtonActive: {
+    borderWidth: 2,
+    borderColor: '#171412',
+    backgroundColor: '#ffffff'
+  },
+  productSizeText: {
+    color: '#4f4a48',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  productSizeTextActive: {
+    color: '#171412'
+  },
+  productActionRow: {
+    marginTop: 24,
+    flexDirection: 'row',
+    gap: 8
+  },
+  productActionButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d4c8c4',
+    backgroundColor: '#fbf7f6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7
+  },
+  productActionButtonActive: {
+    backgroundColor: '#050505',
+    borderColor: '#050505'
+  },
+  productActionText: {
+    color: '#4f4a48',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  productActionTextActive: {
+    color: '#ffffff'
+  },
+  productBenefitsBand: {
+    minHeight: 112,
+    paddingHorizontal: 14,
+    backgroundColor: '#f4eeee',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around'
+  },
+  productBenefitItem: {
+    flex: 1,
+    alignItems: 'center'
+  },
+  productBenefitTitle: {
+    marginTop: 8,
+    color: '#3a3532',
+    fontSize: 10,
+    fontWeight: '900'
+  },
+  productBenefitText: {
+    marginTop: 2,
+    color: '#5f5854',
+    textAlign: 'center',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '600'
+  },
+  productAccordion: {
+    paddingHorizontal: 14,
+    paddingTop: 29
+  },
+  productAccordionRow: {
+    minHeight: 42,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e6dfdb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  productAccordionText: {
+    color: '#3a3532',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  productStorySection: {
+    paddingHorizontal: 14,
+    paddingTop: 61
+  },
+  productStoryTitle: {
+    color: '#3a2424',
+    fontSize: 21,
+    lineHeight: 27,
+    fontStyle: 'italic',
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  productStoryText: {
+    marginTop: 17,
+    color: '#4f4a48',
+    fontSize: 13,
+    lineHeight: 23,
+    fontWeight: '500'
+  },
+  productStoryImage: {
+    marginTop: 46,
+    width: '100%',
+    height: 388,
+    borderRadius: 7,
+    backgroundColor: '#eee8e3'
+  },
+  completeLookSection: {
+    paddingHorizontal: 14,
+    paddingTop: 120
+  },
+  completeLookHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  completeLookTitle: {
+    color: '#3a3532',
+    fontSize: 12,
+    fontWeight: '500'
+  },
+  completeLookAll: {
+    color: '#9b5658',
+    fontSize: 10,
+    fontWeight: '900',
+    textDecorationLine: 'underline'
+  },
+  completeLookGrid: {
+    marginTop: 21,
+    flexDirection: 'row',
+    gap: 13
+  },
+  completeLookCard: {
+    flex: 1
+  },
+  completeLookImage: {
+    width: '100%',
+    height: 174,
+    borderRadius: 6,
+    backgroundColor: '#eee8e3'
+  },
+  completeLookBrand: {
+    marginTop: 12,
+    color: '#9b5658',
+    fontSize: 9,
+    fontWeight: '900'
+  },
+  completeLookName: {
+    marginTop: 3,
+    minHeight: 34,
+    color: '#171412',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600'
+  },
+  completeLookPrice: {
+    marginTop: 4,
+    color: '#171412',
+    fontSize: 11,
+    fontWeight: '900'
+  },
+  productAtelierFooter: {
+    marginTop: 150,
+    paddingHorizontal: 26,
+    paddingTop: 62,
+    paddingBottom: 64,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    backgroundColor: '#050505'
+  },
+  productAtelierTitle: {
+    color: '#ffffff',
+    textAlign: 'center',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  productAtelierCopy: {
+    marginTop: 20,
+    color: '#a5a5a5',
+    textAlign: 'center',
+    fontSize: 13,
+    lineHeight: 21,
+    fontWeight: '500'
+  },
+  productEmailBox: {
+    marginTop: 31,
+    minHeight: 48,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#1d1d1d',
+    backgroundColor: '#0c0c0c',
+    paddingLeft: 14,
+    paddingRight: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  productEmailInput: {
+    flex: 1,
+    minHeight: 40,
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  productSubmitButton: {
+    minWidth: 75,
+    minHeight: 38,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  productSubmitText: {
+    color: '#050505',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  productFooterDivider: {
+    marginTop: 70,
+    height: 1,
+    backgroundColor: '#181818'
+  },
+  productFooterBrand: {
+    marginTop: 37,
+    color: '#ffffff',
+    textAlign: 'center',
+    fontSize: 21,
+    lineHeight: 27,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 2.5
+  },
+  productFooterCopy: {
+    marginTop: 8,
+    color: '#8b8b8b',
+    textAlign: 'center',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.9
+  },
+  productFooterLinks: {
+    marginTop: 58,
+    flexDirection: 'row',
+    justifyContent: 'space-between'
+  },
+  productFooterHead: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.9
+  },
+  productFooterLink: {
+    marginTop: 14,
+    color: '#9b9b9b',
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  aiStudioScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  aiStudioContent: {
+    paddingTop: 34,
+    paddingBottom: Platform.OS === 'android' ? 196 : 212,
+    backgroundColor: '#fbf7f6'
+  },
+  aiStudioEyebrow: {
+    paddingHorizontal: 28,
+    color: '#57514f',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '500',
+    letterSpacing: 3.6
+  },
+  aiGreetingCard: {
+    marginTop: 15,
+    marginHorizontal: 28,
+    minHeight: 151,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#ded8d3',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 23,
+    paddingVertical: 24,
+    justifyContent: 'center'
+  },
+  aiGreetingText: {
+    color: '#252221',
+    fontSize: 22,
+    lineHeight: 35,
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  conciergeSuggestionTrack: {
+    paddingHorizontal: 28,
+    paddingTop: 54,
+    gap: 24,
+    paddingRight: 62
+  },
+  conciergeSuggestionCard: {
+    width: 348,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#ffffff'
+  },
+  conciergeSuggestionImageWrap: {
+    height: 462,
+    backgroundColor: '#eee8e3'
+  },
+  conciergeSuggestionImage: {
+    width: '100%',
+    height: '100%'
+  },
+  conciergeSparkButton: {
+    position: 'absolute',
+    right: 17,
+    top: 18,
+    width: 55,
+    height: 55,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  conciergeSuggestionBody: {
+    paddingHorizontal: 23,
+    paddingTop: 26,
+    paddingBottom: 22
+  },
+  conciergeSuggestionBrand: {
+    color: '#55514f',
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: '500'
+  },
+  conciergeSuggestionName: {
+    marginTop: 16,
+    minHeight: 64,
+    color: '#171412',
+    fontSize: 25,
+    lineHeight: 32,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
+    letterSpacing: 0
+  },
+  conciergeSuggestionPrice: {
+    marginTop: 4,
+    color: '#171412',
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '900'
+  },
+  conciergeShopButton: {
+    marginTop: 9,
+    alignSelf: 'flex-start',
+    minHeight: 55,
+    borderRadius: 14,
+    backgroundColor: '#050505',
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  conciergeShopText: {
+    color: '#ffffff',
+    fontSize: 22,
+    fontWeight: '500'
+  },
+  aiUserMessage: {
+    marginTop: 45,
+    marginHorizontal: 28,
+    maxWidth: 380,
+    minHeight: 158,
+    borderRadius: 15,
+    overflow: 'hidden',
+    backgroundColor: '#242424',
+    paddingHorizontal: 22,
+    paddingTop: 26,
+    shadowColor: '#000',
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 4
+  },
+  aiUserMessageText: {
+    color: '#ffffff',
+    fontSize: 23,
+    lineHeight: 34,
+    fontWeight: '400'
+  },
+  aiStatusText: {
+    marginTop: 14,
+    marginHorizontal: 28,
+    color: '#6f6864',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  aiIdeaRow: {
+    marginTop: -1,
+    paddingHorizontal: 28,
+    flexDirection: 'row',
+    gap: 10
+  },
+  aiIdeaChip: {
+    minHeight: 55,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: '#e2dad6',
+    backgroundColor: '#f0eded',
+    paddingHorizontal: 21,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8
+  },
+  aiIdeaText: {
+    color: '#252221',
+    fontSize: 21,
+    fontWeight: '400'
+  },
+  aiRunPreviewGrid: {
+    paddingHorizontal: 28,
+    paddingTop: 24,
+    flexDirection: 'row',
+    gap: 12
+  },
+  aiRunPreviewCard: {
+    width: 112,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#ffffff'
+  },
+  aiRunPreviewImage: {
+    width: '100%',
+    height: 126,
+    backgroundColor: '#eee8e3'
+  },
+  aiRunPreviewName: {
+    padding: 8,
+    color: '#34302d',
+    fontSize: 11,
+    fontWeight: '800'
+  },
+  aiComposer: {
+    position: 'absolute',
+    left: 28,
+    right: 28,
+    bottom: Platform.OS === 'ios' ? 96 : 86,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16
+  },
+  aiImageButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2dad6',
+    backgroundColor: '#fbf7f6',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  aiComposerInput: {
+    flex: 1,
+    minHeight: 64,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2dad6',
+    backgroundColor: '#fbf7f6',
+    paddingHorizontal: 22,
+    color: '#171412',
+    fontSize: 21,
+    fontWeight: '400'
+  },
+  aiSendButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 14,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   detailMedia: {
     margin: 16,
@@ -5570,6 +7236,263 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '900'
   },
+  creditsScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  creditsContent: {
+    paddingBottom: 26
+  },
+  creditsTopBar: {
+    height: 66,
+    paddingHorizontal: 36,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ebe3e1',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fbf7f6'
+  },
+  creditsTopIcon: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  creditsBrand: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontSize: 25,
+    color: '#111111'
+  },
+  creditsHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 15
+  },
+  creditsIntro: {
+    paddingHorizontal: 36,
+    paddingTop: 25,
+    gap: 14
+  },
+  creditsIntroTitle: {
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontSize: 14,
+    color: '#201c1c'
+  },
+  creditsIntroText: {
+    color: '#747071',
+    fontSize: 16,
+    lineHeight: 25
+  },
+  creditsSectionLabel: {
+    marginTop: 46,
+    paddingHorizontal: 36,
+    color: '#1c1919',
+    fontSize: 15,
+    letterSpacing: 4,
+    fontWeight: '600'
+  },
+  creditTierStack: {
+    marginTop: 24,
+    paddingHorizontal: 36,
+    gap: 14
+  },
+  creditTierCard: {
+    minHeight: 168,
+    paddingHorizontal: 22,
+    paddingVertical: 24,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#c9c9c9',
+    backgroundColor: '#fffdfc'
+  },
+  creditTierCardSelected: {
+    borderColor: '#111111',
+    borderWidth: 1.3
+  },
+  creditTierBadge: {
+    position: 'absolute',
+    top: -11,
+    left: 23,
+    paddingHorizontal: 11,
+    paddingVertical: 4,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#060606',
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '800'
+  },
+  creditTierTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14
+  },
+  creditTierName: {
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontSize: 14,
+    color: '#1b1717'
+  },
+  creditTierPrice: {
+    color: '#111111',
+    fontSize: 16,
+    fontWeight: '500'
+  },
+  creditAmountRow: {
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'flex-end'
+  },
+  creditAmount: {
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontSize: 29,
+    lineHeight: 34,
+    color: '#9b5658'
+  },
+  creditAmountLabel: {
+    paddingBottom: 3,
+    color: '#9b5658',
+    fontSize: 15,
+    letterSpacing: 2,
+    fontWeight: '600'
+  },
+  creditTierDescription: {
+    marginTop: 24,
+    color: '#4d4a4a',
+    fontSize: 13,
+    lineHeight: 18
+  },
+  paymentMethodCard: {
+    marginTop: 24,
+    marginHorizontal: 36,
+    height: 54,
+    paddingHorizontal: 15,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#c9c9c9',
+    backgroundColor: '#fffdfc',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  paymentMethodLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12
+  },
+  paymentMethodText: {
+    color: '#242020',
+    fontSize: 15
+  },
+  addPaymentCard: {
+    marginTop: 10,
+    marginHorizontal: 36,
+    height: 54,
+    paddingHorizontal: 15,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#c9c2c0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11
+  },
+  addPaymentText: {
+    color: '#55514f',
+    fontSize: 15
+  },
+  orderSummaryCard: {
+    marginTop: 44,
+    marginHorizontal: 36,
+    paddingHorizontal: 22,
+    paddingVertical: 25,
+    borderRadius: 8,
+    backgroundColor: '#fffdfc',
+    shadowColor: '#000000',
+    shadowOpacity: 0.05,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 3,
+    gap: 18
+  },
+  orderSummaryTitle: {
+    marginBottom: 10,
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontSize: 14,
+    color: '#1d1919'
+  },
+  orderSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16
+  },
+  orderSummaryText: {
+    color: '#474343',
+    fontSize: 15,
+    lineHeight: 20,
+    flexShrink: 1
+  },
+  orderSummaryDivider: {
+    height: 1,
+    backgroundColor: '#d7d0ce'
+  },
+  totalAmountLabel: {
+    color: '#111111',
+    fontSize: 15,
+    letterSpacing: 3,
+    fontWeight: '500'
+  },
+  totalAmountValue: {
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    color: '#111111',
+    fontSize: 21,
+    fontWeight: '700'
+  },
+  creditsMessage: {
+    marginTop: 16,
+    marginHorizontal: 36,
+    color: '#55514f',
+    fontSize: 13,
+    lineHeight: 18
+  },
+  secureCheckoutButton: {
+    marginTop: 52,
+    marginHorizontal: 36,
+    height: 52,
+    borderRadius: 8,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 5
+  },
+  secureCheckoutText: {
+    color: '#ffffff',
+    fontSize: 15,
+    letterSpacing: 4,
+    fontWeight: '600'
+  },
+  creditsFooterLinks: {
+    marginTop: 16,
+    paddingHorizontal: 42,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10
+  },
+  creditsFooterLink: {
+    color: '#9b9391',
+    fontSize: 9,
+    fontWeight: '600'
+  },
   balanceCard: {
     padding: 16,
     borderRadius: 8,
@@ -5628,23 +7551,57 @@ const styles = StyleSheet.create({
     color: '#0f766e',
     fontWeight: '900'
   },
-  profileHero: {
-    margin: 16,
-    padding: 16,
-    borderRadius: 8,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
+  profileScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  profileContent: {
+    paddingBottom: Platform.OS === 'android' ? 114 : 122
+  },
+  profileTopBar: {
+    height: 58,
+    paddingHorizontal: 34,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ebe3e1',
+    backgroundColor: '#fbf7f6',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16
+    justifyContent: 'space-between'
+  },
+  profileTopIcon: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileTopBrand: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontSize: 25,
+    color: '#111111'
+  },
+  profileHero: {
+    paddingTop: 36,
+    paddingHorizontal: 34,
+    alignItems: 'center',
+    minHeight: 348
   },
   profilePhotoWrap: {
-    width: 118,
-    height: 150,
-    borderRadius: 8,
+    width: 86,
+    height: 86,
+    borderRadius: 43,
     overflow: 'hidden',
-    backgroundColor: '#e5e7eb'
+    backgroundColor: '#efe7e4',
+    borderWidth: 3,
+    borderColor: '#ffffff',
+    shadowColor: '#000000',
+    shadowOpacity: 0.09,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3
   },
   profilePhoto: {
     width: '100%',
@@ -5652,12 +7609,14 @@ const styles = StyleSheet.create({
   },
   profilePhotoAction: {
     position: 'absolute',
-    right: 8,
-    bottom: 8,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(17, 24, 39, 0.82)',
+    right: -1,
+    bottom: 1,
+    width: 21,
+    height: 21,
+    borderRadius: 11,
+    backgroundColor: '#050505',
+    borderWidth: 2,
+    borderColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center'
   },
@@ -5665,42 +7624,657 @@ const styles = StyleSheet.create({
     flex: 1
   },
   profileName: {
-    marginTop: 6,
-    color: '#111827',
-    fontSize: 27,
-    lineHeight: 31,
-    fontWeight: '900',
-    letterSpacing: 0
+    marginTop: 25,
+    color: '#2b2321',
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    letterSpacing: 0,
+    textAlign: 'center'
   },
-  profileEmail: {
-    marginTop: 6,
-    color: '#64748b',
+  profileRole: {
+    marginTop: 7,
+    color: '#9b5658',
+    fontSize: 12,
+    letterSpacing: 2,
     fontWeight: '800'
   },
-  profileDetails: {
-    paddingHorizontal: 16,
+  profileBio: {
+    marginTop: 18,
+    maxWidth: 320,
+    color: '#5d5754',
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: '500'
+  },
+  profileEditButton: {
+    marginTop: 23,
+    minWidth: 146,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileEditText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900'
+  },
+  profileCreditsCard: {
+    marginHorizontal: 35,
+    marginTop: 6,
+    paddingHorizontal: 23,
+    paddingTop: 23,
+    paddingBottom: 22,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5dcd9',
+    backgroundColor: '#fbf7f6',
+    shadowColor: '#000000',
+    shadowOpacity: 0.03,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 1
+  },
+  profileCreditsHead: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  profileCreditsLabel: {
+    color: '#747071',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  profileCreditsAmountRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'flex-end'
+  },
+  profileCreditsAmount: {
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    color: '#2b2321',
+    fontSize: 22,
+    lineHeight: 28
+  },
+  profileCreditsTotal: {
+    paddingBottom: 3,
+    color: '#5d5754',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  profileCreditTrack: {
+    marginTop: 16,
+    height: 5,
+    borderRadius: 3,
+    overflow: 'hidden',
+    backgroundColor: '#e9e3e1'
+  },
+  profileCreditFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: '#9b5658'
+  },
+  profileBuyButton: {
+    marginTop: 22,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#9b5658',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileBuyText: {
+    color: '#9b5658',
+    fontSize: 14,
+    letterSpacing: 1,
+    fontWeight: '900'
+  },
+  profileSection: {
+    marginTop: 58,
+    paddingHorizontal: 35
+  },
+  profileSectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  profileSectionTitle: {
+    color: '#2b2321',
+    fontSize: 22,
+    lineHeight: 28,
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontWeight: '400'
+  },
+  profilePhotoCount: {
+    color: '#5d5754',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  profilePortraitTrack: {
+    paddingTop: 24,
+    gap: 14,
+    paddingRight: 35
+  },
+  profileUploadPortrait: {
+    width: 109,
+    height: 144,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#c6c4c2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7
+  },
+  profileUploadPortraitText: {
+    color: '#77716f',
+    textAlign: 'center',
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  profilePortraitCard: {
+    width: 109,
+    height: 144,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#eee8e3'
+  },
+  profilePortraitImage: {
+    width: '100%',
+    height: '100%'
+  },
+  profileSavePhotoButton: {
+    marginTop: 14,
+    height: 42,
+    borderRadius: 8,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileSavePhotoText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '900'
+  },
+  profileInlineMessage: {
+    marginTop: 12,
+    color: '#5d5754',
+    fontSize: 12,
+    lineHeight: 18
+  },
+  profileQuickOptions: {
+    marginTop: 46,
+    marginHorizontal: 35,
+    gap: 12
+  },
+  profileQuickCard: {
+    minHeight: 72,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5dcd9',
+    backgroundColor: '#fffdfc',
+    paddingHorizontal: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14
+  },
+  profileQuickIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#f4eeee',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileQuickCopy: {
+    flex: 1
+  },
+  profileQuickTitle: {
+    color: '#2b2321',
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  profileQuickSub: {
+    marginTop: 4,
+    color: '#77716f',
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  profilePaymentCard: {
+    marginTop: 24,
+    minHeight: 82,
+    borderRadius: 8,
+    backgroundColor: '#f0eaea',
+    paddingHorizontal: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18
+  },
+  profileVisaBadge: {
+    width: 45,
+    height: 27,
+    borderRadius: 4,
+    backgroundColor: '#111111',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileVisaText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '900'
+  },
+  profilePaymentCopy: {
+    flex: 1
+  },
+  profilePaymentTitle: {
+    color: '#2b2321',
+    fontSize: 15,
+    fontWeight: '700'
+  },
+  profilePaymentSub: {
+    marginTop: 4,
+    color: '#5d5754',
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  profileSettingsList: {
+    marginTop: 24
+  },
+  profileSettingsRow: {
+    minHeight: 77,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e9e1de',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  profileSettingsCopy: {
+    flex: 1,
+    paddingRight: 20
+  },
+  profileSettingsLabel: {
+    color: '#5d5754',
+    fontSize: 14,
+    fontWeight: '700'
+  },
+  profileSettingsValue: {
+    marginTop: 4,
+    color: '#3f3937',
+    fontSize: 14,
+    fontWeight: '800'
+  },
+  profileLogoutButton: {
+    marginTop: 78,
+    marginHorizontal: 35,
+    height: 47,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#efc8ca',
+    backgroundColor: '#fff0f0',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileLogoutText: {
+    color: '#c85664',
+    fontSize: 13,
+    letterSpacing: 0.5,
+    fontWeight: '900'
+  },
+  wishlistScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  wishlistContent: {
+    paddingBottom: Platform.OS === 'android' ? 112 : 120
+  },
+  wishlistTopBar: {
+    height: 58,
+    paddingHorizontal: 34,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ebe3e1',
+    backgroundColor: '#fbf7f6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  wishlistTopIcon: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wishlistBrand: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontSize: 22,
+    color: '#2b2321'
+  },
+  wishlistTopActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12
+  },
+  wishlistBody: {
+    paddingHorizontal: 35,
+    paddingTop: 31
+  },
+  wishlistTitle: {
+    color: '#2b2321',
+    fontSize: 26,
+    lineHeight: 32,
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontWeight: '400'
+  },
+  wishlistCount: {
+    color: '#77716f',
+    fontSize: 15
+  },
+  wishlistActionRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 10
   },
-  profileStat: {
-    width: '48%',
-    padding: 13,
+  wishlistCreateButton: {
+    minHeight: 31,
+    borderRadius: 16,
+    backgroundColor: '#050505',
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  wishlistCreateText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  wishlistShareButton: {
+    minHeight: 31,
+    borderRadius: 16,
+    backgroundColor: '#eee9e7',
+    paddingHorizontal: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7
+  },
+  wishlistShareText: {
+    color: '#111111',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  wishlistTabs: {
+    paddingTop: 42,
+    gap: 28
+  },
+  wishlistTab: {
+    minHeight: 22,
+    justifyContent: 'center'
+  },
+  wishlistTabText: {
+    color: '#4b4644',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.4
+  },
+  wishlistTabTextActive: {
+    color: '#111111'
+  },
+  wishlistSortRow: {
+    marginTop: 27,
+    paddingBottom: 28,
+    borderTopWidth: 1,
+    borderTopColor: '#eee7e4',
+    paddingTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  wishlistSortText: {
+    color: '#77716f',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  wishlistSortStrong: {
+    color: '#3f3937'
+  },
+  wishlistViewToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12
+  },
+  wishlistGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 30
+  },
+  wishlistProductCard: {
+    width: '47%'
+  },
+  wishlistProductImageWrap: {
+    width: '100%',
+    aspectRatio: 0.76,
     borderRadius: 8,
-    backgroundColor: '#fff',
+    overflow: 'hidden',
+    backgroundColor: '#eee8e3'
+  },
+  wishlistProductImage: {
+    width: '100%',
+    height: '100%'
+  },
+  wishlistHeartButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wishlistProductBrand: {
+    marginTop: 12,
+    color: '#4b4644',
+    fontSize: 12,
+    letterSpacing: 0.8,
+    fontWeight: '700'
+  },
+  wishlistProductName: {
+    marginTop: 4,
+    minHeight: 35,
+    color: '#1e1a19',
+    fontSize: 14,
+    lineHeight: 17,
+    fontWeight: '500'
+  },
+  wishlistProductPrice: {
+    marginTop: 4,
+    color: '#050505',
+    fontSize: 15,
+    fontWeight: '900'
+  },
+  wishlistSizeRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7
+  },
+  wishlistSizeChip: {
+    minWidth: 24,
+    height: 22,
+    borderRadius: 6,
+    overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#e5e7eb'
+    borderColor: '#d9d2ce',
+    color: '#4b4644',
+    textAlign: 'center',
+    paddingTop: 4,
+    fontSize: 10,
+    fontWeight: '700'
   },
-  profileStatLabel: {
-    color: '#64748b',
+  wishlistSizeChipActive: {
+    backgroundColor: '#050505',
+    borderColor: '#050505',
+    color: '#ffffff'
+  },
+  wishlistMoveButton: {
+    marginTop: 12,
+    height: 31,
+    borderRadius: 7,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wishlistMoveText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800'
+  },
+  wishlistProCard: {
+    marginTop: 60,
+    paddingHorizontal: 23,
+    paddingTop: 25,
+    paddingBottom: 22,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#ff9d9d',
+    backgroundColor: '#ffe1e1'
+  },
+  wishlistProBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 3,
+    overflow: 'hidden',
+    backgroundColor: '#9b5658',
+    color: '#ffffff',
+    fontSize: 9,
+    letterSpacing: 1.1,
+    fontWeight: '900'
+  },
+  wishlistProTitle: {
+    marginTop: 20,
+    color: '#9b5658',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '400'
+  },
+  wishlistProText: {
+    marginTop: 12,
+    maxWidth: 270,
+    color: '#9b5658',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500'
+  },
+  wishlistUpgradeButton: {
+    marginTop: 20,
+    alignSelf: 'flex-start',
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#9b5658',
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wishlistUpgradeText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '900'
+  },
+  wishlistSectionTitle: {
+    marginTop: 66,
+    color: '#2b2321',
+    fontSize: 22,
+    lineHeight: 28,
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif' }),
+    fontWeight: '400'
+  },
+  wishlistRecommendedTrack: {
+    paddingTop: 25,
+    gap: 16,
+    paddingRight: 34
+  },
+  wishlistRecommendedCard: {
+    width: 150
+  },
+  wishlistRecommendedImage: {
+    width: '100%',
+    height: 151,
+    borderRadius: 8,
+    backgroundColor: '#eee8e3'
+  },
+  wishlistRecommendedBrand: {
+    marginTop: 12,
+    color: '#4b4644',
     fontSize: 11,
-    fontWeight: '900',
-    textTransform: 'uppercase'
+    letterSpacing: 0.7,
+    fontWeight: '700'
   },
-  profileStatValue: {
+  wishlistRecommendedPrice: {
+    marginTop: 3,
+    color: '#050505',
+    fontSize: 14,
+    fontWeight: '900'
+  },
+  ordersScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  ordersContent: {
+    paddingBottom: Platform.OS === 'android' ? 112 : 120
+  },
+  ordersBody: {
+    paddingHorizontal: 35,
+    paddingTop: 32,
+    gap: 16
+  },
+  orderCard: {
+    minHeight: 86,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5dcd9',
+    backgroundColor: '#fffdfc',
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14
+  },
+  orderIconBox: {
+    width: 45,
+    height: 45,
+    borderRadius: 8,
+    backgroundColor: '#f4eeee',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  orderCopy: {
+    flex: 1
+  },
+  orderName: {
+    color: '#2b2321',
+    fontSize: 15,
+    fontWeight: '800'
+  },
+  orderMeta: {
     marginTop: 5,
-    color: '#111827',
-    fontSize: 17,
+    color: '#77716f',
+    fontSize: 12,
+    fontWeight: '600'
+  },
+  orderPrice: {
+    color: '#111111',
+    fontSize: 13,
     fontWeight: '900'
   },
   fullBodyPreviewCard: {
