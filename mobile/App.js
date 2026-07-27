@@ -1059,27 +1059,80 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   );
 }
 
+const authEntryFeatures = ['Virtual AI Try-On', 'Smart Digital Closet', 'Personal AI Stylist'];
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
 function AuthEntryScreen({ onNavigate }) {
+  const { width, height } = useWindowDimensions();
+  const compact = height < 720 || width < 360;
+  const framePaddingX = clamp(width * 0.068, 18, 32);
+  const framePaddingTop = clamp(height * 0.025, 12, 28);
+  const framePaddingBottom = clamp(height * 0.022, 12, 24);
+  const logoSize = clamp(width * 0.168, 50, 70);
+  const taglineSize = clamp(width * 0.05, 15, 21);
+  const taglineSpace = clamp(width * 0.01, 2.4, 4);
+  const featureHeight = clamp(height * 0.104, 70, 92);
+  const featureGap = clamp(height * 0.027, 14, 28);
+  const featurePaddingX = clamp(width * 0.08, 18, 33);
+  const featureIconSize = clamp(width * 0.072, 24, 30);
+  const featureTextSize = clamp(width * 0.056, 18, 22);
+  const ctaHeight = clamp(height * 0.085, 62, 78);
+  const ctaFontSize = clamp(width * 0.052, 17, 20);
+  const exploreFontSize = clamp(width * 0.055, 18, 22);
+  const exploreLetterSpacing = clamp(width * 0.012, 3, 5);
+  const indicatorWidth = clamp(width * 0.16, 48, 66);
+  const backgroundScale = width < 360 ? 1.1 : 1.05;
+
   return (
-    <ScrollView contentContainerStyle={[styles.scrollContent, styles.authEntryContent]}>
-      <View style={styles.authEntryHero}>
-        <Image source={images.hero} style={styles.authEntryImage} resizeMode="cover" />
-        <View style={styles.authEntryOverlay} />
+    <ScrollView
+      style={styles.authEntryScroll}
+      contentContainerStyle={[
+        styles.authEntryContent,
+        {
+          paddingHorizontal: framePaddingX,
+          paddingTop: framePaddingTop,
+          paddingBottom: framePaddingBottom
+        }
+      ]}
+      bounces={false}
+      showsVerticalScrollIndicator={false}
+    >
+      <Image source={images.hero} style={[styles.authEntryBackground, { transform: [{ scale: backgroundScale }] }]} resizeMode="cover" />
+      <View style={styles.authEntryImageWash} />
+      <View style={styles.authEntryShadow} />
+
+      <View style={[styles.authEntryMain, compact && styles.authEntryMainCompact]}>
         <View style={styles.authEntryBrand}>
-          <Text style={styles.authEntryLogo}>FitLook</Text>
-          <Text style={styles.authEntryTagline}>AI fitting room</Text>
+          <Text style={[styles.authEntryLogo, { fontSize: logoSize, lineHeight: logoSize * 1.08 }]}>FitLook</Text>
+          <Text style={[styles.authEntryTagline, { fontSize: taglineSize, lineHeight: taglineSize * 1.48, letterSpacing: taglineSpace }]}>AI-POWERED FASHION</Text>
+          <Text style={[styles.authEntryTagline, { fontSize: taglineSize, lineHeight: taglineSize * 1.48, letterSpacing: taglineSpace }]}>EXPERIENCE</Text>
         </View>
-      </View>
-      <View style={styles.authEntryPanel}>
-        <Text style={styles.kicker}>Start Here</Text>
-        <Text style={styles.authEntryTitle}>Log in or create your FitLook account.</Text>
-        <Text style={styles.description}>
-          Save your profile photo, unlock AI try-ons, and preview outfits before you shop.
-        </Text>
-        <View style={styles.authEntryActions}>
-          <AppButton label="Sign Up" icon="person-add-outline" onPress={() => onNavigate('signup')} />
-          <AppButton label="Log In" icon="log-in-outline" variant="secondary" onPress={() => onNavigate('login')} />
+
+        <View style={[styles.authEntryFeatureList, { gap: featureGap }]}>
+          {authEntryFeatures.map((feature) => (
+            <View key={feature} style={[styles.authEntryFeature, { minHeight: featureHeight, paddingHorizontal: featurePaddingX, gap: clamp(width * 0.065, 16, 32) }]}>
+              <View style={[styles.authEntryCheck, { width: featureIconSize, height: featureIconSize, borderRadius: featureIconSize / 2 }]}>
+                <Ionicons name="checkmark" size={featureIconSize * 0.68} color="#6f3e36" />
+              </View>
+              <Text style={[styles.authEntryFeatureText, { fontSize: featureTextSize, lineHeight: featureTextSize * 1.25 }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.84}>
+                {feature}
+              </Text>
+            </View>
+          ))}
         </View>
+
+        <TouchableOpacity style={[styles.authEntryCta, { minHeight: ctaHeight, borderRadius: ctaHeight / 2 }]} activeOpacity={0.88} onPress={() => onNavigate('signup')}>
+          <Text style={[styles.authEntryCtaText, { fontSize: ctaFontSize }]}>GET STARTED</Text>
+          <Ionicons name="arrow-forward" size={ctaFontSize + 1} color="#151515" />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.authEntryExplore} activeOpacity={0.75} onPress={() => onNavigate('home')}>
+          <Text style={[styles.authEntryExploreText, { fontSize: exploreFontSize, lineHeight: exploreFontSize * 1.28, letterSpacing: exploreLetterSpacing }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78}>
+            EXPLORE FITLOOK
+          </Text>
+        </TouchableOpacity>
+
+        <View style={[styles.authEntryHomeIndicator, { width: indicatorWidth }]} />
       </View>
     </ScrollView>
   );
@@ -2470,10 +2523,11 @@ export default function App() {
   }
 
   const authOnlyRoute = !user && ['auth', 'login', 'signup'].includes(currentRoute.name);
+  const welcomeRoute = !user && currentRoute.name === 'auth';
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar style="dark" />
+    <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe]}>
+      <StatusBar style={welcomeRoute ? 'light' : 'dark'} />
       {authOnlyRoute ? null : <Header user={user} canGoBack={routeStack.length > 1} onBack={goBack} onNavigate={navigate} onLogout={logout} />}
       <View style={styles.content}>
         <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
@@ -2489,6 +2543,9 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: '#f8fafc'
+  },
+  authEntrySafe: {
+    backgroundColor: '#111111'
   },
   flex: {
     flex: 1
@@ -3156,63 +3213,99 @@ const styles = StyleSheet.create({
   detailActions: {
     gap: 10
   },
+  authEntryScroll: {
+    flex: 1,
+    backgroundColor: '#111111'
+  },
   authEntryContent: {
     flexGrow: 1,
-    justifyContent: 'center',
-    paddingBottom: 28
+    justifyContent: 'center'
   },
-  authEntryHero: {
-    margin: 16,
-    height: 350,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#e5e7eb'
-  },
-  authEntryImage: {
+  authEntryBackground: {
+    ...StyleSheet.absoluteFillObject,
     width: '100%',
     height: '100%'
   },
-  authEntryOverlay: {
+  authEntryImageWash: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(17, 24, 39, 0.28)'
+    backgroundColor: 'rgba(17, 17, 17, 0.18)'
+  },
+  authEntryShadow: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.38)'
+  },
+  authEntryMain: {
+    flex: 1,
+    justifyContent: 'space-between',
+    alignItems: 'stretch',
+    paddingTop: 8,
+    paddingBottom: 22
+  },
+  authEntryMainCompact: {
+    paddingTop: 2,
+    paddingBottom: 12
   },
   authEntryBrand: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    bottom: 20
+    alignItems: 'center'
   },
   authEntryLogo: {
     color: '#fff',
-    fontSize: 42,
-    lineHeight: 46,
-    fontWeight: '900',
+    fontWeight: '400',
+    fontFamily: Platform.select({ ios: 'Georgia', android: 'serif', default: 'serif' }),
     letterSpacing: 0
   },
   authEntryTagline: {
-    marginTop: 4,
-    color: '#ecfeff',
-    fontSize: 15,
-    fontWeight: '800'
+    color: 'rgba(255, 255, 255, 0.82)',
+    fontWeight: '300',
+    textAlign: 'center'
   },
-  authEntryPanel: {
-    marginHorizontal: 16,
-    padding: 18,
-    borderRadius: 8,
-    backgroundColor: '#fff',
+  authEntryFeatureList: {},
+  authEntryFeature: {
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    gap: 12
+    borderColor: 'rgba(255, 255, 255, 0.18)',
+    backgroundColor: 'rgba(25, 25, 25, 0.34)',
+    flexDirection: 'row',
+    alignItems: 'center'
   },
-  authEntryTitle: {
-    color: '#111827',
-    fontSize: 31,
-    lineHeight: 36,
-    fontWeight: '900',
+  authEntryCheck: {
+    backgroundColor: '#ffb5b5',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  authEntryFeatureText: {
+    flex: 1,
+    color: '#fff',
+    fontWeight: '400',
     letterSpacing: 0
   },
-  authEntryActions: {
-    gap: 10
+  authEntryCta: {
+    backgroundColor: '#fff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 24
+  },
+  authEntryCtaText: {
+    color: '#151515',
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  authEntryExplore: {
+    alignSelf: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 2
+  },
+  authEntryExploreText: {
+    color: 'rgba(255, 255, 255, 0.76)',
+    fontWeight: '300'
+  },
+  authEntryHomeIndicator: {
+    alignSelf: 'center',
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 255, 255, 0.28)'
   },
   authCard: {
     margin: 16,
