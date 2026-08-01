@@ -297,6 +297,8 @@ function styleBotGenderCompatibility(product = {}, preference = '') {
 }
 
 const categories = [
+  ['Tops', 'category-tops-stack.png', 'tops'],
+  ['Bottoms', 'category-4.jpg', 'bottoms'],
   ['Shirts', 'category-1.jpg', 'shirts'],
   ['T-Shirts', 'category-2.jpg', 't-shirts'],
   ['Pants', 'category-3.jpg', 'pants'],
@@ -306,7 +308,7 @@ const categories = [
   ['Watches', 'category-7.jpg', 'watches'],
   ['Accessories', 'category-8.jpg', 'accessories'],
   ['Ethnic Wear', 'arrival-4.jpg', 'ethnic wear'],
-  ['Eyewear', 'search-shirt-4.jpg', 'eyewear'],
+  ['Eyewear', 'category-8.jpg', 'eyewear'],
   ['Innerwear', 'arrival-6.jpg', 'innerwear'],
   ['Sleepwear', 'arrival-5.jpg', 'sleepwear']
 ];

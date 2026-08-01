@@ -1,6 +1,7 @@
 export const images = {
   hero: require('../assets/hero-room.png'),
   homeAtelierHero: require('../assets/home-atelier-hero.png'),
+  shopHeroConfidence: require('../assets/shop-hero-confidence.png'),
   locked: require('../assets/search-locked-preview.jpg'),
   'arrival-1.jpg': require('../assets/arrival-1.jpg'),
   'arrival-2.jpg': require('../assets/arrival-2.jpg'),
@@ -9,6 +10,7 @@ export const images = {
   'arrival-5.jpg': require('../assets/arrival-5.jpg'),
   'arrival-6.jpg': require('../assets/arrival-6.jpg'),
   'category-1.jpg': require('../assets/category-1.jpg'),
+  'category-tops-stack.png': require('../assets/category-tops-stack.png'),
   'category-2.jpg': require('../assets/category-2.jpg'),
   'category-3.jpg': require('../assets/category-3.jpg'),
   'category-4.jpg': require('../assets/category-4.jpg'),
@@ -29,6 +31,8 @@ export const images = {
 };
 
 export const categories = [
+  ['Tops', 'category-tops-stack.png', 'tops'],
+  ['Bottoms', 'category-4.jpg', 'bottoms'],
   ['Shirts', 'category-1.jpg', 'shirts'],
   ['T-Shirts', 'category-2.jpg', 't-shirts'],
   ['Pants', 'category-3.jpg', 'pants'],
@@ -38,7 +42,7 @@ export const categories = [
   ['Watches', 'category-7.jpg', 'watches'],
   ['Accessories', 'category-8.jpg', 'accessories'],
   ['Ethnic Wear', 'arrival-4.jpg', 'ethnic wear'],
-  ['Eyewear', 'search-shirt-4.jpg', 'eyewear'],
+  ['Eyewear', 'category-8.jpg', 'eyewear'],
   ['Innerwear', 'arrival-6.jpg', 'innerwear'],
   ['Sleepwear', 'arrival-5.jpg', 'sleepwear']
 ];
