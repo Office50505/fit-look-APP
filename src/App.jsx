@@ -297,18 +297,18 @@ function styleBotGenderCompatibility(product = {}, preference = '') {
 }
 
 const categories = [
-  ['Tops', 'category-tops-stack.png', 'tops'],
-  ['Bottoms', 'category-4.jpg', 'bottoms'],
+  ['Tops', 'category-tops-updated.jpg', 'tops'],
+  ['Bottoms', 'category-bottoms-updated.jpg', 'bottoms'],
   ['Shirts', 'category-1.jpg', 'shirts'],
-  ['T-Shirts', 'category-2.jpg', 't-shirts'],
+  ['T-Shirts', 'category-tshirts-updated.jpg', 't-shirts'],
   ['Pants', 'category-3.jpg', 'pants'],
   ['Jeans', 'category-4.jpg', 'jeans'],
   ['Jackets', 'category-5.jpg', 'jackets'],
-  ['Shoes', 'category-6.jpg', 'shoes'],
+  ['Shoes', 'category-shoes-updated.jpg', 'shoes'],
   ['Watches', 'category-7.jpg', 'watches'],
   ['Accessories', 'category-8.jpg', 'accessories'],
   ['Ethnic Wear', 'arrival-4.jpg', 'ethnic wear'],
-  ['Eyewear', 'category-8.jpg', 'eyewear'],
+  ['Eyewear', 'category-eyewear-updated.jpg', 'eyewear'],
   ['Innerwear', 'arrival-6.jpg', 'innerwear'],
   ['Sleepwear', 'arrival-5.jpg', 'sleepwear']
 ];

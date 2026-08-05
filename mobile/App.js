@@ -568,20 +568,21 @@ function ProductRow({ title, state, onNavigate, user, token, onAddToWishlist, wi
 }
 
 const homeCategoryItems = [
-  ['TOPS', 'category-tops-stack.png', 'tops'],
-  ['BOTTOMS', 'category-4.jpg', 'bottoms'],
-  ['T-SHIRTS', 'category-2.jpg', 't-shirts'],
-  ['SHOES', 'category-6.jpg', 'shoes'],
-  ['EYEWEAR', 'category-8.jpg', 'eyewear']
+  ['TOPS', 'category-tops-updated.jpg', 'tops'],
+  ['BOTTOMS', 'category-bottoms-updated.jpg', 'bottoms'],
+  ['T-SHIRTS', 'category-tshirts-updated.jpg', 't-shirts'],
+  ['SHOES', 'category-shoes-updated.jpg', 'shoes'],
+  ['EYEWEAR', 'category-eyewear-updated.jpg', 'eyewear']
 ];
 
 const shopCategoryItems = [
-  ['Tops', 'category-tops-stack.png', 'tops'],
-  ['Bottoms', 'category-4.jpg', 'bottoms'],
+  ['Tops', 'category-tops-updated.jpg', 'tops'],
+  ['Bottoms', 'category-bottoms-updated.jpg', 'bottoms'],
   ['Shirts', 'category-1.jpg', 'shirts'],
-  ['Shoes', 'category-6.jpg', 'shoes'],
-  ['Eyewear', 'category-8.jpg', 'eyewear']
+  ['Shoes', 'category-shoes-updated.jpg', 'shoes'],
+  ['Eyewear', 'category-eyewear-updated.jpg', 'eyewear']
 ];
+const shopProductGridLimit = 50;
 
 function ShopTopBar({ onNavigate }) {
   return <AppHeader onNavigate={onNavigate} />;
@@ -939,14 +940,13 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
     sort: initial.sort || '',
     newArrival: initial.newArrival || ''
   });
-  const [continueWithoutTryOn, setContinueWithoutTryOn] = useState(false);
   const [tryOnLoading, setTryOnLoading] = useState({});
   const [tryOnVideoLoading, setTryOnVideoLoading] = useState({});
   const [tryOnErrors, setTryOnErrors] = useState({});
   const [tryOnVideoErrors, setTryOnVideoErrors] = useState({});
   const autoKey = useRef('');
-  const state = useProducts({ ...filters, limit: 60 }, token);
-  const arrivalsState = useProducts({ newArrival: true, sort: 'newest', limit: 8 }, token);
+  const state = useProducts({ ...filters, limit: shopProductGridLimit }, token);
+  const arrivalsState = useProducts({ sort: 'newest', limit: shopProductGridLimit }, token);
   const [tryOns, setTryOns] = useTryOns(user, state.products, token);
 
   useEffect(() => {
@@ -959,7 +959,6 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
       sort: initial.sort || '',
       newArrival: initial.newArrival || ''
     });
-    setContinueWithoutTryOn(false);
     autoKey.current = '';
   }, [JSON.stringify(initial || {}), tryOnMode]);
 
@@ -972,13 +971,11 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
     newArrival: filters.newArrival
   }), [filters.q, filters.category, filters.brand, filters.gender, filters.sort, filters.newArrival]);
   const hasSearchIntent = Boolean(filters.q || filters.category || filters.brand || filters.gender || filters.newArrival);
-  const allowTryOnTrial = Boolean(user) && !continueWithoutTryOn && (tryOnMode || hasSearchIntent);
+  const allowTryOnTrial = Boolean(user) && (tryOnMode || hasSearchIntent);
   const trialProducts = state.products.slice(0, 4);
-  const visibleProducts = allowTryOnTrial ? trialProducts : state.products;
-  const lockedProducts = allowTryOnTrial ? state.products.slice(4, 12) : [];
+  const visibleProducts = state.products;
 
   const runSearch = () => {
-    setContinueWithoutTryOn(false);
     setFilters((current) => ({ ...current, q: draft.trim() }));
   };
 
@@ -1022,15 +1019,15 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
   }, [user, tryOnVideoLoading, tryOns]);
 
   useEffect(() => {
-    if (!user || tryOnMode || !hasSearchIntent || continueWithoutTryOn || state.loading || trialProducts.length === 0) return;
+    if (!user || tryOnMode || !hasSearchIntent || state.loading || trialProducts.length === 0) return;
     const runKey = `${searchSignature}:${trialProducts.map((product) => product.id).join(',')}`;
     if (autoKey.current === runKey) return;
     autoKey.current = runKey;
     trialProducts.filter((product) => !tryOns[product.id]).forEach((product) => generateTryOn(product));
-  }, [user?.id, tryOnMode, hasSearchIntent, continueWithoutTryOn, state.loading, searchSignature, trialProducts.map((product) => product.id).join(','), Object.keys(tryOns).join(',')]);
+  }, [user?.id, tryOnMode, hasSearchIntent, state.loading, searchSignature, trialProducts.map((product) => product.id).join(','), Object.keys(tryOns).join(',')]);
 
   const showStorefront = !tryOnMode && !hasSearchIntent && !filters.sort;
-  const storefrontProducts = arrivalsState.products.slice(0, 4);
+  const storefrontProducts = arrivalsState.products.slice(0, shopProductGridLimit);
 
   if (showStorefront) {
     return (
@@ -1100,47 +1097,6 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
           </View>
         </View>
 
-        <TouchableOpacity style={styles.shopDiscountCard} activeOpacity={0.88} onPress={() => onNavigate('shop', { q: 'student' })}>
-          <View style={styles.shopDiscountCopy}>
-            <Text style={styles.shopPromoEyebrow}>STUDENTS GET</Text>
-            <Text style={styles.shopDiscountTitle}>10% OFF</Text>
-            <Text style={styles.shopDiscountText}>Verify your student status.</Text>
-            <View style={styles.shopDiscountButton}>
-              <Text style={styles.shopDiscountButtonText}>Get Discount</Text>
-            </View>
-          </View>
-          <Image source={images['search-locked-preview.jpg']} style={styles.shopDiscountImage} resizeMode="cover" />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.shopLookCard} activeOpacity={0.88} onPress={() => onNavigate('shop', { sort: 'newest' })}>
-          <Image source={images.hero} style={styles.shopLookImage} resizeMode="cover" />
-          <View style={styles.shopLookShade} />
-          <View style={styles.shopLookCopy}>
-            <Text style={styles.shopLookEyebrow}>NEW SEASON</Text>
-            <Text style={styles.shopLookTitle}>NEW LOOK</Text>
-            <Text style={styles.shopLookAction}>Shop Now</Text>
-          </View>
-        </TouchableOpacity>
-
-        <View style={styles.shopExploreHead}>
-          <Text style={styles.shopSectionTitle}>Explore Collections</Text>
-          <Text style={styles.shopSectionSub}>Handpicked styles for every vibe.</Text>
-        </View>
-
-        <View style={styles.shopValuesBand}>
-          {[
-            ['leaf-outline', 'SUSTAINABLE MATERIALS', 'Better for you. Better for the planet. We prioritize organic and recycled fibers.'],
-            ['heart-outline', 'ETHICAL PRODUCTION', 'Made with care and respect. Ensuring fair labor and safe conditions everywhere.'],
-            ['people-outline', 'COMMUNITY FOCUSED', 'Fashion that gives back. Supporting local artisans and initiatives.']
-          ].map(([icon, title, text]) => (
-            <View key={title} style={styles.shopValueItem}>
-              <Ionicons name={icon} size={34} color="#b96568" />
-              <Text style={styles.shopValueTitle}>{title}</Text>
-              <Text style={styles.shopValueText}>{text}</Text>
-            </View>
-          ))}
-        </View>
-
         <TouchableOpacity style={styles.shopFloatingButton} onPress={() => onNavigate('tryon')}>
           <Ionicons name="sparkles" size={22} color="#ffffff" />
         </TouchableOpacity>
@@ -1168,15 +1124,12 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
         </View>
         <View style={styles.filterRail}>
           <FilterDropdown label="Category" selected={filters.category} options={[['', 'All'], ...categories.map(([label, , value]) => [value, label])]} onSelect={(category) => {
-            setContinueWithoutTryOn(false);
             setFilters((current) => ({ ...current, category }));
           }} />
           <FilterDropdown label="Gender" selected={filters.gender} options={[['', 'All genders'], ...genders.map((gender) => [gender, titleCase(gender)])]} onSelect={(gender) => {
-            setContinueWithoutTryOn(false);
             setFilters((current) => ({ ...current, gender }));
           }} />
           <FilterDropdown label="Sort" selected={filters.sort} options={sortOptions} onSelect={(sort) => {
-            setContinueWithoutTryOn(false);
             setFilters((current) => ({ ...current, sort }));
           }} />
         </View>
@@ -1187,11 +1140,6 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
           <Text style={styles.screenTitle}>{tryOnMode ? 'AI Try-On' : filters.q || filters.category || 'All Products'}</Text>
           <Text style={styles.muted}>{state.loading ? 'Searching...' : `${state.total} products`}</Text>
         </View>
-        {allowTryOnTrial ? (
-          <TouchableOpacity onPress={() => setContinueWithoutTryOn(true)}>
-            <Text style={styles.viewAll}>Browse regular</Text>
-          </TouchableOpacity>
-        ) : null}
       </View>
 
       <StatusPanel loading={state.loading} error={state.error} empty={!state.loading && !state.products.length} text="Try a different search or browse another category." />
@@ -1213,16 +1161,6 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
           />
         ))}
       </View>
-      {lockedProducts.length ? (
-        <View style={styles.lockedPanel}>
-          <Text style={styles.lockedTitle}>More AI try-ons are token gated</Text>
-          <Text style={styles.muted}>Use the first row for trial previews, buy more tokens, or continue browsing regular product photos.</Text>
-          <View style={styles.lockedActions}>
-            <AppButton label="Buy Tokens" icon="sparkles-outline" onPress={() => onNavigate('tokens')} />
-            <AppButton label="Continue" variant="secondary" onPress={() => setContinueWithoutTryOn(true)} />
-          </View>
-        </View>
-      ) : null}
     </ScrollView>
   );
 }
