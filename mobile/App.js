@@ -465,14 +465,15 @@ const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLo
   const discount = hasDiscount ? `${Math.round(((product.compareAtPrice - product.price) / product.compareAtPrice) * 100)}% off` : '';
   const videoUri = imageUrl(tryOn?.videoUrl);
   const hasTryOnImage = Boolean(tryOn?.imageUrl);
+  const useHomeImageFrame = variant === 'homeFrame';
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={product?.title || product?.name || 'Open product'}
-      style={({ pressed }) => [styles.productCard, variant === 'carousel' && styles.productCardCarousel, pressed && !locked && styles.productCardPressed, locked && styles.lockedCard]}
+      style={({ pressed }) => [styles.productCard, useHomeImageFrame && styles.productCardHomeFrame, variant === 'carousel' && styles.productCardCarousel, pressed && !locked && styles.productCardPressed, locked && styles.lockedCard]}
       onPress={locked ? undefined : onPress}
     >
-      <View style={styles.productImageWrap}>
+      <View style={[styles.productImageWrap, useHomeImageFrame && styles.homeProductImageWrap]}>
         {videoUri ? (
           <TryOnVideoPlayer uri={videoUri} style={styles.productImage} nativeControls={false} />
         ) : (
@@ -588,24 +589,23 @@ function ShopTopBar({ onNavigate }) {
   return <AppHeader onNavigate={onNavigate} />;
 }
 
-function ShopArrivalCard({ product, onPress, onAddToWishlist, isWishlisted }) {
-  const colors = product?.colors || [];
-  const price = Number(product?.price);
+function CurationProductCard({ product, onPress, onAddToWishlist, isWishlisted, user }) {
+  const price = Number(product.price);
   return (
-    <TouchableOpacity style={styles.shopArrivalCard} activeOpacity={0.86} onPress={onPress}>
-      <View style={styles.shopArrivalImageWrap}>
-        <ProductImage product={product} style={styles.shopArrivalImage} alt={product?.title || product?.name} />
+    <TouchableOpacity style={styles.homeProductCard} onPress={onPress}>
+      <View style={styles.homeProductImageWrap}>
+        <ProductImage product={product} style={styles.homeProductImage} alt={product.title || product.name} />
+        {product.isNew ? <Text style={styles.homeNewBadge}>NEW</Text> : null}
         {onAddToWishlist ? <WishlistDoneButton saved={isWishlisted} compact onPress={() => onAddToWishlist(product)} /> : null}
+        {user ? (
+          <View style={styles.homeTryBadge}>
+            <Ionicons name="sparkles" size={12} color="#111111" />
+          </View>
+        ) : null}
       </View>
-      <Text style={styles.shopArrivalBrand} numberOfLines={1}>{product?.displayLabel || titleCase(product?.category || 'Catalog')}</Text>
-      <Text style={styles.shopArrivalName} numberOfLines={2}>{product?.title || product?.name}</Text>
-      <Text style={styles.shopArrivalPrice}>{Number.isFinite(price) ? formatMoney(price, product?.currency) : 'Price unavailable'}</Text>
-      {colors.length ? (
-        <View style={styles.shopSwatches}>
-          {colors.slice(0, 4).map((color) => <View key={`${product.id}-${color.name}`} style={[styles.shopSwatch, { backgroundColor: color.value }]} />)}
-          {colors.length > 4 ? <Text style={styles.productSwatchMore}>+{colors.length - 4}</Text> : null}
-        </View>
-      ) : null}
+      <Text style={styles.homeProductEyebrow} numberOfLines={1}>{product.displayLabel || titleCase(product.category || 'Catalog')}</Text>
+      <Text style={styles.homeProductTitle} numberOfLines={2}>{product.title || product.name}</Text>
+      <Text style={styles.homeProductPrice}>{Number.isFinite(price) ? formatMoney(price, product.currency) : 'Price unavailable'}</Text>
     </TouchableOpacity>
   );
 }
@@ -719,23 +719,15 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds }) {
         {curated.loading || curated.error || !curatedProducts.length ? (
           <StatusPanel loading={curated.loading} error={curated.error} empty={!curated.loading && !curatedProducts.length} text="No curated products found yet." />
         ) : curatedProducts.map((product) => {
-          const price = Number(product.price);
           return (
-          <TouchableOpacity key={product.id} style={styles.homeProductCard} onPress={() => onNavigate('product', { id: product.id })}>
-            <View style={styles.homeProductImageWrap}>
-              <ProductImage product={product} style={styles.homeProductImage} alt={product.title || product.name} />
-              {product.isNew ? <Text style={styles.homeNewBadge}>NEW</Text> : null}
-              {onAddToWishlist ? <WishlistDoneButton saved={wishlistIds?.has(product.id)} compact onPress={() => onAddToWishlist(product)} /> : null}
-              {user ? (
-                <View style={styles.homeTryBadge}>
-                  <Ionicons name="sparkles" size={12} color="#111111" />
-                </View>
-              ) : null}
-            </View>
-            <Text style={styles.homeProductEyebrow} numberOfLines={1}>{product.displayLabel || titleCase(product.category || 'Catalog')}</Text>
-            <Text style={styles.homeProductTitle} numberOfLines={2}>{product.title || product.name}</Text>
-            <Text style={styles.homeProductPrice}>{Number.isFinite(price) ? formatMoney(price, product.currency) : 'Price unavailable'}</Text>
-          </TouchableOpacity>
+            <CurationProductCard
+              key={product.id}
+              product={product}
+              onPress={() => onNavigate('product', { id: product.id })}
+              onAddToWishlist={onAddToWishlist}
+              isWishlisted={wishlistIds?.has(product.id)}
+              user={user}
+            />
           );
         })}
       </View>
@@ -1065,36 +1057,22 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
           </View>
         </View>
 
-        <View style={styles.shopArrivalsSection}>
-          <View style={styles.shopArrivalsHead}>
-            <View>
-              <Text style={styles.shopSectionTitle}>New Arrivals</Text>
-              <Text style={styles.shopSectionSub}>Fresh styles. Just in.</Text>
-            </View>
-            <View style={styles.shopPager}>
-              <TouchableOpacity style={styles.shopPagerButton} onPress={() => onNavigate('shop', { sort: 'newest' })}>
-                <Ionicons name="chevron-back" size={16} color="#6c625e" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.shopPagerButton} onPress={() => onNavigate('shop', { newArrival: true })}>
-                <Ionicons name="chevron-forward" size={16} color="#6c625e" />
-              </TouchableOpacity>
-            </View>
-          </View>
-          <View style={styles.shopArrivalGrid}>
-            {arrivalsState.loading || arrivalsState.error || !storefrontProducts.length ? (
-              <StatusPanel loading={arrivalsState.loading} error={arrivalsState.error} empty={!arrivalsState.loading && !storefrontProducts.length} text="No new arrivals yet." />
-            ) : storefrontProducts.map((product) => {
-              return (
-                <ShopArrivalCard
-                  key={product.id}
-                  product={product}
-                  onPress={() => onNavigate('product', { id: product.id })}
-                  onAddToWishlist={onAddToWishlist}
-                  isWishlisted={wishlistIds?.has(product.id)}
-                />
-              );
-            })}
-          </View>
+        <Text style={styles.homeCurationTitle}>The Curation</Text>
+        <View style={styles.homeCuratedGrid}>
+          {arrivalsState.loading || arrivalsState.error || !storefrontProducts.length ? (
+            <StatusPanel loading={arrivalsState.loading} error={arrivalsState.error} empty={!arrivalsState.loading && !storefrontProducts.length} text="No curated products found yet." />
+          ) : storefrontProducts.map((product) => {
+            return (
+              <CurationProductCard
+                key={product.id}
+                product={product}
+                onPress={() => onNavigate('product', { id: product.id })}
+                onAddToWishlist={onAddToWishlist}
+                isWishlisted={wishlistIds?.has(product.id)}
+                user={user}
+              />
+            );
+          })}
         </View>
 
         <TouchableOpacity style={styles.shopFloatingButton} onPress={() => onNavigate('tryon')}>
@@ -1147,6 +1125,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
         {visibleProducts.map((product, index) => (
           <ProductCard
             key={product.id}
+            variant="homeFrame"
             product={product}
             tryOn={tryOns[product.id]}
             loading={Boolean(tryOnLoading[product.id])}
@@ -5728,6 +5707,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#e8dfda'
+  },
+  productCardHomeFrame: {
+    overflow: 'visible'
   },
   productCardPressed: {
     opacity: 0.94
