@@ -6,10 +6,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import authRoutes from './routes/auth.js';
 import closetRoutes from './routes/closet.js';
+import jobRoutes from './routes/jobs.js';
 import paymentRoutes from './routes/payments.js';
-import productRoutes from './routes/products.js';
-import recommendationRoutes from './routes/recommendations.js';
-import tryOnRoutes from './routes/tryons.js';
+import productRoutes, { registerProductJobHandlers } from './routes/products.js';
+import recommendationRoutes, { registerRecommendationJobHandlers } from './routes/recommendations.js';
+import tryOnRoutes, { registerTryOnJobHandlers } from './routes/tryons.js';
+import { jobQueueHealth, startJobWorker } from './utils/jobs.js';
+import { logger } from './utils/logger.js';
+import { createConcurrencyLimiter, createRateLimiter, rateLimitKeys } from './utils/rateLimit.js';
+import { errorLogger, requestLogger } from './utils/requestLogger.js';
+import { storageHealthSnapshot } from './utils/storage.js';
 
 dotenv.config();
 
@@ -18,6 +24,16 @@ const port = process.env.PORT || 5050;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
+
+process.on('unhandledRejection', (error) => {
+  logger.error('process_unhandled_rejection', { error });
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('process_uncaught_exception', { error });
+  process.exit(1);
+});
 
 function allowedOrigins() {
   return [
@@ -34,7 +50,6 @@ function isLocalDevOrigin(origin) {
   try {
     const url = new URL(origin);
     if (url.protocol !== 'http:') return false;
-    if (!['5173', '5174', '5175'].includes(url.port)) return false;
     return (
       url.hostname === 'localhost' ||
       url.hostname === '127.0.0.1' ||
@@ -56,17 +71,134 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+app.use(requestLogger);
 app.use('/uploads', express.static(path.join(rootDir, 'uploads')));
+
+const globalApiLimiter = createRateLimiter({
+  name: 'api-global',
+  windowMs: 5 * 60 * 1000,
+  max: (req) => rateLimitKeys.tokenUserId(req) ? Number(process.env.RATE_LIMIT_AUTHENTICATED_MAX || 300) : Number(process.env.RATE_LIMIT_ANONYMOUS_MAX || 120),
+  keyGenerator: rateLimitKeys.principal,
+  message: 'Too many requests. Please slow down and try again shortly.'
+});
+const otpPhoneLimiter = createRateLimiter({
+  name: 'otp-phone',
+  windowMs: 10 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_OTP_PHONE_MAX || 3),
+  keyGenerator: rateLimitKeys.phonePrincipal,
+  message: 'Too many OTP requests for this number. Please try again later.'
+});
+const otpIpLimiter = createRateLimiter({
+  name: 'otp-ip',
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_OTP_IP_MAX || 10),
+  keyGenerator: rateLimitKeys.clientIp,
+  message: 'Too many OTP requests from this device. Please try again later.'
+});
+const otpVerifyLimiter = createRateLimiter({
+  name: 'otp-verify',
+  windowMs: 10 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_OTP_VERIFY_MAX || 5),
+  keyGenerator: rateLimitKeys.phonePrincipal,
+  message: 'Too many OTP verification attempts. Please request a fresh OTP later.'
+});
+const aiSearchLimiter = createRateLimiter({
+  name: 'ai-studio-search',
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_AI_SEARCH_USER_MAX || 10),
+  keyGenerator: rateLimitKeys.principal,
+  failClosed: true,
+  message: 'AI Studio search limit reached. Please try again later.'
+});
+const aiSearchIpLimiter = createRateLimiter({
+  name: 'ai-studio-search-ip',
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_AI_SEARCH_IP_MAX || 20),
+  keyGenerator: rateLimitKeys.clientIp,
+  failClosed: true,
+  message: 'Too many AI Studio searches from this device. Please try again later.'
+});
+const aiSearchConcurrency = createConcurrencyLimiter({
+  name: 'ai-studio-search',
+  ttlMs: Number(process.env.RATE_LIMIT_AI_SEARCH_LOCK_MS || 90_000),
+  keyGenerator: rateLimitKeys.principal,
+  failClosed: true,
+  message: 'AI Studio is already searching for you. Please wait for that result.'
+});
+const tryOnMinuteLimiter = createRateLimiter({
+  name: 'tryon-minute',
+  windowMs: 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_TRYON_MINUTE_MAX || 3),
+  keyGenerator: rateLimitKeys.principal,
+  skip: (req) => req.method !== 'POST',
+  failClosed: true,
+  message: 'Try-on generation is being requested too quickly. Please wait a moment.'
+});
+const tryOnDailyLimiter = createRateLimiter({
+  name: 'tryon-day',
+  windowMs: 24 * 60 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_TRYON_DAY_MAX || 30),
+  keyGenerator: rateLimitKeys.principal,
+  skip: (req) => req.method !== 'POST',
+  failClosed: true,
+  message: 'Daily try-on generation limit reached. Please try again tomorrow.'
+});
+const tryOnConcurrency = createConcurrencyLimiter({
+  name: 'tryon-generation',
+  ttlMs: Number(process.env.RATE_LIMIT_TRYON_LOCK_MS || 4 * 60 * 1000),
+  keyGenerator: rateLimitKeys.principal,
+  skip: (req) => req.method !== 'POST',
+  failClosed: true,
+  message: 'A try-on is already generating for your account. Please wait for it to finish.'
+});
+const profileUploadLimiter = createRateLimiter({
+  name: 'profile-upload',
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_PROFILE_UPLOAD_HOUR_MAX || 10),
+  keyGenerator: rateLimitKeys.principal,
+  message: 'Too many profile photo uploads. Please try again later.'
+});
+const closetUploadLimiter = createRateLimiter({
+  name: 'closet-upload',
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_CLOSET_UPLOAD_HOUR_MAX || 30),
+  keyGenerator: rateLimitKeys.principal,
+  skip: (req) => req.method !== 'POST',
+  message: 'Too many wardrobe uploads. Please try again later.'
+});
+const paymentLimiter = createRateLimiter({
+  name: 'payment-start',
+  windowMs: 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_PAYMENT_MINUTE_MAX || 5),
+  keyGenerator: rateLimitKeys.principal,
+  failClosed: true,
+  message: 'Too many payment attempts. Please wait a moment.'
+});
+
+app.use('/api', globalApiLimiter);
+app.use('/api/auth/otp/send', otpIpLimiter, otpPhoneLimiter);
+app.use('/api/auth/otp/verify', otpVerifyLimiter);
+app.use('/api/auth/profile', profileUploadLimiter);
+app.use('/api/auth/body-photo', profileUploadLimiter);
+app.use('/api/recommendations/studio-chat', aiSearchIpLimiter, aiSearchLimiter, aiSearchConcurrency);
+app.use('/api/products/amazon-search', aiSearchIpLimiter, aiSearchLimiter, aiSearchConcurrency);
+app.use('/api/tryons', tryOnMinuteLimiter, tryOnDailyLimiter, tryOnConcurrency);
+app.use('/api/closet/items/analyze', closetUploadLimiter);
+app.use('/api/closet/items', closetUploadLimiter);
+app.use('/api/payments/phonepe/subscription', paymentLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/closet', closetRoutes);
+app.use('/api/jobs', jobRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/recommendations', recommendationRoutes);
 app.use('/api/tryons', tryOnRoutes);
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, mongo: mongoose.connection.readyState === 1 });
+  res.json({ ok: true, mongo: mongoose.connection.readyState === 1, storage: storageHealthSnapshot(), jobs: jobQueueHealth() });
 });
+
+app.use(errorLogger);
 
 async function start() {
   if (!process.env.MONGODB_URI) {
@@ -77,12 +209,17 @@ async function start() {
     dbName: process.env.MONGODB_DB || 'fitlook'
   });
 
+  registerProductJobHandlers();
+  registerRecommendationJobHandlers();
+  registerTryOnJobHandlers();
+  startJobWorker();
+
   app.listen(port, () => {
-    console.log(`FitLook API running on http://localhost:${port}`);
+    logger.info('api_started', { port, url: `http://localhost:${port}` });
   });
 }
 
 start().catch((error) => {
-  console.error(error.message);
+  logger.error('api_start_failed', { error });
   process.exit(1);
 });

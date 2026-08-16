@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { storedFileToClientUrl } from '../utils/storage.js';
 
 const tryOnSchema = new mongoose.Schema(
   {
@@ -12,12 +13,16 @@ const tryOnSchema = new mongoose.Schema(
     image: {
       filename: String,
       path: String,
+      url: String,
+      storage: String,
       mimetype: String,
       size: Number
     },
     video: {
       filename: String,
       path: String,
+      url: String,
+      storage: String,
       mimetype: String,
       size: Number,
       model: String,
@@ -31,13 +36,15 @@ const tryOnSchema = new mongoose.Schema(
 
 tryOnSchema.index({ user: 1, product: 1 }, { unique: true });
 tryOnSchema.index({ user: 1, createdAt: -1 });
+tryOnSchema.index({ product: 1, createdAt: -1 });
+tryOnSchema.index({ user: 1, updatedAt: -1 });
 
 function tryOnToClient(tryOn) {
   return {
     id: tryOn._id.toString(),
     productId: tryOn.product.toString(),
-    imageUrl: tryOn.image?.path ? `/${tryOn.image.path}` : null,
-    videoUrl: tryOn.video?.path ? `/${tryOn.video.path}` : null,
+    imageUrl: storedFileToClientUrl(tryOn.image),
+    videoUrl: storedFileToClientUrl(tryOn.video),
     videoModel: tryOn.video?.model || '',
     videoTokenCost: tryOn.video?.tokenCost || 0,
     videoGeneratedAt: tryOn.video?.generatedAt || null,

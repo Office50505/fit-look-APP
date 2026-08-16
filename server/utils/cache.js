@@ -7,6 +7,13 @@ let redisConnectPromise = null;
 let redisDisabledUntil = 0;
 let lastRedisWarningAt = 0;
 
+function envFlag(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return null;
+}
+
 function warnRedis(message) {
   const now = Date.now();
   if (now - lastRedisWarningAt < 30_000) return;
@@ -16,6 +23,18 @@ function warnRedis(message) {
 
 function redisTimeoutMs() {
   return Number(process.env.REDIS_TIMEOUT_MS || 250);
+}
+
+function redisBackoffMs() {
+  const value = Number(process.env.REDIS_BACKOFF_MS || 60_000);
+  return Number.isFinite(value) && value > 0 ? value : 60_000;
+}
+
+function redisEnabled() {
+  if (!process.env.REDIS_URL) return false;
+  const explicit = envFlag(process.env.CACHE_REDIS_ENABLED ?? process.env.REDIS_ENABLED);
+  if (explicit !== null) return explicit;
+  return process.env.NODE_ENV === 'production';
 }
 
 function keyPrefix() {
@@ -33,21 +52,25 @@ function withTimeout(promise, timeoutMs = redisTimeoutMs()) {
 
 async function getRedisClient() {
   const redisUrl = process.env.REDIS_URL;
-  if (!redisUrl || Date.now() < redisDisabledUntil) return null;
+  if (!redisEnabled() || Date.now() < redisDisabledUntil) return null;
   if (redisClient?.isOpen && redisClientUrl === redisUrl) return redisClient;
   if (redisConnectPromise) return redisConnectPromise;
 
   redisClient = createClient({ url: redisUrl });
   redisClientUrl = redisUrl;
   redisClient.on('error', (error) => {
-    warnRedis(error.message || 'Redis cache error');
+    redisDisabledUntil = Date.now() + redisBackoffMs();
+    warnRedis(`${error.message || 'Redis cache error'}; using in-memory cache`);
+    redisClient?.destroy?.();
+    redisClient = null;
+    redisClientUrl = null;
   });
 
   redisConnectPromise = withTimeout(redisClient.connect(), 1000)
     .then(() => redisClient)
     .catch((error) => {
-      redisDisabledUntil = Date.now() + 10_000;
-      warnRedis(error.message || 'Redis cache unavailable');
+      redisDisabledUntil = Date.now() + redisBackoffMs();
+      warnRedis(`${error.message || 'Redis cache unavailable'}; using in-memory cache`);
       redisClient?.destroy?.();
       redisClient = null;
       redisClientUrl = null;
@@ -167,4 +190,4 @@ function createHybridCache(name, options = {}) {
   return { get, set, remember, clear };
 }
 
-export { createHybridCache };
+export { createHybridCache, getRedisClient, keyPrefix, ttlSeconds, withTimeout };

@@ -1,22 +1,83 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { NativeModules, Platform } from 'react-native';
 
 const productionApi = 'http://15.206.207.210/api';
 function normalizeApiUrl(url) {
   return String(url || '').trim().replace(/\/$/, '');
 }
 
-export const API_URL = normalizeApiUrl(process.env.EXPO_PUBLIC_API_URL || productionApi);
+function runtimeHost() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.hostname) {
+    return window.location.hostname;
+  }
+  const scriptURL = NativeModules?.SourceCode?.scriptURL || '';
+  const match = scriptURL.match(/^[a-z]+:\/\/([^/:]+)/i);
+  return match?.[1] || '';
+}
+
+function normalizeLocalHost(host) {
+  if (!host) return '';
+  if (Platform.OS === 'android' && (host === 'localhost' || host === '127.0.0.1')) return '10.0.2.2';
+  if ((Platform.OS === 'ios' || Platform.OS === 'web') && host === '10.0.2.2') return 'localhost';
+  return host;
+}
+
+function localRuntimeApiUrl(url) {
+  const normalized = normalizeApiUrl(url);
+  if (!normalized) return '';
+  try {
+    const parsed = new URL(normalized);
+    const localHostnames = new Set(['localhost', '127.0.0.1', '10.0.2.2', '0.0.0.0']);
+    if (!localHostnames.has(parsed.hostname)) return '';
+    const host = normalizeLocalHost(runtimeHost() || parsed.hostname);
+    if (!host) return '';
+    parsed.hostname = host;
+    return normalizeApiUrl(parsed.toString());
+  } catch {
+    return '';
+  }
+}
+
+function platformApiUrl(url) {
+  const normalized = normalizeApiUrl(url);
+  if (!normalized) return '';
+  if (Platform.OS === 'android') {
+    return normalized.replace('://localhost:', '://10.0.2.2:').replace('://127.0.0.1:', '://10.0.2.2:');
+  }
+  if (Platform.OS === 'web' || Platform.OS === 'ios') {
+    return normalized.replace('://10.0.2.2:', '://localhost:');
+  }
+  return normalized;
+}
+
+export const API_URL = platformApiUrl(process.env.EXPO_PUBLIC_API_URL || productionApi);
+const runtimeApiUrl = localRuntimeApiUrl(process.env.EXPO_PUBLIC_API_URL);
 const fallbackApiUrls = String(process.env.EXPO_PUBLIC_API_FALLBACK_URLS || '')
   .split(',')
-  .map(normalizeApiUrl)
+  .map(platformApiUrl)
   .filter(Boolean);
-const apiUrls = [...new Set([API_URL, ...fallbackApiUrls].map(normalizeApiUrl).filter(Boolean))];
-let activeApiUrl = API_URL;
+const preferredApiUrl = runtimeApiUrl || API_URL;
+const apiUrls = [...new Set([preferredApiUrl, API_URL, runtimeApiUrl, ...fallbackApiUrls].map(normalizeApiUrl).filter(Boolean))];
+let activeApiUrl = preferredApiUrl;
 
-export const API_ORIGIN = API_URL.replace(/\/api\/?$/, '');
-const TOKEN_KEY = 'fitlook_token';
+export const API_ORIGIN = preferredApiUrl.replace(/\/api\/?$/, '');
+const TOKEN_KEY = 'lookmefy_token';
 const DEFAULT_TIMEOUT_MS = 15000;
 const FORM_TIMEOUT_MS = 60000;
+const JOB_TIMEOUT_MS = 180000;
+const JOB_POLL_INTERVAL_MS = 1400;
+
+export class ApiError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = details.status || 0;
+    this.code = details.code || '';
+    this.path = details.path || '';
+    this.detail = details.detail || '';
+    this.baseUrl = details.baseUrl || '';
+  }
+}
 
 export async function getToken() {
   return AsyncStorage.getItem(TOKEN_KEY);
@@ -66,8 +127,102 @@ function readableError(value, fallback = 'Request failed') {
   return String(value);
 }
 
+function featureNameForPath(path = '') {
+  if (/\/auth\/otp/i.test(path)) return 'OTP';
+  if (/\/auth\/(?:profile|body-photo|me)/i.test(path)) return 'profile';
+  if (/\/recommendations\/(?:studio-chat|stylist-chat)/i.test(path)) return 'AI Studio';
+  if (/\/products\/amazon-search/i.test(path)) return 'AI product search';
+  if (/\/tryons/i.test(path)) return 'AI try-on';
+  if (/\/closet/i.test(path)) return 'wardrobe';
+  if (/\/products/i.test(path)) return 'catalog';
+  if (/\/payments/i.test(path)) return 'checkout';
+  return 'Lookmefy';
+}
+
+function networkHelpSuffix() {
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    return Platform.OS === 'android'
+      ? ' Make sure the backend is running and your API URL uses 10.0.2.2 or your LAN IP from the emulator.'
+      : ' Make sure the backend is running and EXPO_PUBLIC_API_URL points to it.';
+  }
+  return ' Please check your connection and try again.';
+}
+
+function friendlyHttpError({ status, path, detail }) {
+  const feature = featureNameForPath(path);
+  const cleanDetail = String(detail || '').trim();
+  const detailText = /^Request failed \(\d+\)$/i.test(cleanDetail) ? '' : cleanDetail;
+
+  if (status === 400) return detailText || `${feature} needs a little more information. Check the details and try again.`;
+  if (status === 401) return 'Your session expired. Please log in again.';
+  if (status === 403) return `You do not have access to this ${feature} action.`;
+  if (status === 404) return `${feature} is not available on the running backend. Restart the backend with the latest code, then try again.`;
+  if (status === 408) return `${feature} took too long to respond. Try again in a moment.`;
+  if (status === 409 && detailText) return detailText;
+  if (status === 413) return 'That upload is too large. Choose a smaller image and try again.';
+  if (status === 415) return 'That file type is not supported. Upload a JPG, PNG, or WebP image.';
+  if (status === 422 && detailText) return detailText;
+  if (status === 429) return 'Too many requests. Wait a moment, then try again.';
+  if (status >= 500) {
+    if (/FAL_KEY|OPENAI_API_KEY|BUNNY|REDIS|MONGODB|missing/i.test(cleanDetail)) {
+      return `${feature} is not configured on the backend yet. Check the server .env and restart it.`;
+    }
+    return `${feature} is temporarily unavailable. Try again in a moment.`;
+  }
+  return detailText || `${feature} request could not be completed.`;
+}
+
+function networkErrorMessage(path, timeoutMs, aborted = false) {
+  const feature = featureNameForPath(path);
+  if (aborted) return `${feature} took longer than ${Math.round(timeoutMs / 1000)}s. Try again, or check the backend logs if this keeps happening.`;
+  return `Cannot reach the ${feature} service.${networkHelpSuffix()}`;
+}
+
+function isNetworkErrorMessage(message = '') {
+  return /network request failed|failed to fetch|load failed|networkerror|timed out|unable to connect|connection refused|abort/i.test(String(message || ''));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function pollJob(baseUrl, jobId, headers, timeoutMs) {
+  const startedAt = Date.now();
+  const limitMs = Math.max(JOB_TIMEOUT_MS, Number(timeoutMs) || 0);
+
+  while (Date.now() - startedAt < limitMs) {
+    await sleep(JOB_POLL_INTERVAL_MS);
+    const response = await fetch(`${baseUrl}/jobs/${encodeURIComponent(jobId)}`, { headers });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const detail = readableError(data, `Job status failed (${response.status})`);
+      throw new ApiError(friendlyHttpError({ status: response.status, path: `/jobs/${jobId}`, detail }), {
+        status: response.status,
+        path: `/jobs/${jobId}`,
+        detail,
+        baseUrl
+      });
+    }
+    const status = data?.job?.status;
+    if (status === 'succeeded') return data.result;
+    if (status === 'failed') throw new ApiError(data?.job?.error || 'Background task failed', {
+      code: 'job_failed',
+      path: `/jobs/${jobId}`,
+      baseUrl
+    });
+  }
+
+  throw new ApiError('Still processing. Please try again in a moment.', {
+    code: 'job_timeout',
+    path: `/jobs/${jobId}`,
+    baseUrl
+  });
+}
+
 export async function api(path, options = {}) {
-  const { timeoutMs, ...fetchOptions } = options;
+  const { timeoutMs, pollJob: shouldPollJob = true, jobTimeoutMs, ...fetchOptions } = options;
   const token = await getToken();
   const isForm = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
   const headers = isForm ? {} : { 'Content-Type': 'application/json' };
@@ -88,20 +243,37 @@ export async function api(path, options = {}) {
         signal: controller?.signal || fetchOptions.signal
       });
       const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(readableError(data, `Request failed (${response.status})`));
+      if (!response.ok) {
+        const detail = readableError(data, '');
+        throw new ApiError(friendlyHttpError({ status: response.status, path, detail }), {
+          status: response.status,
+          code: data?.code || '',
+          path,
+          detail,
+          baseUrl
+        });
+      }
       activeApiUrl = baseUrl;
+      if (response.status === 202 && data?.jobId && shouldPollJob) {
+        return pollJob(baseUrl, data.jobId, headers, jobTimeoutMs || requestTimeout);
+      }
       return data;
     } catch (error) {
-      const message = error?.name === 'AbortError'
-        ? `Connection timed out after ${Math.round(requestTimeout / 1000)}s`
-        : error?.message || '';
-      if (!/network request failed|failed to fetch|load failed|networkerror|timed out/i.test(message)) throw error;
-      networkError = new Error(message || 'Unable to connect to FitLook API');
+      if (error instanceof ApiError) throw error;
+      const aborted = error?.name === 'AbortError';
+      const message = aborted ? networkErrorMessage(path, requestTimeout, true) : error?.message || '';
+      if (!aborted && !isNetworkErrorMessage(message)) throw error;
+      networkError = new ApiError(aborted ? message : networkErrorMessage(path, requestTimeout), {
+        code: aborted ? 'timeout' : 'network_unreachable',
+        path,
+        detail: error?.message || '',
+        baseUrl
+      });
     } finally {
       if (timer) clearTimeout(timer);
     }
   }
-  throw networkError || new Error('Unable to connect to FitLook API');
+  throw networkError || new ApiError(networkErrorMessage(path, requestTimeout), { code: 'network_unreachable', path });
 }
 
 export function filePart(asset, fallbackName = 'upload.jpg') {

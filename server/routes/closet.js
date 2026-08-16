@@ -1,19 +1,15 @@
 import express from 'express';
-import fs from 'node:fs/promises';
 import heicConvert from 'heic-convert';
 import multer from 'multer';
 import path from 'node:path';
 import sharp from 'sharp';
-import { fileURLToPath } from 'node:url';
 import ClosetItem from '../models/ClosetItem.js';
 import ClosetOutfit from '../models/ClosetOutfit.js';
 import User from '../models/User.js';
 import { requireUser } from './auth.js';
+import { deleteStoredFile, isStorageConfigurationError, readStoredFile, saveStoredFile } from '../utils/storage.js';
 
 const router = express.Router();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '../..');
 const imageMimeTypes = new Set(['image/avif', 'image/x-avif', 'image/heic', 'image/heif']);
 
 const upload = multer({
@@ -38,7 +34,6 @@ const colors = ['black', 'white', 'cream', 'beige', 'brown', 'tan', 'grey', 'gra
 const formalWords = ['office', 'work', 'formal', 'interview', 'meeting', 'business'];
 const partyWords = ['party', 'date', 'wedding', 'function', 'celebration', 'night'];
 const activeWords = ['gym', 'run', 'sports', 'walk', 'training'];
-
 function isAllowedImageUpload(file) {
   const type = String(file.mimetype || '').toLowerCase();
   const name = String(file.originalname || '').toLowerCase();
@@ -52,19 +47,28 @@ function extensionFor(mimetype) {
   return '.jpg';
 }
 
-function safeLocalPath(storedPath) {
-  const resolved = path.resolve(rootDir, storedPath || '');
-  if (!resolved.startsWith(rootDir)) throw new Error('Invalid image path');
-  return resolved;
-}
-
 function cleanWord(value, fallback = '') {
   return String(value || fallback).replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function titleCase(value = '') {
+  return String(value)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
 
 function cleanList(value, limit = 12) {
   const raw = Array.isArray(value) ? value : String(value || '').split(',');
   return [...new Set(raw.map((item) => cleanWord(item).toLowerCase()).filter(Boolean))].slice(0, limit);
+}
+
+function envFlag(value, defaultValue = false) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
 }
 
 function cleanDate(value) {
@@ -99,6 +103,151 @@ function inferFormality(value, sourceText = '') {
   if (partyWords.some((word) => haystack.includes(word))) return 'party';
   if (activeWords.some((word) => haystack.includes(word))) return 'active';
   return 'any';
+}
+
+function closetVisionEnabled() {
+  return envFlag(process.env.CLOSET_VISION_ANALYSIS, true) && Boolean(process.env.FAL_KEY);
+}
+
+function closetVisionEndpoint() {
+  return String(process.env.FAL_CLOSET_VISION_ENDPOINT || 'openrouter/router/vision').replace(/^\/+|\/+$/g, '');
+}
+
+function closetVisionModel() {
+  return process.env.FAL_CLOSET_VISION_MODEL || 'google/gemini-2.5-flash-lite';
+}
+
+function falHeaders() {
+  if (!process.env.FAL_KEY) throw new Error('FAL_KEY is missing on the server');
+  return {
+    Authorization: `Key ${process.env.FAL_KEY}`,
+    'Content-Type': 'application/json'
+  };
+}
+
+function flattenText(value, depth = 0) {
+  if (!value || depth > 8) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map((item) => flattenText(item, depth + 1)).filter(Boolean).join('\n');
+  if (typeof value !== 'object') return '';
+  for (const key of ['output_text', 'text', 'content', 'message', 'response']) {
+    const found = flattenText(value[key], depth + 1);
+    if (found) return found;
+  }
+  if (value.choices) return flattenText(value.choices, depth + 1);
+  if (value.output) return flattenText(value.output, depth + 1);
+  return Object.values(value).map((item) => flattenText(item, depth + 1)).filter(Boolean).join('\n');
+}
+
+function parseJsonFromText(value = '') {
+  const cleaned = String(value || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start >= 0 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+    throw new Error('Vision response did not include JSON');
+  }
+}
+
+function normalizeDetectedFields(value = {}, fallback = {}) {
+  const sourceText = [
+    value.name,
+    value.category,
+    value.type,
+    value.color,
+    value.tags,
+    fallback.sourceText
+  ].filter(Boolean).join(' ');
+  const category = normalizeCategory(value.category || value.type || fallback.category, sourceText);
+  const color = inferColor(value.color || value.primaryColor || fallback.color, sourceText);
+  return {
+    name: cleanWord(value.name || value.itemName || fallback.name || `${titleCase(category).replace(/s$/, '')} item`, 'Closet item'),
+    category,
+    color,
+    fabric: cleanWord(value.fabric || value.material || fallback.fabric),
+    pattern: cleanWord(value.pattern || fallback.pattern),
+    season: cleanWord(value.season || fallback.season || 'all-season').toLowerCase(),
+    formality: inferFormality(value.formality || value.vibe || fallback.formality, sourceText),
+    occasions: cleanList(value.occasions || value.occasion || fallback.occasions, 6),
+    tags: cleanList(value.tags || fallback.tags, 8)
+  };
+}
+
+async function analyzeClosetItemWithVision(file, sourceText = '', timer) {
+  const imageBuffer = await sharp(file.buffer)
+    .resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 82 })
+    .toBuffer();
+  const imageDataUri = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`;
+  const prompt = [
+    'You are Lookmefy wardrobe item detection.',
+    'Analyze only the clothing/accessory item in the image.',
+    'Return strict JSON only with keys: name, category, color, fabric, pattern, season, formality, occasions, tags, confidence.',
+    'Allowed category values: tops, bottoms, dresses, suits, outerwear, shoes, accessories, activewear, ethnic, other.',
+    'Allowed formality values: casual, smart-casual, formal, party, active, any.',
+    'Use short ecommerce-friendly values. If unsure, use empty string or other.',
+    sourceText ? `Manual hint: ${sourceText}` : ''
+  ].filter(Boolean).join('\n');
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.CLOSET_VISION_TIMEOUT_MS || 20_000));
+  try {
+    const response = await fetch(`https://fal.run/${closetVisionEndpoint()}`, {
+      method: 'POST',
+      headers: falHeaders(),
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: closetVisionModel(),
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              { type: 'image_url', image_url: { url: imageDataUri } }
+            ]
+          }
+        ],
+        max_tokens: 500,
+        temperature: 0.1
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(readableError(data.error || data.detail || data.message || data, 'Vision analysis failed'));
+    timer?.mark('vision analysis complete');
+    const parsed = parseJsonFromText(flattenText(data));
+    return {
+      fields: normalizeDetectedFields(parsed, { sourceText }),
+      confidence: Number(parsed.confidence) || 0.72,
+      raw: parsed
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function detectClosetItem(file, sourceText = '', timer) {
+  if (!closetVisionEnabled()) {
+    const disabled = ['0', 'false', 'no', 'off'].includes(String(process.env.CLOSET_VISION_ANALYSIS ?? '').toLowerCase());
+    throw Object.assign(
+      new Error(disabled ? 'AI item detection is disabled on the server.' : 'AI item detection needs FAL_KEY on the server.'),
+      { statusCode: 503 }
+    );
+  }
+
+  try {
+    const vision = await analyzeClosetItemWithVision(file, sourceText, timer);
+    return {
+      source: 'vision',
+      confidence: Math.max(0.5, Math.min(Number(vision.confidence) || 0.72, 0.98)),
+      message: 'Detected by AI. Review and edit before saving.',
+      fields: normalizeDetectedFields(vision.fields, { sourceText })
+    };
+  } catch (error) {
+    timer?.mark('vision analysis failed', { error: readableError(error) });
+    throw Object.assign(error, { statusCode: error.statusCode || 503 });
+  }
 }
 
 function tokenCost() {
@@ -213,15 +362,19 @@ async function normalizeUpload(file, label, timer) {
 
 async function saveUploadFile(file, prefix, user, folder = 'closet') {
   const filename = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(file.mimetype)}`;
-  const storedPath = path.posix.join('uploads', 'users', user._id.toString(), folder, filename);
-  await fs.mkdir(path.dirname(path.join(rootDir, storedPath)), { recursive: true });
-  await fs.writeFile(path.join(rootDir, storedPath), file.buffer);
-  return { filename, path: storedPath, mimetype: file.mimetype, size: file.size || file.buffer.length };
+  return saveStoredFile({
+    buffer: file.buffer,
+    filename,
+    mimetype: file.mimetype,
+    userId: user._id.toString(),
+    folder,
+    prefix
+  });
 }
 
 async function filePartFromStoredImage(image, label, timer) {
   if (!image?.path) throw new Error(`${label} image is missing`);
-  const bytes = await fs.readFile(safeLocalPath(image.path));
+  const { bytes } = await readStoredFile(image);
   const normalized = await sharp(bytes).rotate().jpeg({ quality: 90 }).toBuffer();
   timer?.mark(`${label} file prepared`, { kb: Math.round(normalized.length / 1024) });
   return {
@@ -265,7 +418,7 @@ async function generatedBytesFromUrl(url, timer) {
   const response = await fetch(url, {
     headers: {
       accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-      'user-agent': 'Mozilla/5.0 FitLook closet generated image fetcher'
+      'user-agent': 'Mozilla/5.0 Lookmefy closet generated image fetcher'
     }
   });
   if (!response.ok) throw new Error('Could not download generated closet outfit');
@@ -285,7 +438,7 @@ async function combinedGarmentFromItems(items, timer) {
   const composites = [];
   for (let index = 0; index < slots.length; index += 1) {
     const item = slots[index];
-    const bytes = await fs.readFile(safeLocalPath(item.image.path));
+    const { bytes } = await readStoredFile(item.image);
     const thumb = await sharp(bytes)
       .rotate()
       .resize({ width: 820, height: Math.max(160, slotHeight - 44), fit: 'contain', background: '#fffdf8' })
@@ -437,7 +590,7 @@ async function openAiStylistReply(message, items, suggestions) {
       input: [
         {
           role: 'system',
-          content: 'You are FitLook stylist AI. Recommend outfits only from the user closet data. Be concise, practical, and mention exact item names.'
+          content: 'You are Lookmefy stylist AI. Recommend outfits only from the user closet data. Be concise, practical, and mention exact item names.'
         },
         {
           role: 'user',
@@ -468,6 +621,22 @@ router.get('/', requireUser, async (req, res) => {
   });
 });
 
+router.post('/items/analyze', requireUser, upload.single('item'), async (req, res) => {
+  const timer = createTimer('analyze-item', { userId: req.user._id.toString() });
+  try {
+    if (!req.file) return res.status(400).json({ message: 'Upload a clothing image first' });
+    const normalized = await normalizeUpload(req.file, 'closet item', timer);
+    const sourceText = `${req.body?.name || ''} ${req.body?.tags || ''}`;
+    const detection = await detectClosetItem(normalized, sourceText, timer);
+    timer.end({ source: detection.source, confidence: detection.confidence });
+    res.json({ detection });
+  } catch (error) {
+    const message = readableError(error, 'Could not analyze closet item');
+    timer.end({ error: message });
+    res.status(error.statusCode || 400).json({ message });
+  }
+});
+
 router.post('/items', requireUser, upload.single('item'), async (req, res) => {
   const timer = createTimer('upload-item', { userId: req.user._id.toString() });
   try {
@@ -494,7 +663,7 @@ router.post('/items', requireUser, upload.single('item'), async (req, res) => {
   } catch (error) {
     const message = readableError(error, 'Could not save closet item');
     timer.end({ error: message });
-    res.status(400).json({ message });
+    res.status(isStorageConfigurationError(error) ? error.statusCode || 503 : 400).json({ message });
   }
 });
 
@@ -516,7 +685,7 @@ router.patch('/items/:id', requireUser, async (req, res) => {
 router.delete('/items/:id', requireUser, async (req, res) => {
   const item = await ClosetItem.findOneAndDelete({ _id: req.params.id, user: req.user._id });
   if (!item) return res.status(404).json({ message: 'Closet item not found' });
-  if (item.image?.path) fs.unlink(safeLocalPath(item.image.path)).catch(() => {});
+  if (item.image?.path) deleteStoredFile(item.image).catch(() => {});
   res.json({ ok: true });
 });
 
@@ -592,7 +761,7 @@ router.post('/outfits/generate', requireUser, async (req, res) => {
     if (reserved) req.user = await refundToken(req.user, timer);
     const message = readableError(error, 'Could not generate closet outfit');
     timer.end({ error: message });
-    res.status(400).json({ message });
+    res.status(isStorageConfigurationError(error) ? error.statusCode || 503 : 400).json({ message });
   }
 });
 

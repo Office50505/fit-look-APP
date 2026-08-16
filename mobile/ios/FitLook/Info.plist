@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>FitLook</string>
+	<string>Lookmefy</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -27,7 +27,7 @@
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.kratikdhote.fitlook2</string>
+				<string>com.kratikdhote.lookmefy</string>
 			</array>
 		</dict>
 	</array>
@@ -43,7 +43,7 @@
 		<true/>
 	</dict>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>FitLook needs photo access so you can upload profile and clothing images for try-ons.</string>
+	<string>Lookmefy needs photo access so you can upload profile and clothing images for try-ons.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>SplashScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

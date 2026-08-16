@@ -18,6 +18,8 @@ const userEventSchema = new mongoose.Schema(
 );
 
 userEventSchema.index({ user: 1, createdAt: -1 });
+userEventSchema.index({ user: 1, type: 1, createdAt: -1 });
+userEventSchema.index({ user: 1, type: 1, query: 1, createdAt: -1 });
 userEventSchema.index({ product: 1, createdAt: -1 });
 userEventSchema.index({ type: 1, createdAt: -1 });
 userEventSchema.index({ createdAt: -1 });

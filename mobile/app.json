@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "FitLook",
-    "slug": "fitlook",
+    "name": "Lookmefy",
+    "slug": "lookmefy",
     "version": "1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -10,17 +10,17 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.kratikdhote.fitlook2",
+      "bundleIdentifier": "com.kratikdhote.lookmefy",
       "buildNumber": "1",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "FitLook needs photo access so you can upload profile and clothing images for try-ons.",
+        "NSPhotoLibraryUsageDescription": "Lookmefy needs photo access so you can upload profile and clothing images for try-ons.",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         }
       }
     },
     "android": {
-      "package": "com.fitlook.app",
+      "package": "com.lookmefy.app",
       "versionCode": 10,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {

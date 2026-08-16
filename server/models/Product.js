@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { storedFileToClientUrl } from '../utils/storage.js';
 
 const LEGACY_UNRESTRICTED_MODEL = ['v' + 'to', 'unrestricted'].join('-');
 
@@ -38,6 +39,8 @@ const productSchema = new mongoose.Schema(
     image: {
       filename: String,
       path: String,
+      url: String,
+      storage: String,
       remoteUrl: String,
       mimetype: String,
       size: Number
@@ -61,9 +64,14 @@ productSchema.index({
 productSchema.index({ isActive: 1, isFeatured: -1, createdAt: -1 });
 productSchema.index({ isActive: 1, isNewArrival: -1, createdAt: -1 });
 productSchema.index({ isActive: 1, category: 1, createdAt: -1 });
+productSchema.index({ isActive: 1, category: 1, gender: 1, createdAt: -1 });
+productSchema.index({ isActive: 1, category: 1, gender: 1, price: 1 });
+productSchema.index({ isActive: 1, gender: 1, isFeatured: -1, createdAt: -1 });
+productSchema.index({ isActive: 1, gender: 1, isNewArrival: -1, createdAt: -1 });
 productSchema.index({ isActive: 1, brand: 1, createdAt: -1 });
 productSchema.index({ isActive: 1, gender: 1, createdAt: -1 });
 productSchema.index({ isActive: 1, tags: 1, createdAt: -1 });
+productSchema.index({ sourceUrl: 1 }, { sparse: true });
 
 function productToClient(product) {
   return {
@@ -84,7 +92,7 @@ function productToClient(product) {
     tags: product.tags?.map(decodeHtml),
     colors: product.colors,
     tryOnModel: product.tryOnModel === LEGACY_UNRESTRICTED_MODEL ? 'wan-v2.6-image-to-image' : product.tryOnModel || 'gpt-image-2',
-    imageUrl: product.image?.path ? `/${product.image.path}` : product.image?.remoteUrl || null,
+    imageUrl: storedFileToClientUrl(product.image) || product.image?.remoteUrl || null,
     isFeatured: product.isFeatured,
     isNewArrival: product.isNewArrival,
     createdAt: product.createdAt

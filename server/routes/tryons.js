@@ -1,23 +1,21 @@
 import express from 'express';
-import fs from 'node:fs/promises';
 import multer from 'multer';
 import path from 'node:path';
 import sharp from 'sharp';
-import { fileURLToPath } from 'node:url';
 import CustomTryOn from '../models/CustomTryOn.js';
+import CreditEvent, { creditEventToClient } from '../models/CreditEvent.js';
 import ExternalTryOn from '../models/ExternalTryOn.js';
 import Product from '../models/Product.js';
 import TryOn, { tryOnToClient } from '../models/TryOn.js';
 import User from '../models/User.js';
 import { requireUser } from './auth.js';
+import { inlineOrQueue, registerJobHandler } from '../utils/jobs.js';
+import { isStorageConfigurationError, readStoredFile, saveStoredFile, storedFileToClientUrl } from '../utils/storage.js';
 import { inferTryOnModel, normalizeTryOnModel } from '../utils/tryOnModel.js';
 import { wearableCompatibility } from '../utils/wearable.js';
 import { genderCompatibility } from '../utils/genderPreference.js';
 
 const router = express.Router();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const rootDir = path.resolve(__dirname, '../..');
 const imageCacheTtlMs = Number(process.env.TRYON_IMAGE_CACHE_TTL_MS || 15 * 60 * 1000);
 const imageCacheMaxItems = Number(process.env.TRYON_IMAGE_CACHE_MAX_ITEMS || 80);
 const localImageDataUriCache = new Map();
@@ -68,12 +66,42 @@ function chargedVideoTokenCost(user) {
 }
 
 function ensureTryOnProfileReady(user) {
+  if (!user?.bodyPhoto?.path) {
+    throw new Error('Upload a profile photo from your profile before generating AI try-ons.');
+  }
   const status = user?.bodyPhoto?.status || 'ready';
   if (status === 'generating') {
     throw new Error('Your full-body try-on profile is still being prepared. You can keep browsing and try again in a minute.');
   }
   if (status === 'failed') {
     throw new Error('Could not prepare your full-body try-on profile. Please upload a clearer selfie or body photo from your profile page.');
+  }
+}
+
+function creditProductTitle(product) {
+  return String(product?.name || product?.title || product?.productName || product?.brand || 'Product').trim() || 'Product';
+}
+
+function creditProductImageUrl(product) {
+  if (product?.image?.path) return storedFileToClientUrl(product.image);
+  return product?.imageUrl || product?.image?.remoteUrl || '';
+}
+
+async function recordCreditEvent({ user, action, product, tokens, balanceAfter, metadata = {} }) {
+  try {
+    return await CreditEvent.create({
+      user: user._id,
+      action,
+      product: product?._id,
+      productTitle: creditProductTitle(product),
+      productImageUrl: creditProductImageUrl(product),
+      tokens: Number(tokens) || 0,
+      balanceAfter: Number(balanceAfter) || 0,
+      metadata
+    });
+  } catch (error) {
+    console.error('[credit-history] could not record event', { error: error.message });
+    return null;
   }
 }
 
@@ -96,7 +124,7 @@ function readableError(value, fallback = 'Request failed') {
   if (Array.isArray(value)) {
     const policyError = value.find((item) => /content[_\s-]?policy|safety|flagged/i.test([item?.type, item?.code, item?.msg, item?.message].filter(Boolean).join(' ')));
     if (policyError) {
-      return 'This try-on was blocked by the image provider safety check. FitLook will use the fitted/swimwear try-on mode for this product.';
+      return 'This try-on was blocked by the image provider safety check. Lookmefy will use the fitted/swimwear try-on mode for this product.';
     }
     const imageSizeError = value.find((item) => item?.type === 'image_too_small');
     if (imageSizeError) {
@@ -109,7 +137,7 @@ function readableError(value, fallback = 'Request failed') {
   if (typeof value === 'object') {
     const policyText = [value.type, value.code, value.msg, value.message, value.error].filter((item) => typeof item === 'string').join(' ');
     if (/content[_\s-]?policy|safety|flagged/i.test(policyText)) {
-      return 'This try-on was blocked by the image provider safety check. FitLook will use the fitted/swimwear try-on mode for this product.';
+      return 'This try-on was blocked by the image provider safety check. Lookmefy will use the fitted/swimwear try-on mode for this product.';
     }
     if (value.type === 'image_too_small') {
       return 'Reference image is too small for Wan 2.6. Wan requires every reference image to be at least 384x384px.';
@@ -231,12 +259,6 @@ function fitRoomPollMs() {
 
 function fitRoomClothTypeForProduct() {
   return 'full_set';
-}
-
-function safeLocalPath(storedPath) {
-  const resolved = path.resolve(rootDir, storedPath || '');
-  if (!resolved.startsWith(rootDir)) throw new Error('Invalid image path');
-  return resolved;
 }
 
 function dataUriFromBuffer(file, label, options = {}) {
@@ -391,22 +413,20 @@ async function cachedDataUri({ cache, key, timer, label, load }) {
 
 async function dataUriFromUpload(image, label, timer, options = {}) {
   if (!image?.path) throw new Error(`${label} image is missing`);
-  const localPath = safeLocalPath(image.path);
   const mimetype = image.mimetype || 'image/jpeg';
-  const stats = await fs.stat(localPath);
   const minWidth = Number(options.minWidth || 0);
   const minHeight = Number(options.minHeight || 0);
-  const key = `local:${localPath}:${stats.size}:${stats.mtimeMs}:${mimetype}:${minWidth || ''}x${minHeight || ''}`;
+  const key = `stored:${image.storage || 'local'}:${image.path}:${image.url || ''}:${image.size || ''}:${mimetype}:${minWidth || ''}x${minHeight || ''}`;
   return cachedDataUri({
     cache: localImageDataUriCache,
     key,
     timer,
     label,
     load: async () => {
-      const bytes = await fs.readFile(localPath);
+      const stored = await readStoredFile(image);
       const normalized = await normalizeAvifImage({
-        bytes,
-        mimetype,
+        bytes: stored.bytes,
+        mimetype: stored.mimetype || mimetype,
         filename: image.filename,
         label,
         timer
@@ -440,7 +460,7 @@ async function dataUriFromProduct(product, timer, options = {}) {
           const response = await fetch(url, {
             headers: {
               accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-              'user-agent': 'Mozilla/5.0 FitLook image fetcher'
+              'user-agent': 'Mozilla/5.0 Lookmefy image fetcher'
             }
           });
           if (!response.ok) throw new Error('Could not fetch product image');
@@ -469,12 +489,11 @@ async function dataUriFromProduct(product, timer, options = {}) {
 
 async function filePartFromUpload(image, label, timer) {
   if (!image?.path) throw new Error(`${label} image is missing`);
-  const localPath = safeLocalPath(image.path);
-  const bytes = await fs.readFile(localPath);
   const mimetype = image.mimetype || 'image/jpeg';
+  const stored = await readStoredFile(image);
   const normalized = await normalizeAvifImage({
-    bytes,
-    mimetype,
+    bytes: stored.bytes,
+    mimetype: stored.mimetype || mimetype,
     filename: image.filename,
     label,
     timer
@@ -491,7 +510,7 @@ async function filePartFromRemoteUrl(url, label, timer) {
   const response = await fetch(url, {
     headers: {
       accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-      'user-agent': 'Mozilla/5.0 FitLook image fetcher'
+      'user-agent': 'Mozilla/5.0 Lookmefy image fetcher'
     }
   });
   if (!response.ok) throw new Error(`Could not fetch ${label} image`);
@@ -811,7 +830,7 @@ async function generatedBytesFromUrl(url, timer) {
     const response = await fetch(url, {
       headers: {
         accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-        'user-agent': 'Mozilla/5.0 FitLook generated image fetcher'
+        'user-agent': 'Mozilla/5.0 Lookmefy generated image fetcher'
       }
     });
     if (response.ok) {
@@ -853,7 +872,7 @@ async function generatedVideoBytesFromUrl(url, timer) {
   const response = await fetch(url, {
     headers: {
       accept: 'video/mp4,video/quicktime,video/*,*/*;q=0.8',
-      'user-agent': 'Mozilla/5.0 FitLook generated video fetcher'
+      'user-agent': 'Mozilla/5.0 Lookmefy generated video fetcher'
     }
   });
   if (!response.ok) throw new Error(`Could not download generated try-on video from ${shortUrlForLog(url)}`);
@@ -880,28 +899,73 @@ function pixverseTryOnVideoPrompt(product, user) {
       ? 'calm elegant expression'
       : 'calm natural expression';
   return [
-    'Clean ecommerce product photo animation from the exact input image. Treat the input image as the master frame for brightness, exposure, color, floor, shadows, and background.',
-    'Preserve the same person, face, hairstyle, outfit, fabric, garment colors, skin tone, lighting, floor, shadows, and background exactly as shown in the input image.',
-    'The original light ecommerce background is locked for the entire video. Keep it bright, neutral, off-white or light gray as in the input image. The video must not become darker than the input frame. Do not darken the image, lower exposure, increase contrast, add vignette, add spotlight lighting, add cinematic color grading, or create a black/dark studio backdrop.',
-    'If any area of the input background is plain or transparent-looking, fill it with the same soft off-white ecommerce background, never black.',
-    'Keep the video flat-lit like a product page, with normal daylight ecommerce exposure and no dramatic mood lighting.',
-    `Keep a ${expression}.`,
-    'Full body remains visible head to toe with clear space above the full hair outline and below the feet.',
-    'Locked camera with fixed wide framing for the entire 360 rotation: no zoom, no close-up, no crop, no camera push-in, no reframing while turning.',
-    'The person rotates slowly in place through a full 360 degrees like a turntable, at a smooth constant speed, arms relaxed at the sides, ending back in the front-facing pose.',
-    'Feet stay in the same spot on the floor, pivoting naturally in place. Show the full side and back views of the outfit during the rotation while keeping the complete head, hair, body, hands, legs, and feet inside frame at all times.',
-    'Do not walk, approach, step, dance, pose dramatically, or change the scene.',
-    'Do not change the face, body, outfit, or background at any point of the rotation. Smooth realistic motion only.'
+  'Animate the exact input photograph with minimal visual change.',
+
+    'Maintain the original image exposure, brightness, white balance, background brightness, garment colors, skin tone, and overall illumination throughout the entire video.',
+
+    'The person remains the exact same person with the same face, hairstyle, body proportions, outfit, fabric appearance, and skin tone.',
+
+    `Maintain a ${expression}.`,
+
+    'The person performs one slow, smooth in-place rotation while keeping both feet near the same floor position.',
+
+    'Use natural subtle body movement only. Arms remain relaxed.',
+
+    'Camera remains completely stationary with the original wide framing.',
+
+    'Keep the entire person visible from the top of the hair to below both feet throughout the video.',
+
+    'Maintain the existing light ecommerce background continuously without regenerating, replacing, stylizing, or relighting it.',
+
+    'Keep the visual appearance consistent with the original input photo throughout the animation.',
+
+    'No scene transition or stylistic transformation.'
   ].join(' ');
 }
 
 function pixverseTryOnVideoNegativePrompt() {
   return [
-    'face change, different face, identity change, re-faced, face swap, beautified face, altered eyes, altered nose, altered mouth, altered jaw, altered hairstyle, altered facial hair, expression change, gender change',
-    'close-up, medium shot, upper body only, portrait shot, detail shot, zoom in, camera push in, camera dolly, camera orbit, camera tracking, camera shake, reframing',
-    'walking toward camera, approaching camera, static pose, no rotation, partial turn only, cropped hair, cropped head, cut off hair, cut off top of head, cropped feet, cropped body, cropped legs, cut off outfit, cut off hands',
-    'dark background, black background, black studio, dark studio, dark room, black void, black floor, black wall, dramatic lighting, cinematic lighting, moody lighting, spotlight, low key lighting, underexposed, darker exposure, dim exposure, increased contrast, vignette, shadowy scene, color grading, darkened video',
-    'clothing change, outfit change, color change, body deformation, extra arms, extra legs, extra fingers, missing fingers, distorted anatomy, flickering, blur, ghosting, warping, melting, AI artifacts, background change, background replacement, studio background, changed floor, changed shadows, scene change, low quality'
+   'identity change',
+    'different face',
+    'face distortion',
+    'face swap',
+    'beautified face',
+    'expression change',
+    'hairstyle change',
+    'body shape change',
+    'skin tone change',
+    'outfit change',
+    'garment color change',
+    'fabric change',
+    'background change',
+    'background replacement',
+    'underexposure',
+    'brightness shift',
+    'dramatic relighting',
+    'high contrast',
+    'vignette',
+    'spotlight',
+    'zoom',
+    'camera movement',
+    'camera orbit',
+    'camera push-in',
+    'reframing',
+    'cropped head',
+    'cropped hair',
+    'cropped hands',
+    'cropped legs',
+    'cropped feet',
+    'extra limbs',
+    'missing limbs',
+    'distorted anatomy',
+    'warping',
+    'melting',
+    'ghosting',
+    'flicker',
+    'blur',
+    'scene change',
+    'duplicate person',
+    'multiple people'
     ].join(', ');
 }
 
@@ -941,10 +1005,9 @@ function readableVideoError(value, fallback = 'Could not generate video try-on')
 
 async function videoFirstFrameDataUri(image, label, timer) {
   if (!image?.path) throw new Error(`${label} image is missing`);
-  const localPath = safeLocalPath(image.path);
-  const bytes = await fs.readFile(localPath);
+  const stored = await readStoredFile(image);
   const normalized = await normalizeAvifImage({
-    bytes,
+    bytes: stored.bytes,
     mimetype: image.mimetype || 'image/jpeg',
     filename: image.filename,
     label,
@@ -1124,16 +1187,14 @@ async function callFalImageEdit({ user, product, garmentDataUri, prompt, timer }
 }
 
 async function saveUserCacheFile({ user, bytes, filename, mimetype }) {
-  const userId = user._id.toString();
-  const storedPath = path.posix.join('uploads', 'users', userId, 'tryons', filename);
-  await fs.mkdir(path.join(rootDir, 'uploads', 'users', userId, 'tryons'), { recursive: true });
-  await fs.writeFile(path.join(rootDir, storedPath), bytes);
-  return {
+  return saveStoredFile({
+    buffer: bytes,
     filename,
-    path: storedPath,
     mimetype,
-    size: bytes.length
-  };
+    userId: user._id.toString(),
+    folder: 'tryons',
+    prefix: 'tryon'
+  });
 }
 
 async function generateProductTryOnImage({ user, product, tryOnModel, timer }) {
@@ -1276,17 +1337,14 @@ async function normalizeMemoryImageFile(file, label, timer) {
 
 async function saveUploadFile(file, prefix, user) {
   const filename = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(file.mimetype)}`;
-  const storedPath = user
-    ? path.posix.join('uploads', 'users', user._id.toString(), 'garments', filename)
-    : path.posix.join('uploads', filename);
-  await fs.mkdir(path.dirname(path.join(rootDir, storedPath)), { recursive: true });
-  await fs.writeFile(path.join(rootDir, storedPath), file.buffer);
-  return {
+  return saveStoredFile({
+    buffer: file.buffer,
     filename,
-    path: storedPath,
     mimetype: file.mimetype,
-    size: file.size
-  };
+    userId: user?._id?.toString?.(),
+    folder: 'garments',
+    prefix
+  });
 }
 
 async function saveGeneratedCustomTryOn({ user, garmentFile, timer }) {
@@ -1335,16 +1393,247 @@ async function refundToken(user, timer, cost = tokenCost()) {
   return refundedUser || user;
 }
 
+function httpError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function tryOnErrorStatus(error) {
+  return isStorageConfigurationError(error) ? error.statusCode || 503 : error.statusCode || 400;
+}
+
+async function productTryOnService({ userId, productId, body = {} }) {
+  const user = await User.findById(userId);
+  if (!user) throw httpError(401, 'User not found');
+
+  const requestedModel = normalizeTryOnModel(body?.tryOnModel);
+  const hasRequestedModel = Boolean(body?.tryOnModel);
+  const forceGenerate = Boolean(body?.force || body?.refresh);
+  const timer = createTimer('generate', {
+    userId: user._id.toString(),
+    productId,
+    requestedModel: body?.tryOnModel || '',
+    forceGenerate
+  });
+  let reserved = false;
+  let workingUser = user;
+
+  try {
+    const product = await Product.findOne({ _id: productId, isActive: true });
+    if (!product) throw httpError(404, 'Product not found');
+    const existing = await TryOn.findOne({ user: workingUser._id, product: productId });
+    const selectedModel = hasRequestedModel
+      ? requestedModel
+      : tryOnModelForProduct(product);
+    timer.mark('product loaded', {
+      tryOnModel: selectedModel,
+      existingModel: existing?.model || ''
+    });
+
+    if (existing && !forceGenerate) {
+      timer.end({ reused: true });
+      return { statusCode: 200, body: { tryOn: existing.toClient(), user: workingUser.toClient(), reused: true } };
+    }
+
+    ensureTryOnProfileReady(workingUser);
+    const chargedUser = await reserveToken(workingUser, timer);
+    if (!chargedUser) throw httpError(402, 'Not enough tokens for AI try-on');
+    reserved = true;
+    workingUser = chargedUser;
+
+    const tryOn = forceGenerate
+      ? await replaceGeneratedTryOn({ user: workingUser, product, tryOnModel: selectedModel, timer })
+      : await saveGeneratedTryOn({ user: workingUser, product, tryOnModel: selectedModel, timer });
+    await recordCreditEvent({
+      user: workingUser,
+      action: forceGenerate ? 'Regenerated try-on' : 'AI try-on',
+      product,
+      tokens: chargedTokenCost(workingUser),
+      balanceAfter: workingUser.tokens,
+      metadata: { tryOnId: tryOn._id.toString(), model: selectedModel }
+    });
+    timer.end({ reused: false, tokensRemaining: workingUser.tokens });
+
+    return { statusCode: 201, body: { tryOn: tryOn.toClient(), user: workingUser.toClient(), reused: false } };
+  } catch (error) {
+    if (error.code === 11000) {
+      const existing = await TryOn.findOne({ user: workingUser._id, product: productId });
+      if (existing) {
+        if (reserved) {
+          workingUser = await refundToken(workingUser, timer);
+          reserved = false;
+        }
+        timer.end({ reused: true, duplicate: true });
+        return { statusCode: 200, body: { tryOn: existing.toClient(), user: workingUser.toClient(), reused: true } };
+      }
+    }
+    if (reserved) workingUser = await refundToken(workingUser, timer);
+    const message = readableError(error, 'Could not generate AI try-on');
+    timer.end({ error: message });
+    throw httpError(tryOnErrorStatus(error), message);
+  }
+}
+
+async function externalTryOnService({ userId, body = {} }) {
+  const user = await User.findById(userId);
+  if (!user) throw httpError(401, 'User not found');
+
+  let product;
+  try {
+    product = externalProductFromBody(body?.product);
+  } catch (error) {
+    throw httpError(400, readableError(error, 'External product is missing'));
+  }
+
+  const compatibility = wearableCompatibility(product);
+  if (!compatibility.compatible) throw httpError(400, compatibility.reason);
+  const genderMatch = genderCompatibility(product, user.genderPreference);
+  if (!genderMatch.compatible) throw httpError(400, genderMatch.reason);
+
+  const timer = createTimer('external', {
+    userId: user._id.toString(),
+    sourceUrl: product.sourceUrl
+  });
+  let reserved = false;
+  let workingUser = user;
+
+  try {
+    const existing = await ExternalTryOn.findOne({ user: workingUser._id, sourceUrl: product.sourceUrl });
+    if (existing) {
+      timer.end({ reused: true });
+      return { statusCode: 200, body: { tryOn: existing.toClient(), user: workingUser.toClient(), reused: true } };
+    }
+
+    ensureTryOnProfileReady(workingUser);
+    const chargedUser = await reserveToken(workingUser, timer);
+    if (!chargedUser) throw httpError(402, 'Not enough tokens for AI try-on');
+    reserved = true;
+    workingUser = chargedUser;
+
+    const tryOn = await saveGeneratedExternalTryOn({ user: workingUser, product, timer });
+    await recordCreditEvent({
+      user: workingUser,
+      action: 'External try-on',
+      product,
+      tokens: chargedTokenCost(workingUser),
+      balanceAfter: workingUser.tokens,
+      metadata: { tryOnId: tryOn._id.toString(), sourceUrl: product.sourceUrl }
+    });
+    timer.end({ reused: false, tokensRemaining: workingUser.tokens });
+    return { statusCode: 201, body: { tryOn: tryOn.toClient(), user: workingUser.toClient(), reused: false } };
+  } catch (error) {
+    if (error.code === 11000) {
+      const existing = await ExternalTryOn.findOne({ user: workingUser._id, sourceUrl: product.sourceUrl });
+      if (existing) {
+        if (reserved) {
+          workingUser = await refundToken(workingUser, timer);
+          reserved = false;
+        }
+        timer.end({ reused: true, duplicate: true });
+        return { statusCode: 200, body: { tryOn: existing.toClient(), user: workingUser.toClient(), reused: true } };
+      }
+    }
+    if (reserved) workingUser = await refundToken(workingUser, timer);
+    const message = readableError(error, 'Could not generate external AI try-on');
+    timer.end({ error: message });
+    throw httpError(tryOnErrorStatus(error), message);
+  }
+}
+
+async function tryOnVideoService({ userId, productId, body = {} }) {
+  const user = await User.findById(userId);
+  if (!user) throw httpError(401, 'User not found');
+
+  const forceGenerate = Boolean(body?.force || body?.refresh);
+  const timer = createTimer('video', {
+    userId: user._id.toString(),
+    productId,
+    forceGenerate
+  });
+  const cost = videoTokenCost();
+  let reserved = false;
+  let workingUser = user;
+
+  try {
+    const [product, existing] = await Promise.all([
+      Product.findOne({ _id: productId, isActive: true }),
+      TryOn.findOne({ user: workingUser._id, product: productId })
+    ]);
+    if (!product) throw httpError(404, 'Product not found');
+    if (!existing?.image?.path) throw httpError(400, 'Generate the AI clothing try-on image before creating a video.');
+    if (existing.video?.path && !forceGenerate) {
+      timer.end({ reused: true });
+      return { statusCode: 200, body: { tryOn: existing.toClient(), user: workingUser.toClient(), reused: true } };
+    }
+
+    const chargedUser = await reserveToken(workingUser, timer, cost);
+    if (!chargedUser) throw httpError(402, 'Not enough tokens for video try-on');
+    reserved = true;
+    workingUser = chargedUser;
+
+    const generated = await callPixverseTryOnVideo({ tryOn: existing, product, user: workingUser, timer });
+    const filename = `tryon-video-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
+    const video = await saveUserCacheFile({ user: workingUser, bytes: generated.bytes, filename, mimetype: generated.mimetype });
+    const updated = await TryOn.findOneAndUpdate(
+      { user: workingUser._id, product: productId },
+      {
+        $set: {
+          video: {
+            ...video,
+            model: generated.model,
+            prompt: generated.prompt,
+            tokenCost: chargedVideoTokenCost(workingUser),
+            generatedAt: new Date()
+          }
+        }
+      },
+      { new: true }
+    );
+    await recordCreditEvent({
+      user: workingUser,
+      action: 'Video try-on',
+      product,
+      tokens: chargedVideoTokenCost(workingUser),
+      balanceAfter: workingUser.tokens,
+      metadata: { tryOnId: updated?._id?.toString?.() || existing._id.toString() }
+    });
+    timer.end({ reused: false, tokensRemaining: workingUser.tokens, path: video.path });
+    return { statusCode: 201, body: { tryOn: updated.toClient(), user: workingUser.toClient(), reused: false } };
+  } catch (error) {
+    if (reserved) workingUser = await refundToken(workingUser, timer, cost);
+    const message = readableVideoError(error, 'Could not generate video try-on');
+    timer.end({ error: message });
+    throw httpError(tryOnErrorStatus(error), message);
+  }
+}
+
 router.get('/', requireUser, async (req, res) => {
   const ids = String(req.query.productIds || '')
     .split(',')
     .map((id) => id.trim())
     .filter(Boolean)
     .slice(0, 96);
+  const rawLimit = Number(req.query.limit);
+  const limit = Math.min(96, Math.max(1, Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 48));
   const filter = { user: req.user._id };
   if (ids.length) filter.product = { $in: ids };
-  const tryOns = await TryOn.find(filter).sort({ createdAt: -1 }).lean();
+  const tryOns = await TryOn.find(filter)
+    .select('product provider model quality tokenCost image video createdAt')
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
   res.json({ tryOns: tryOns.map(tryOnToClient) });
+});
+
+router.get('/credit-history', requireUser, async (req, res) => {
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+  const events = await CreditEvent.find({ user: req.user._id })
+    .select('action product productTitle productImageUrl tokens balanceAfter createdAt')
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+  res.json({ events: events.map(creditEventToClient) });
 });
 
 router.post('/custom', requireUser, upload.single('garment'), async (req, res) => {
@@ -1368,198 +1657,96 @@ router.post('/custom', requireUser, upload.single('garment'), async (req, res) =
       garmentFile,
       timer
     });
+    await recordCreditEvent({
+      user: req.user,
+      action: 'Custom try-on',
+      product: { name: garmentFile.originalname || 'Uploaded garment' },
+      tokens: chargedTokenCost(req.user),
+      balanceAfter: req.user.tokens,
+      metadata: { tryOnId: tryOn._id.toString() }
+    });
     timer.end({ tokensRemaining: req.user.tokens });
     res.status(201).json({ tryOn: tryOn.toClient(), user: req.user.toClient() });
   } catch (error) {
     if (reserved) req.user = await refundToken(req.user, timer);
     const message = readableError(error, 'Could not generate custom AI try-on');
     timer.end({ error: message });
-    res.status(400).json({ message });
+    res.status(isStorageConfigurationError(error) ? error.statusCode || 503 : 400).json({ message });
   }
 });
 
 router.post('/external', requireUser, async (req, res) => {
-  let product;
   try {
-    product = externalProductFromBody(req.body?.product);
+    return inlineOrQueue({
+      req,
+      res,
+      type: 'tryon-external',
+      key: `${req.user._id}:${String(req.body?.product?.sourceUrl || req.body?.product?.affiliateLink || '').trim()}`,
+      payload: { body: { product: req.body?.product } },
+      maxAttempts: 1,
+      priority: 5,
+      runInline: async () => externalTryOnService({ userId: req.user._id, body: req.body })
+    });
   } catch (error) {
-    return res.status(400).json({ message: readableError(error, 'External product is missing') });
-  }
-
-  const compatibility = wearableCompatibility(product);
-  if (!compatibility.compatible) {
-    return res.status(400).json({ message: compatibility.reason });
-  }
-  const genderMatch = genderCompatibility(product, req.user.genderPreference);
-  if (!genderMatch.compatible) {
-    return res.status(400).json({ message: genderMatch.reason });
-  }
-
-  const timer = createTimer('external', {
-    userId: req.user._id.toString(),
-    sourceUrl: product.sourceUrl
-  });
-  let reserved = false;
-
-  try {
-    const existing = await ExternalTryOn.findOne({ user: req.user._id, sourceUrl: product.sourceUrl });
-    if (existing) {
-      timer.end({ reused: true });
-      return res.json({ tryOn: existing.toClient(), user: req.user.toClient(), reused: true });
-    }
-
-    ensureTryOnProfileReady(req.user);
-    const chargedUser = await reserveToken(req.user, timer);
-    if (!chargedUser) {
-      timer.end({ error: 'insufficient tokens' });
-      return res.status(402).json({ message: 'Not enough tokens for AI try-on' });
-    }
-    reserved = true;
-    req.user = chargedUser;
-
-    const tryOn = await saveGeneratedExternalTryOn({ user: req.user, product, timer });
-    timer.end({ reused: false, tokensRemaining: req.user.tokens });
-    res.status(201).json({ tryOn: tryOn.toClient(), user: req.user.toClient(), reused: false });
-  } catch (error) {
-    if (error.code === 11000) {
-      const existing = await ExternalTryOn.findOne({ user: req.user._id, sourceUrl: product.sourceUrl });
-      if (existing) {
-        if (reserved) {
-          req.user = await refundToken(req.user, timer);
-          reserved = false;
-        }
-        timer.end({ reused: true, duplicate: true });
-        return res.json({ tryOn: existing.toClient(), user: req.user.toClient(), reused: true });
-      }
-    }
-    if (reserved) req.user = await refundToken(req.user, timer);
-    const message = readableError(error, 'Could not generate external AI try-on');
-    timer.end({ error: message });
-    res.status(400).json({ message });
+    res.status(error.statusCode || 400).json({ message: readableError(error, 'Could not generate external AI try-on') });
   }
 });
 
 router.post('/:productId/video', requireUser, async (req, res) => {
-  const forceGenerate = Boolean(req.body?.force || req.body?.refresh);
-  const timer = createTimer('video', {
-    userId: req.user._id.toString(),
-    productId: req.params.productId,
-    forceGenerate
-  });
-  const cost = videoTokenCost();
-  let reserved = false;
-
   try {
-    const [product, existing] = await Promise.all([
-      Product.findOne({ _id: req.params.productId, isActive: true }),
-      TryOn.findOne({ user: req.user._id, product: req.params.productId })
-    ]);
-    if (!product) return res.status(404).json({ message: 'Product not found' });
-    if (!existing?.image?.path) return res.status(400).json({ message: 'Generate the AI clothing try-on image before creating a video.' });
-    if (existing.video?.path && !forceGenerate) {
-      timer.end({ reused: true });
-      return res.json({ tryOn: existing.toClient(), user: req.user.toClient(), reused: true });
-    }
-
-    const chargedUser = await reserveToken(req.user, timer, cost);
-    if (!chargedUser) {
-      timer.end({ error: 'insufficient tokens' });
-      return res.status(402).json({ message: 'Not enough tokens for video try-on' });
-    }
-    reserved = true;
-    req.user = chargedUser;
-
-    const generated = await callPixverseTryOnVideo({ tryOn: existing, product, user: req.user, timer });
-    const filename = `tryon-video-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
-    const video = await saveUserCacheFile({ user: req.user, bytes: generated.bytes, filename, mimetype: generated.mimetype });
-    const updated = await TryOn.findOneAndUpdate(
-      { user: req.user._id, product: req.params.productId },
-      {
-        $set: {
-          video: {
-            ...video,
-            model: generated.model,
-            prompt: generated.prompt,
-            tokenCost: chargedVideoTokenCost(req.user),
-            generatedAt: new Date()
-          }
-        }
+    return inlineOrQueue({
+      req,
+      res,
+      type: 'tryon-video',
+      key: `${req.user._id}:${req.params.productId}:video:${Boolean(req.body?.force || req.body?.refresh) ? 'force' : 'cached'}`,
+      payload: {
+        productId: req.params.productId,
+        body: { force: req.body?.force, refresh: req.body?.refresh }
       },
-      { new: true }
-    );
-    timer.end({ reused: false, tokensRemaining: req.user.tokens, path: video.path });
-    res.status(201).json({ tryOn: updated.toClient(), user: req.user.toClient(), reused: false });
+      maxAttempts: 1,
+      priority: 4,
+      runInline: async () => tryOnVideoService({ userId: req.user._id, productId: req.params.productId, body: req.body })
+    });
   } catch (error) {
-    if (reserved) req.user = await refundToken(req.user, timer, cost);
-    const message = readableVideoError(error, 'Could not generate video try-on');
-    timer.end({ error: message });
-    res.status(400).json({ message });
+    res.status(error.statusCode || 400).json({ message: readableVideoError(error, 'Could not generate video try-on') });
   }
 });
 
 router.post('/:productId', requireUser, async (req, res) => {
-  const requestedModel = normalizeTryOnModel(req.body?.tryOnModel);
-  const hasRequestedModel = Boolean(req.body?.tryOnModel);
-  const forceGenerate = Boolean(req.body?.force || req.body?.refresh);
-  const timer = createTimer('generate', {
-    userId: req.user._id.toString(),
-    productId: req.params.productId,
-    requestedModel: req.body?.tryOnModel || '',
-    forceGenerate
-  });
-  let reserved = false;
-
   try {
-    const product = await Product.findOne({ _id: req.params.productId, isActive: true });
-    if (!product) return res.status(404).json({ message: 'Product not found' });
-    const existing = await TryOn.findOne({ user: req.user._id, product: req.params.productId });
-    const selectedModel = hasRequestedModel
-      ? requestedModel
-      : tryOnModelForProduct(product);
-    timer.mark('product loaded', {
-      tryOnModel: selectedModel,
-      existingModel: existing?.model || ''
-    });
-
-    if (existing && !forceGenerate) {
-      timer.end({ reused: true });
-      return res.json({ tryOn: existing.toClient(), user: req.user.toClient(), reused: true });
-    }
-
-    ensureTryOnProfileReady(req.user);
-    const chargedUser = await reserveToken(req.user, timer);
-    if (!chargedUser) {
-      timer.end({ error: 'insufficient tokens' });
-      return res.status(402).json({ message: 'Not enough tokens for AI try-on' });
-    }
-    reserved = true;
-    req.user = chargedUser;
-
-    const tryOn = forceGenerate
-      ? await replaceGeneratedTryOn({ user: req.user, product, tryOnModel: selectedModel, timer })
-      : await saveGeneratedTryOn({ user: req.user, product, tryOnModel: selectedModel, timer });
-    timer.end({ reused: false, tokensRemaining: req.user.tokens });
-
-    res.status(201).json({ tryOn: tryOn.toClient(), user: req.user.toClient(), reused: false });
-  } catch (error) {
-    if (error.code === 11000) {
-      const existing = await TryOn.findOne({ user: req.user._id, product: req.params.productId });
-      if (existing) {
-        if (reserved) {
-          req.user = await refundToken(req.user, timer);
-          reserved = false;
+    return inlineOrQueue({
+      req,
+      res,
+      type: 'tryon-product',
+      key: `${req.user._id}:${req.params.productId}:${req.body?.tryOnModel || ''}:${Boolean(req.body?.force || req.body?.refresh) ? 'force' : 'cached'}`,
+      payload: {
+        productId: req.params.productId,
+        body: {
+          tryOnModel: req.body?.tryOnModel,
+          force: req.body?.force,
+          refresh: req.body?.refresh
         }
-        timer.end({ reused: true, duplicate: true });
-        return res.json({ tryOn: existing.toClient(), user: req.user.toClient(), reused: true });
-      }
-    }
-    if (reserved) {
-      req.user = await refundToken(req.user, timer);
-    }
-    const message = readableError(error, 'Could not generate AI try-on');
-    timer.end({ error: message });
-    res.status(400).json({ message });
+      },
+      maxAttempts: 1,
+      priority: 5,
+      runInline: async () => productTryOnService({ userId: req.user._id, productId: req.params.productId, body: req.body })
+    });
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ message: readableError(error, 'Could not generate AI try-on') });
   }
 });
 
+function registerTryOnJobHandlers() {
+  registerJobHandler('tryon-product', async ({ payload, job }) => (
+    (await productTryOnService({ userId: job.user, productId: payload.productId, body: payload.body })).body
+  ));
+  registerJobHandler('tryon-external', async ({ payload, job }) => (
+    (await externalTryOnService({ userId: job.user, body: payload.body })).body
+  ));
+  registerJobHandler('tryon-video', async ({ payload, job }) => (
+    (await tryOnVideoService({ userId: job.user, productId: payload.productId, body: payload.body })).body
+  ));
+}
+
 export default router;
+export { registerTryOnJobHandlers };

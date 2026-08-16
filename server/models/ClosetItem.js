@@ -1,8 +1,11 @@
 import mongoose from 'mongoose';
+import { storedFileToClientUrl } from '../utils/storage.js';
 
 const closetImageSchema = {
   filename: String,
   path: String,
+  url: String,
+  storage: String,
   mimetype: String,
   size: Number
 };
@@ -34,6 +37,9 @@ const closetItemSchema = new mongoose.Schema(
 
 closetItemSchema.index({ user: 1, category: 1, createdAt: -1 });
 closetItemSchema.index({ user: 1, favorite: 1, updatedAt: -1 });
+closetItemSchema.index({ user: 1, updatedAt: -1 });
+closetItemSchema.index({ user: 1, tags: 1, updatedAt: -1 });
+closetItemSchema.index({ user: 1, formality: 1, season: 1, updatedAt: -1 });
 
 closetItemSchema.methods.toClient = function toClient() {
   return {
@@ -50,7 +56,7 @@ closetItemSchema.methods.toClient = function toClient() {
     favorite: Boolean(this.favorite),
     wearCount: this.wearCount || 0,
     lastWornAt: this.lastWornAt || null,
-    imageUrl: this.image?.path ? `/${this.image.path}` : null,
+    imageUrl: storedFileToClientUrl(this.image),
     createdAt: this.createdAt,
     updatedAt: this.updatedAt
   };

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { storedFileToClientUrl } from '../utils/storage.js';
 
 const externalTryOnSchema = new mongoose.Schema(
   {
@@ -17,6 +18,8 @@ const externalTryOnSchema = new mongoose.Schema(
     image: {
       filename: String,
       path: String,
+      url: String,
+      storage: String,
       mimetype: String,
       size: Number
     }
@@ -25,12 +28,14 @@ const externalTryOnSchema = new mongoose.Schema(
 );
 
 externalTryOnSchema.index({ user: 1, sourceUrl: 1 }, { unique: true });
+externalTryOnSchema.index({ user: 1, createdAt: -1 });
+externalTryOnSchema.index({ sourceUrl: 1, createdAt: -1 });
 
 externalTryOnSchema.methods.toClient = function toClient() {
   return {
     id: this._id.toString(),
     sourceUrl: this.sourceUrl,
-    imageUrl: this.image?.path ? `/${this.image.path}` : null,
+    imageUrl: storedFileToClientUrl(this.image),
     provider: this.provider,
     model: this.model,
     quality: this.quality,

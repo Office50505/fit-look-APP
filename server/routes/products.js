@@ -1,18 +1,44 @@
 import express from 'express';
 import multer from 'multer';
-import path from 'node:path';
 import Product, { productToClient } from '../models/Product.js';
+import User from '../models/User.js';
 import { requireUser } from './auth.js';
 import { clearRecommendationCaches } from './recommendations.js';
 import { inferTryOnModel, normalizeTryOnModel } from '../utils/tryOnModel.js';
 import { createHybridCache } from '../utils/cache.js';
+import { inlineOrQueue, registerJobHandler } from '../utils/jobs.js';
+import { isStorageConfigurationError, saveStoredFile } from '../utils/storage.js';
 import { wearableCompatibility } from '../utils/wearable.js';
 import { genderCompatibility, genderedSearchQuery, genderPreferenceForQuery } from '../utils/genderPreference.js';
 
 const router = express.Router();
 const readCacheTtlMs = Number(process.env.PRODUCT_READ_CACHE_TTL_MS || 30 * 1000);
+const amazonSearchCacheTtlMs = Number(process.env.AMAZON_SEARCH_CACHE_TTL_MS || 5 * 60 * 1000);
 const productListCache = createHybridCache('products:list', { ttlMs: readCacheTtlMs, maxItems: 150 });
 const productDetailCache = createHybridCache('products:detail', { ttlMs: readCacheTtlMs, maxItems: 300 });
+const amazonSearchCache = createHybridCache('products:amazon-search', { ttlMs: amazonSearchCacheTtlMs, maxItems: 120 });
+const productListProjectionFields = [
+  'name',
+  'brand',
+  'category',
+  'gender',
+  'price',
+  'compareAtPrice',
+  'currency',
+  'rating',
+  'ratingCount',
+  'badge',
+  'affiliateLink',
+  'sourceUrl',
+  'description',
+  'tags',
+  'colors',
+  'tryOnModel',
+  'image',
+  'isFeatured',
+  'isNewArrival',
+  'createdAt'
+];
 
 async function clearProductReadCaches() {
   await Promise.all([
@@ -29,18 +55,19 @@ async function clearReadCachesAfterProductWrite() {
 }
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: 'uploads/',
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname || '');
-      cb(null, `product-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
-    }
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     cb(null, file.mimetype.startsWith('image/'));
   }
 });
+
+function extensionFor(mimetype) {
+  if (mimetype?.includes('png')) return '.png';
+  if (mimetype?.includes('webp')) return '.webp';
+  if (mimetype?.includes('gif')) return '.gif';
+  return '.jpg';
+}
 
 function splitList(value) {
   if (!value) return [];
@@ -52,6 +79,10 @@ function splitList(value) {
 
 function toBoolean(value) {
   return value === true || value === 'true' || value === 'on' || value === '1';
+}
+
+function queryFlag(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
 }
 
 function readableError(value, fallback = 'Request failed') {
@@ -113,6 +144,10 @@ function stripTags(value = '') {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function exactTextRegex(value) {
+  return new RegExp(`^${escapeRegExp(String(value).trim())}$`, 'i');
 }
 
 function getElementTextById(html, ids) {
@@ -740,24 +775,133 @@ function withAmazonAssociateTag(value) {
   }
 }
 
+function amazonSearchPageProblem(html = '') {
+  const text = stripTags(html).replace(/\s+/g, ' ').trim();
+  if (/robot check|enter the characters|captcha|automated access|unusual traffic|sorry, we just need to make sure/i.test(text)) {
+    return 'Amazon blocked the search request. Try again later or use a different search phrase.';
+  }
+  if (/no results for|did not match any products|try checking your spelling|no results found/i.test(text)) {
+    return 'Amazon did not find dress results for this search. Try another colour, budget, or occasion.';
+  }
+  return '';
+}
+
+function firstAttr(html = '', attrs = []) {
+  for (const attr of attrs) {
+    const safeAttr = escapeRegExp(attr);
+    const match = html.match(new RegExp(`\\s${safeAttr}=["']([^"']+)["']`, 'i'));
+    if (match?.[1]) return decodeHtml(match[1]);
+  }
+  return '';
+}
+
+function imageFromAmazonRegion(region = '', baseUrl = '') {
+  const direct =
+    region.match(/<img[^>]+class=["'][^"']*s-image[^"']*["'][^>]+(?:src|data-src)=["']([^"']+)["']/i)?.[1] ||
+    region.match(/<img[^>]+(?:src|data-src)=["']([^"']+)["'][^>]+class=["'][^"']*s-image[^"']*["']/i)?.[1] ||
+    region.match(/<img[^>]+(?:src|data-src)=["']([^"']*media-amazon[^"']*)["']/i)?.[1] ||
+    '';
+  if (direct) return absoluteUrl(direct, baseUrl);
+
+  const srcset = region.match(/\s(?:srcset|data-srcset)=["']([^"']+)["']/i)?.[1] || '';
+  const first = srcset.split(',').map((entry) => entry.trim().split(/\s+/)[0]).find(Boolean);
+  return absoluteUrl(first, baseUrl);
+}
+
+function titleFromAmazonRegion(region = '') {
+  const h2 = region.match(/<h2[\s\S]*?<\/h2>/i)?.[0] || '';
+  const aria = firstAttr(h2, ['aria-label', 'title']);
+  const span = h2.match(/<span[^>]*>([\s\S]*?)<\/span>/i)?.[1];
+  const title =
+    aria ||
+    span ||
+    region.match(/<span[^>]+class=["'][^"']*a-size-base-plus[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ||
+    region.match(/<span[^>]+class=["'][^"']*a-size-medium[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ||
+    '';
+  return normalizeProductTitle(stripTags(title));
+}
+
+function ratingFromAmazonRegion(region = '') {
+  return ratingFrom(
+    region.match(/<span[^>]+class=["'][^"']*a-icon-alt[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ||
+      firstAttr(region.match(/<i[^>]+class=["'][^"']*a-icon-star[^"']*["'][^>]*>/i)?.[0] || '', ['aria-label'])
+  );
+}
+
+function ratingCountFromAmazonRegion(region = '') {
+  return ratingCountFrom(
+    region.match(/<span[^>]+class=["'][^"']*a-size-base[^"']*s-underline-text[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ||
+      region.match(/<a[^>]+href=["'][^"']*customerReviews[^"']*["'][^>]*>([\s\S]*?)<\/a>/i)?.[1]
+  );
+}
+
+function draftFromAmazonSearchResult(searchResult, fallbackQuery = '') {
+  const name = normalizeProductTitle(searchResult.title || fallbackQuery);
+  const category = inferCategory({ title: name, query: fallbackQuery });
+  const gender = inferGender(`${name} ${fallbackQuery}`);
+  const brand = cleanBrand(searchResult.brand || titleBrandCandidate(name)) || 'Amazon';
+  const facts = new Map();
+  return {
+    affiliateLink: searchResult.link,
+    sourceUrl: searchResult.link,
+    name,
+    brand,
+    category,
+    gender,
+    price: searchResult.price,
+    compareAtPrice: searchResult.compareAtPrice,
+    currency: searchResult.currency,
+    rating: searchResult.rating,
+    ratingCount: searchResult.ratingCount,
+    description: searchResult.description || '',
+    tags: buildProductTags({ title: name, description: searchResult.description || '', bullets: [], brand, category, gender, facts }),
+    remoteImageUrl: searchResult.remoteImageUrl
+  };
+}
+
+function resultFromAmazonRegion({ asin, region, baseUrl, fallbackLink = '' }) {
+  const link = fallbackLink || `${amazonSearchBaseUrl()}/dp/${asin}`;
+  const title = titleFromAmazonRegion(region);
+  const image = imageFromAmazonRegion(region, baseUrl);
+  if (!link || !image) return null;
+  return {
+    asin,
+    link,
+    title,
+    brand: titleBrandCandidate(title),
+    price: pricesFromAmazonMarkup(region)[0],
+    currency: visibleCurrency(region, baseUrl),
+    rating: ratingFromAmazonRegion(region),
+    ratingCount: ratingCountFromAmazonRegion(region),
+    remoteImageUrl: image
+  };
+}
+
 function extractAmazonSearchResults(html, baseUrl) {
   const results = [];
   const seen = new Set();
+  const push = (result) => {
+    if (!result?.link || seen.has(result.link)) return;
+    seen.add(result.link);
+    results.push(result);
+  };
+
+  const asinMatches = [...html.matchAll(/\bdata-asin=["']([A-Z0-9]{10})["']/gi)]
+    .filter((match) => match[1] && match[1] !== '0000000000');
+  asinMatches.forEach((match, index) => {
+    const nextIndex = asinMatches[index + 1]?.index ?? Math.min(html.length, match.index + 22000);
+    const region = html.slice(Math.max(0, match.index - 900), Math.min(html.length, nextIndex));
+    const href = region.match(/\shref=["']([^"']*(?:\/dp\/|\/gp\/product\/)[^"']+)["']/i)?.[1] || '';
+    const productUrl = amazonProductUrl(href, baseUrl) || `${new URL(baseUrl).origin}/dp/${match[1].toUpperCase()}`;
+    push(resultFromAmazonRegion({ asin: match[1].toUpperCase(), region, baseUrl, fallbackLink: productUrl }));
+  });
+
   for (const match of html.matchAll(/\shref=["']([^"']+)["']/gi)) {
     const productUrl = amazonProductUrl(match[1], baseUrl);
-    if (!productUrl || seen.has(productUrl)) continue;
-    seen.add(productUrl);
+    if (!productUrl) continue;
     const region = html.slice(Math.max(0, match.index - 4500), Math.min(html.length, match.index + 6500));
-    const image =
-      region.match(/<img[^>]+class=["'][^"']*s-image[^"']*["'][^>]+src=["']([^"']+)["']/i)?.[1] ||
-      region.match(/<img[^>]+src=["']([^"']+)["'][^>]+class=["'][^"']*s-image[^"']*["']/i)?.[1] ||
-      '';
-    results.push({
-      link: productUrl,
-      price: pricesFromAmazonMarkup(region)[0],
-      currency: visibleCurrency(region, baseUrl),
-      remoteImageUrl: absoluteUrl(image, baseUrl)
-    });
+    const asin = productUrl.match(/\/dp\/([A-Z0-9]{10})/i)?.[1]?.toUpperCase() || '';
+    push(resultFromAmazonRegion({ asin, region, baseUrl, fallbackLink: productUrl }));
   }
   return results;
 }
@@ -799,7 +943,7 @@ async function buildProductDraft(affiliateLink) {
     redirect: 'follow',
     headers: {
       accept: 'text/html,application/xhtml+xml',
-      'user-agent': 'Mozilla/5.0 FitLook product importer'
+      'user-agent': 'Mozilla/5.0 Lookmefy product importer'
     }
   });
   if (!response.ok) throw new Error('Could not open that affiliate link');
@@ -927,10 +1071,10 @@ function requireAdmin(req, res, next) {
 }
 
 function sortFor(value) {
-  if (value === 'price-asc') return { price: 1 };
-  if (value === 'price-desc') return { price: -1 };
-  if (value === 'newest') return { createdAt: -1 };
-  return { isFeatured: -1, createdAt: -1 };
+  if (value === 'price-asc') return { price: 1, _id: 1 };
+  if (value === 'price-desc') return { price: -1, _id: -1 };
+  if (value === 'newest') return { createdAt: -1, _id: -1 };
+  return { isFeatured: -1, createdAt: -1, _id: -1 };
 }
 
 router.get('/', async (req, res) => {
@@ -939,38 +1083,51 @@ router.get('/', async (req, res) => {
   if (cached) return res.json(cached);
 
   const { q, tag, category, brand, gender, featured, newArrival, sort } = req.query;
-  const limit = Math.min(Number(req.query.limit) || 48, 96);
+  const includeFacets = queryFlag(req.query.includeFacets);
+  const includeTotal = queryFlag(req.query.includeTotal);
+  const rawLimit = Number(req.query.limit);
+  const rawSkip = Number(req.query.skip);
+  const requestedLimit = Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 48;
+  const requestedSkip = Number.isFinite(rawSkip) ? Math.floor(rawSkip) : 0;
+  const limit = Math.min(Math.max(requestedLimit, 1), 96);
+  const skip = Math.max(requestedSkip, 0);
   const botAmazonRecord = { badge: 'Amazon', $or: [{ sourceUrl: /amazon\.[a-z.]+\/dp\//i }, { affiliateLink: /amazon\.[a-z.]+\/dp\//i }] };
   const filter = { isActive: true, $nor: [botAmazonRecord] };
 
   if (q) filter.$text = { $search: q };
-  if (tag) filter.tags = new RegExp(`^${escapeRegExp(String(tag).trim())}$`, 'i');
-  if (category) filter.category = new RegExp(`^${String(category).trim()}$`, 'i');
-  if (brand) filter.brand = new RegExp(`^${String(brand).trim()}$`, 'i');
-  if (gender) filter.gender = new RegExp(`^${String(gender).trim()}$`, 'i');
+  if (tag) filter.tags = exactTextRegex(tag);
+  if (category) filter.category = exactTextRegex(category);
+  if (brand) filter.brand = exactTextRegex(brand);
+  if (gender) filter.gender = exactTextRegex(gender);
   if (featured === 'true') filter.isFeatured = true;
   if (newArrival === 'true') filter.isNewArrival = true;
 
-  const projection = q ? { score: { $meta: 'textScore' } } : {};
-  const query = Product.find(filter, projection).limit(limit).lean();
-  if (q && !sort) query.sort({ score: { $meta: 'textScore' }, createdAt: -1 });
+  const projection = Object.fromEntries(productListProjectionFields.map((field) => [field, 1]));
+  if (q) projection.score = { $meta: 'textScore' };
+  const query = Product.find(filter, projection).skip(skip).limit(limit).lean();
+  if (q && !sort) query.sort({ score: { $meta: 'textScore' }, createdAt: -1, _id: -1 });
   else query.sort(sortFor(sort));
 
-  const [products, total, brands, categories, categoryCounts] = await Promise.all([
+  const [products, exactTotal, facetData] = await Promise.all([
     query,
-    Product.countDocuments(filter),
-    Product.distinct('brand', { isActive: true, $nor: [botAmazonRecord] }),
-    Product.distinct('category', { isActive: true, $nor: [botAmazonRecord] }),
-    Product.aggregate([
-      { $match: filter },
-      { $group: { _id: '$category', count: { $sum: 1 } } },
-      { $sort: { count: -1, _id: 1 } }
-    ])
+    includeTotal ? Product.countDocuments(filter) : Promise.resolve(null),
+    includeFacets
+      ? Promise.all([
+          Product.distinct('brand', { isActive: true, $nor: [botAmazonRecord] }),
+          Product.distinct('category', { isActive: true, $nor: [botAmazonRecord] }),
+          Product.aggregate([
+            { $match: filter },
+            { $group: { _id: '$category', count: { $sum: 1 } } },
+            { $sort: { count: -1, _id: 1 } }
+          ])
+        ])
+      : Promise.resolve([[], [], []])
   ]);
+  const [brands, categories, categoryCounts] = facetData;
 
   const payload = {
     products: products.map(productToClient),
-    total,
+    total: includeTotal ? exactTotal : skip + products.length,
     facets: {
       brands: brands.filter(Boolean).sort(),
       categories: categories.filter(Boolean).sort(),
@@ -981,33 +1138,42 @@ router.get('/', async (req, res) => {
   res.json(payload);
 });
 
-router.post('/amazon-search', requireUser, async (req, res) => {
-  const query = String(req.body?.query || '').trim();
-  const limit = Math.min(Math.max(Number(req.body?.limit) || 2, 1), 2);
-  const genderPreference = genderPreferenceForQuery(query, req.body?.genderPreference || req.user.genderPreference);
-  if (!query) return res.status(400).json({ message: 'Tell the style bot what you want first' });
+export async function searchAmazonProductsForQuery({ query: rawQuery, limit: rawLimit = 2, user, genderPreference: rawGenderPreference } = {}) {
+  const query = String(rawQuery || '').trim();
+  const limit = Math.min(Math.max(Number(rawLimit) || 2, 1), 4);
+  const genderPreference = genderPreferenceForQuery(query, rawGenderPreference || user?.genderPreference);
+  if (!query) throw new Error('Tell AI Studio what you want first');
+  const baseUrl = amazonSearchBaseUrl();
+  const cacheKey = JSON.stringify({ baseUrl, query: query.toLowerCase(), genderPreference, limit });
+  const cached = await amazonSearchCache.get(cacheKey);
+  if (cached) return cached;
 
-  try {
-    const queryCompatibility = wearableCompatibility({ name: query }, { query });
-    if (!queryCompatibility.compatible) throw new Error(queryCompatibility.reason);
+  const queryCompatibility = wearableCompatibility({ name: query }, { query });
+  if (!queryCompatibility.compatible) throw new Error(queryCompatibility.reason);
 
-    const searchQuery = genderedSearchQuery(query, genderPreference);
-    const searchUrl = `${amazonSearchBaseUrl()}/s?k=${encodeURIComponent(searchQuery)}`;
-    const response = await fetch(searchUrl, {
-      redirect: 'follow',
-      headers: {
-        accept: 'text/html,application/xhtml+xml',
-        'accept-language': 'en-US,en;q=0.9',
-        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-      }
-    });
-    if (!response.ok) throw new Error('Amazon search did not respond');
+  const searchQuery = genderedSearchQuery(query, genderPreference);
+  const searchUrl = `${baseUrl}/s?k=${encodeURIComponent(searchQuery)}`;
+  const response = await fetch(searchUrl, {
+    redirect: 'follow',
+    headers: {
+      accept: 'text/html,application/xhtml+xml',
+      'accept-language': 'en-US,en;q=0.9',
+      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+    }
+  });
+  if (!response.ok) throw new Error('Amazon search did not respond');
 
-    const html = await response.text();
-    const searchResults = extractAmazonSearchResults(html, response.url || searchUrl).slice(0, Math.max(limit * 2, 6));
-    if (searchResults.length === 0) throw new Error('Amazon did not expose product results for this search');
+  const html = await response.text();
+  const pageProblem = amazonSearchPageProblem(html);
+  if (pageProblem) throw new Error(pageProblem);
+  const exposesProductMarkup = /\bdata-asin=["'][A-Z0-9]{10}["']|\/(?:dp|gp\/product)\/[A-Z0-9]{10}|class=["'][^"']*s-image/i.test(html);
+  if (!exposesProductMarkup) throw new Error('Amazon did not expose product result HTML for this search');
 
-    const settled = await Promise.allSettled(searchResults.map(async (searchResult) => {
+  const searchResults = extractAmazonSearchResults(html, response.url || searchUrl).slice(0, Math.max(limit * 3, 8));
+  if (searchResults.length === 0) throw new Error('No usable Amazon product cards were found for that search');
+
+  const settled = await Promise.allSettled(searchResults.map(async (searchResult) => {
+    try {
       const draft = await buildProductDraft(withAmazonAssociateTag(searchResult.link));
       return draftToExternalProduct({
         ...draft,
@@ -1015,24 +1181,90 @@ router.post('/amazon-search', requireUser, async (req, res) => {
         currency: draft.currency || searchResult.currency,
         remoteImageUrl: draft.remoteImageUrl || searchResult.remoteImageUrl
       }, query);
-    }));
-    const products = [];
-    for (const result of settled) {
-      if (result.status !== 'fulfilled') continue;
-      if (products.some((product) => product.sourceUrl === result.value.sourceUrl)) continue;
-      if (!queryIntentCompatibility(result.value, query)) continue;
-      if (!wearableCompatibility(result.value, { query }).compatible) continue;
-      if (!genderCompatibility(result.value, genderPreference).compatible) continue;
-      products.push(result.value);
-      if (products.length >= limit) break;
+    } catch {
+      return draftToExternalProduct(draftFromAmazonSearchResult(searchResult, query), query);
     }
-    if (products.length === 0) throw new Error('Amazon results were found, but none were compatible with AI try-on. Try a clothing item, shoes, watch, bag, eyewear, or accessory.');
+  }));
+  const products = [];
+  for (const result of settled) {
+    if (result.status !== 'fulfilled') continue;
+    if (products.some((product) => product.sourceUrl === result.value.sourceUrl)) continue;
+    if (!queryIntentCompatibility(result.value, query)) continue;
+    if (!wearableCompatibility(result.value, { query }).compatible) continue;
+    if (!genderCompatibility(result.value, genderPreference).compatible) continue;
+    products.push(result.value);
+    if (products.length >= limit) break;
+  }
+  if (products.length === 0) throw new Error('Amazon results were found, but none could be used for AI try-on. Try a clearer clothing product search.');
 
-    res.json({ products });
+  await amazonSearchCache.set(cacheKey, products);
+  return products;
+}
+
+function friendlyAmazonSearchError(error) {
+  const detail = readableError(error, 'Could not search Amazon right now');
+  if (/blocked|captcha|automated access|unusual traffic|robot/i.test(detail)) {
+    return 'Live Amazon search is being rate-limited right now. Try again in a moment with a simpler product phrase.';
+  }
+  if (/did not expose|no usable|no results|did not find/i.test(detail)) {
+    return 'No usable Amazon product cards were found for that search. Try another colour, category, budget, or shorter phrase.';
+  }
+  if (/none were compatible|none could be used|compatible with AI try-on|clothing item/i.test(detail)) {
+    return 'Amazon results were found, but none could be used for AI try-on. Try a clearer clothing product search.';
+  }
+  if (/network|fetch|respond|timed out/i.test(detail)) {
+    return 'Live Amazon search is taking longer than usual. Try again in a moment.';
+  }
+  return detail;
+}
+
+async function amazonSearchProductsService({ userId, body = {} }) {
+  const user = await User.findById(userId);
+  if (!user) {
+    const error = new Error('User not found');
+    error.statusCode = 401;
+    throw error;
+  }
+  const products = await searchAmazonProductsForQuery({
+    query: body?.query,
+    limit: body?.limit,
+    user,
+    genderPreference: body?.genderPreference
+  });
+  return { products };
+}
+
+router.post('/amazon-search', requireUser, async (req, res) => {
+  try {
+    return inlineOrQueue({
+      req,
+      res,
+      type: 'amazon-product-search',
+      key: `${req.user._id}:${String(req.body?.query || '').trim().toLowerCase()}:${req.body?.limit || ''}:${req.body?.genderPreference || ''}`,
+      payload: {
+        body: {
+          query: req.body?.query,
+          limit: req.body?.limit,
+          genderPreference: req.body?.genderPreference
+        }
+      },
+      maxAttempts: 1,
+      runInline: async () => ({
+        statusCode: 200,
+        body: await amazonSearchProductsService({ userId: req.user._id, body: req.body })
+      })
+    });
   } catch (error) {
-    res.status(400).json({ message: readableError(error, 'Could not search Amazon right now') });
+    console.warn('[products:amazon-search] failed', readableError(error, 'Could not search Amazon right now'));
+    res.status(error.statusCode || 400).json({ message: friendlyAmazonSearchError(error) });
   }
 });
+
+function registerProductJobHandlers() {
+  registerJobHandler('amazon-product-search', async ({ payload, job }) => (
+    amazonSearchProductsService({ userId: job.user, body: payload.body })
+  ));
+}
 
 router.post('/recategorize', requireAdmin, async (_req, res) => {
   const botAmazonRecord = { badge: 'Amazon', $or: [{ sourceUrl: /amazon\.[a-z.]+\/dp\//i }, { affiliateLink: /amazon\.[a-z.]+\/dp\//i }] };
@@ -1081,49 +1313,56 @@ router.post('/preview-link', requireAdmin, async (req, res) => {
 });
 
 router.post('/', requireAdmin, upload.single('image'), async (req, res) => {
-  const { name, brand, category, gender, price } = req.body;
-  if (!name || !brand || !category || !price) {
-    return res.status(400).json({ message: 'Name, brand, category, and price are required' });
+  try {
+    const { name, brand, category, gender, price } = req.body;
+    if (!name || !brand || !category || !price) {
+      return res.status(400).json({ message: 'Name, brand, category, and price are required' });
+    }
+
+    let image;
+    if (req.file) {
+      const filename = `product-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(req.file.mimetype)}`;
+      image = await saveStoredFile({
+        buffer: req.file.buffer,
+        filename,
+        mimetype: req.file.mimetype,
+        folder: 'products',
+        prefix: 'product'
+      });
+    } else if (req.body.remoteImageUrl) {
+      image = { remoteUrl: cleanUrl(req.body.remoteImageUrl) };
+    }
+
+    if (!image) return res.status(400).json({ message: 'Product image or fetched image URL is required' });
+
+    const product = await Product.create({
+      name,
+      brand,
+      category,
+      gender: gender || 'unisex',
+      price: Number(price),
+      compareAtPrice: req.body.compareAtPrice ? Number(req.body.compareAtPrice) : undefined,
+      currency: normalizeCurrency(req.body.currency) || 'USD',
+      rating: req.body.rating ? Number(req.body.rating) : 4.5,
+      ratingCount: req.body.ratingCount ? Number(req.body.ratingCount) : 0,
+      badge: req.body.badge,
+      affiliateLink: cleanUrl(req.body.affiliateLink),
+      sourceUrl: cleanUrl(req.body.sourceUrl),
+      description: req.body.description,
+      tags: splitList(req.body.tags),
+      colors: splitList(req.body.colors),
+      tryOnModel: normalizeTryOnModel(req.body.tryOnModel),
+      isFeatured: toBoolean(req.body.isFeatured),
+      isNewArrival: toBoolean(req.body.isNewArrival),
+      image
+    });
+
+    await clearReadCachesAfterProductWrite();
+    res.status(201).json({ product: product.toClient() });
+  } catch (error) {
+    const message = readableError(error, 'Could not save product');
+    res.status(isStorageConfigurationError(error) ? error.statusCode || 503 : 400).json({ message });
   }
-
-  let image;
-  if (req.file) {
-    image = {
-      filename: req.file.filename,
-      path: `uploads/${req.file.filename}`,
-      mimetype: req.file.mimetype,
-      size: req.file.size
-    };
-  } else if (req.body.remoteImageUrl) {
-    image = { remoteUrl: cleanUrl(req.body.remoteImageUrl) };
-  }
-
-  if (!image) return res.status(400).json({ message: 'Product image or fetched image URL is required' });
-
-  const product = await Product.create({
-    name,
-    brand,
-    category,
-    gender: gender || 'unisex',
-    price: Number(price),
-    compareAtPrice: req.body.compareAtPrice ? Number(req.body.compareAtPrice) : undefined,
-    currency: normalizeCurrency(req.body.currency) || 'USD',
-    rating: req.body.rating ? Number(req.body.rating) : 4.5,
-    ratingCount: req.body.ratingCount ? Number(req.body.ratingCount) : 0,
-    badge: req.body.badge,
-    affiliateLink: cleanUrl(req.body.affiliateLink),
-    sourceUrl: cleanUrl(req.body.sourceUrl),
-    description: req.body.description,
-    tags: splitList(req.body.tags),
-    colors: splitList(req.body.colors),
-    tryOnModel: normalizeTryOnModel(req.body.tryOnModel),
-    isFeatured: toBoolean(req.body.isFeatured),
-    isNewArrival: toBoolean(req.body.isNewArrival),
-    image
-  });
-
-  await clearReadCachesAfterProductWrite();
-  res.status(201).json({ product: product.toClient() });
 });
 
 router.patch('/:id/tryon-model', requireAdmin, async (req, res) => {
@@ -1151,4 +1390,4 @@ router.delete('/:id', requireAdmin, async (req, res) => {
 });
 
 export default router;
-export { buildProductDraft };
+export { buildProductDraft, registerProductJobHandlers };

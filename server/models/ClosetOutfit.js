@@ -1,8 +1,11 @@
 import mongoose from 'mongoose';
+import { storedFileToClientUrl } from '../utils/storage.js';
 
 const outfitImageSchema = {
   filename: String,
   path: String,
+  url: String,
+  storage: String,
   mimetype: String,
   size: Number
 };
@@ -32,6 +35,8 @@ const closetOutfitSchema = new mongoose.Schema(
 );
 
 closetOutfitSchema.index({ user: 1, createdAt: -1 });
+closetOutfitSchema.index({ user: 1, favorite: 1, createdAt: -1 });
+closetOutfitSchema.index({ user: 1, plannedFor: 1, createdAt: -1 });
 
 closetOutfitSchema.methods.toClient = function toClient(itemsById = new Map()) {
   const items = (this.itemIds || []).map((id) => itemsById.get(id.toString())).filter(Boolean);
@@ -53,8 +58,8 @@ closetOutfitSchema.methods.toClient = function toClient(itemsById = new Map()) {
     quality: this.quality,
     tokenCost: this.tokenCost,
     favorite: Boolean(this.favorite),
-    garmentUrl: this.garment?.path ? `/${this.garment.path}` : null,
-    imageUrl: this.image?.path ? `/${this.image.path}` : null,
+    garmentUrl: storedFileToClientUrl(this.garment),
+    imageUrl: storedFileToClientUrl(this.image),
     createdAt: this.createdAt
   };
 };

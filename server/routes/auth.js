@@ -3,17 +3,19 @@ import express from 'express';
 import heicConvert from 'heic-convert';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import User from '../models/User.js';
 import { normalizeGenderPreference } from '../utils/genderPreference.js';
+import { deleteStoredFile, isStorageConfigurationError, readStoredFile, saveStoredFile } from '../utils/storage.js';
 
 const router = express.Router();
 const avifExtensions = new Set(['.avif']);
 const avifMimeTypes = new Set(['image/avif', 'image/x-avif']);
 const heicExtensions = new Set(['.heic', '.heif']);
 const heicMimeTypes = new Set(['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']);
+const pendingOtps = new Map();
+const otpFailureBlocks = new Map();
 
 function profileImageModel() {
   return process.env.FAL_PROFILE_IMAGE_MODEL || process.env.FAL_TRYON_MODEL || 'openai/gpt-image-2/edit';
@@ -71,13 +73,7 @@ function isAllowedImageUpload(file) {
 }
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: 'uploads/',
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname || '');
-      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
-    }
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     cb(null, isAllowedImageUpload(file));
@@ -172,7 +168,7 @@ async function generatedBytesFromUrl(url) {
   const response = await fetch(url, {
     headers: {
       accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-      'user-agent': 'Mozilla/5.0 FitLook profile image fetcher'
+      'user-agent': 'Mozilla/5.0 Lookmefy profile image fetcher'
     }
   });
   if (!response.ok) throw new Error('Could not download generated profile image');
@@ -195,8 +191,11 @@ function fullBodyProfilePrompt() {
 async function generateFullBodyProfilePhoto(file) {
   if (!shouldGenerateFullBodyProfile()) return file;
 
-  const inputBuffer = await fs.readFile(file.path);
-  const inputDataUri = `data:${file.mimetype || 'image/jpeg'};base64,${inputBuffer.toString('base64')}`;
+  const stored = file.buffer
+    ? { bytes: file.buffer, mimetype: file.mimetype || 'image/jpeg', filename: file.filename }
+    : await readStoredFile(file);
+  const inputBuffer = stored.bytes;
+  const inputDataUri = `data:${stored.mimetype || file.mimetype || 'image/jpeg'};base64,${inputBuffer.toString('base64')}`;
   const model = profileImageModel();
   const submission = await falJson(`https://queue.fal.run/${model}`, {
     method: 'POST',
@@ -215,13 +214,10 @@ async function generateFullBodyProfilePhoto(file) {
 
   const { bytes, mimetype } = await generatedBytesFromUrl(generatedUrl);
   const filename = `profile-fullbody-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionForMimetype(mimetype)}`;
-  const outputPath = path.join(path.dirname(file.path), filename);
-  await fs.writeFile(outputPath, bytes);
-
   return {
     ...file,
     filename,
-    path: outputPath,
+    buffer: bytes,
     mimetype,
     size: bytes.length
   };
@@ -233,58 +229,100 @@ function isBodyPhotoPreparationError(error) {
 }
 
 async function normalizeBodyPhotoUpload(file) {
-  if (!file || (!isHeicUpload(file) && !isAvifUpload(file))) return file;
-
-  const inputPath = file.path;
-  const parsed = path.parse(file.filename);
-  const filename = `${parsed.name}.jpg`;
-  const outputPath = path.join(path.dirname(inputPath), filename);
+  if (!file?.buffer) throw new Error('Profile photo data is missing');
+  if (!isHeicUpload(file) && !isAvifUpload(file) && !isAvifBuffer(file.buffer)) {
+    return {
+      ...file,
+      size: file.size || file.buffer.length
+    };
+  }
 
   try {
-    const inputBuffer = await fs.readFile(inputPath);
-    const outputBuffer = isAvifUpload(file) || isAvifBuffer(inputBuffer)
-      ? await sharp(inputBuffer).jpeg({ quality: 90 }).toBuffer()
+    const outputBuffer = isAvifUpload(file) || isAvifBuffer(file.buffer)
+      ? await sharp(file.buffer).jpeg({ quality: 90 }).toBuffer()
       : Buffer.from(await heicConvert({
-        buffer: inputBuffer,
+        buffer: file.buffer,
         format: 'JPEG',
         quality: 0.9
       }));
 
-    await fs.writeFile(outputPath, outputBuffer);
-    await fs.unlink(inputPath).catch(() => {});
-    const stats = await fs.stat(outputPath);
     return {
       ...file,
-      filename,
-      path: outputPath,
+      filename: `${path.parse(file.originalname || file.filename || 'profile-photo').name}.jpg`,
+      buffer: outputBuffer,
       mimetype: 'image/jpeg',
-      size: stats.size
+      size: outputBuffer.length
     };
   } catch (error) {
-    await fs.unlink(outputPath).catch(() => {});
     throw new Error('Could not convert the AVIF/HEIC/HEIF profile photo. Please try another image.');
   }
 }
 
-async function bodyPhotoFromUpload(file, { generateFullBody = true } = {}) {
-  const normalized = await normalizeBodyPhotoUpload(file);
-  return {
+async function saveProfileUpload(normalized, { user, folder, prefix, extra = {} } = {}) {
+  const stored = await saveStoredFile({
+    buffer: normalized.buffer,
     filename: normalized.filename,
-    path: `uploads/${normalized.filename}`,
     mimetype: normalized.mimetype,
-    size: normalized.size,
+    userId: user?._id?.toString?.(),
+    folder,
+    prefix
+  });
+  return {
+    ...stored,
+    ...extra
+  };
+}
+
+async function avatarPhotoFromNormalized(normalized, { user } = {}) {
+  let avatar = normalized;
+  try {
+    const buffer = await sharp(normalized.buffer)
+      .rotate()
+      .resize({ width: 640, height: 640, fit: 'cover', position: 'north' })
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    avatar = {
+      ...normalized,
+      buffer,
+      filename: `${path.parse(normalized.originalname || normalized.filename || 'profile-photo').name}-avatar.jpg`,
+      mimetype: 'image/jpeg',
+      size: buffer.length
+    };
+  } catch {
+    avatar = normalized;
+  }
+
+  return saveProfileUpload(avatar, {
+    user,
+    folder: 'profile/avatar',
+    prefix: 'avatar',
+    extra: {
+      source: 'upload',
+      uploadedAt: new Date()
+    }
+  });
+}
+
+async function bodyPhotoFromNormalized(normalized, { generateFullBody = true, user } = {}) {
+  const stored = await saveProfileUpload(normalized, {
+    user,
+    folder: 'profile',
+    prefix: 'profile-upload'
+  });
+  return {
+    ...stored,
     status: generateFullBody ? 'generating' : 'ready',
     source: generateFullBody ? 'upload' : 'exact-upload'
   };
 }
 
-function localFileFromBodyPhoto(bodyPhoto) {
-  return {
-    filename: bodyPhoto.filename,
-    path: bodyPhoto.path,
-    mimetype: bodyPhoto.mimetype,
-    size: bodyPhoto.size
-  };
+async function profilePhotosFromUpload(file, { generateFullBody = true, user } = {}) {
+  const normalized = await normalizeBodyPhotoUpload(file);
+  const [avatarPhoto, bodyPhoto] = await Promise.all([
+    avatarPhotoFromNormalized(normalized, { user }),
+    bodyPhotoFromNormalized(normalized, { generateFullBody, user })
+  ]);
+  return { avatarPhoto, bodyPhoto };
 }
 
 async function generateFullBodyProfileInBackground(userId, sourceBodyPhoto, { enabled = true } = {}) {
@@ -293,12 +331,17 @@ async function generateFullBodyProfileInBackground(userId, sourceBodyPhoto, { en
   setImmediate(async () => {
     try {
       console.log('[profile-fullbody] start', { userId: userId.toString(), source: sourceBodyPhoto.path });
-      const generated = await generateFullBodyProfilePhoto(localFileFromBodyPhoto(sourceBodyPhoto));
-      const generatedBodyPhoto = {
+      const generated = await generateFullBodyProfilePhoto(sourceBodyPhoto);
+      const stored = await saveStoredFile({
+        buffer: generated.buffer,
         filename: generated.filename,
-        path: `uploads/${generated.filename}`,
         mimetype: generated.mimetype,
-        size: generated.size,
+        userId: userId.toString(),
+        folder: 'profile',
+        prefix: 'profile-fullbody'
+      });
+      const generatedBodyPhoto = {
+        ...stored,
         status: 'ready',
         source: 'fal-full-body',
         generatedAt: new Date()
@@ -311,10 +354,10 @@ async function generateFullBodyProfileInBackground(userId, sourceBodyPhoto, { en
       );
 
       if (updated) {
-        await fs.unlink(sourceBodyPhoto.path).catch(() => {});
+        await deleteStoredFile(sourceBodyPhoto).catch(() => {});
         console.log('[profile-fullbody] done', { userId: userId.toString(), path: generatedBodyPhoto.path });
       } else {
-        await fs.unlink(generated.path).catch(() => {});
+        await deleteStoredFile(stored).catch(() => {});
         console.log('[profile-fullbody] skipped stale result', { userId: userId.toString() });
       }
     } catch (error) {
@@ -343,6 +386,78 @@ function parseBoolean(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
 }
 
+function normalizePhone(value = '') {
+  const trimmed = String(value || '').trim();
+  const digits = trimmed.replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) return '';
+  if (trimmed.startsWith('+')) return `+${digits}`;
+  if (digits.length === 10) return `+91${digits}`;
+  return `+${digits}`;
+}
+
+function positiveEnvNumber(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function otpFailureConfig() {
+  return {
+    max: positiveEnvNumber('AUTH_OTP_FAILURE_MAX', 5),
+    windowMs: positiveEnvNumber('AUTH_OTP_FAILURE_WINDOW_MS', 10 * 60 * 1000),
+    blockMs: positiveEnvNumber('AUTH_OTP_FAILURE_BLOCK_MS', 15 * 60 * 1000)
+  };
+}
+
+function otpBlockedUntil(phone) {
+  const current = otpFailureBlocks.get(phone);
+  const now = Date.now();
+  if (!current) return 0;
+  if (current.blockedUntil > now) return current.blockedUntil;
+  if (current.expiresAt <= now) otpFailureBlocks.delete(phone);
+  return 0;
+}
+
+function recordOtpFailure(phone) {
+  const now = Date.now();
+  const config = otpFailureConfig();
+  const current = otpFailureBlocks.get(phone);
+  const next = current && current.expiresAt > now
+    ? current
+    : { count: 0, expiresAt: now + config.windowMs, blockedUntil: 0 };
+  next.count += 1;
+  if (next.count >= config.max) {
+    next.blockedUntil = now + config.blockMs;
+    next.expiresAt = next.blockedUntil;
+  }
+  otpFailureBlocks.set(phone, next);
+  return next.blockedUntil > now ? next.blockedUntil : 0;
+}
+
+function clearOtpFailures(phone) {
+  otpFailureBlocks.delete(phone);
+}
+
+function sendOtpBlocked(res, blockedUntil) {
+  const retryAfter = Math.max(1, Math.ceil((blockedUntil - Date.now()) / 1000));
+  res.setHeader('Retry-After', String(retryAfter));
+  return res.status(429).json({ message: 'Too many failed OTP attempts. Please try again later.' });
+}
+
+function generateOtp() {
+  const fixed = String(process.env.AUTH_FIXED_OTP || '123456').trim();
+  if (/^\d{4,8}$/.test(fixed)) return fixed;
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function phoneEmail(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return `phone-${digits}@phone.lookmefy.local`;
+}
+
+function exposeOtpForCurrentBuild() {
+  return String(process.env.AUTH_OTP_EXPOSE || '1') !== '0';
+}
+
 function usernameFromName(value = '') {
   return normalizeUsername(
     String(value)
@@ -354,7 +469,7 @@ function usernameFromName(value = '') {
 }
 
 async function uniqueUsername(seed) {
-  const base = usernameFromName(seed) || 'fitlook_user';
+  const base = usernameFromName(seed) || 'lookmefy_user';
   for (let index = 0; index < 20; index += 1) {
     const candidate = index === 0 ? base : `${base}${Math.floor(100 + Math.random() * 9000)}`;
     const existing = await User.exists({ username: candidate });
@@ -378,6 +493,77 @@ async function requireUser(req, res, next) {
   }
 }
 
+router.post('/otp/send', async (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  if (!phone) return res.status(400).json({ message: 'Enter a valid mobile number' });
+  const blockedUntil = otpBlockedUntil(phone);
+  if (blockedUntil) return sendOtpBlocked(res, blockedUntil);
+
+  const otp = generateOtp();
+  pendingOtps.set(phone, {
+    otp,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    attempts: 0
+  });
+
+  console.log('[auth:otp] generated', { phone, otp: exposeOtpForCurrentBuild() ? otp : '[hidden]' });
+  res.json({
+    message: 'OTP sent',
+    devOtp: exposeOtpForCurrentBuild() ? otp : undefined
+  });
+});
+
+router.post('/otp/verify', async (req, res) => {
+  const phone = normalizePhone(req.body?.phone);
+  const otp = String(req.body?.otp || '').trim();
+  if (!phone || !otp) return res.status(400).json({ message: 'Mobile number and OTP are required' });
+  const blockedUntil = otpBlockedUntil(phone);
+  if (blockedUntil) return sendOtpBlocked(res, blockedUntil);
+
+  const pending = pendingOtps.get(phone);
+  if (!pending || pending.expiresAt <= Date.now()) {
+    pendingOtps.delete(phone);
+    recordOtpFailure(phone);
+    return res.status(400).json({ message: 'OTP expired. Please request a new one.' });
+  }
+
+  pending.attempts += 1;
+  if (pending.attempts > 5) {
+    pendingOtps.delete(phone);
+    const blocked = recordOtpFailure(phone);
+    if (blocked) return sendOtpBlocked(res, blocked);
+    return res.status(429).json({ message: 'Too many OTP attempts. Please request a new one.' });
+  }
+  if (pending.otp !== otp) {
+    const blocked = recordOtpFailure(phone);
+    if (blocked) return sendOtpBlocked(res, blocked);
+    return res.status(401).json({ message: 'Invalid OTP' });
+  }
+
+  pendingOtps.delete(phone);
+  clearOtpFailures(phone);
+  let user = await User.findOne({ phone });
+  const isNewUser = !user;
+  if (!user) {
+    const digits = phone.replace(/\D/g, '');
+    const username = await uniqueUsername(`lookmefy_${digits.slice(-4) || Date.now()}`);
+    user = await User.create({
+      name: `Lookmefy ${digits.slice(-4) || 'User'}`,
+      email: phoneEmail(phone),
+      phone,
+      username,
+      genderPreference: 'other',
+      passwordHash: await bcrypt.hash(`${phone}:${Date.now()}:${Math.random()}`, 12),
+      bodyPhoto: {
+        status: 'uploaded',
+        source: 'phone-auth'
+      }
+    });
+  }
+
+  res.json({ token: sign(user), user: user.toClient(), isNewUser });
+});
+
 router.post('/signup', upload.single('bodyPhoto'), async (req, res) => {
   const { name, email, password } = req.body;
   const username = normalizeUsername(req.body.username) || await uniqueUsername(name);
@@ -397,7 +583,7 @@ router.post('/signup', upload.single('bodyPhoto'), async (req, res) => {
 
   try {
     const generateFullBody = shouldGenerateFullBodyProfileForRequest(req);
-    const bodyPhoto = await bodyPhotoFromUpload(req.file, { generateFullBody });
+    const { avatarPhoto, bodyPhoto } = await profilePhotosFromUpload(req.file, { generateFullBody });
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await User.create({
       name,
@@ -406,12 +592,14 @@ router.post('/signup', upload.single('bodyPhoto'), async (req, res) => {
       genderPreference,
       passwordHash,
       devMode: parseBoolean(req.body.devMode),
+      avatarPhoto,
       bodyPhoto
     });
 
     generateFullBodyProfileInBackground(user._id, bodyPhoto, { enabled: generateFullBody });
-    res.status(201).json({ token: sign(user), user: user.toClient() });
+    res.status(201).json({ token: sign(user), user: user.toClient(), isNewUser: true });
   } catch (error) {
+    if (isStorageConfigurationError(error)) return res.status(error.statusCode || 503).json({ message: error.message });
     if (isBodyPhotoPreparationError(error)) return res.status(400).json({ message: error.message });
     if (error.code === 11000 && error.keyPattern?.username) return res.status(409).json({ message: 'This username is already taken' });
     if (error.code === 11000 && error.keyPattern?.email) return res.status(409).json({ message: 'An account already exists for this email' });
@@ -420,7 +608,7 @@ router.post('/signup', upload.single('bodyPhoto'), async (req, res) => {
 });
 
 router.get('/username-suggestions', async (req, res) => {
-  const base = usernameFromName(req.query.name) || 'fitlook_user';
+  const base = usernameFromName(req.query.name) || 'lookmefy_user';
   const suggestions = [];
   for (let index = 0; suggestions.length < 4 && index < 20; index += 1) {
     const candidate = index === 0 ? base : `${base}${Math.floor(100 + Math.random() * 9000)}`;
@@ -456,16 +644,52 @@ router.patch('/dev-mode', requireUser, async (req, res) => {
   res.json({ user: req.user.toClient() });
 });
 
+router.patch('/profile', requireUser, upload.single('bodyPhoto'), async (req, res) => {
+  const name = String(req.body?.name || '').trim().replace(/\s+/g, ' ');
+  const genderPreference = normalizeGenderPreference(req.body?.genderPreference);
+  const requireBodyPhoto = parseBoolean(req.body?.requireBodyPhoto);
+
+  if (!name || name.length < 2) return res.status(400).json({ message: 'Enter your full name' });
+  if (!genderPreference) return res.status(400).json({ message: 'Choose your gender preference' });
+  if (requireBodyPhoto && !req.file && !req.user.bodyPhoto?.path && !req.user.bodyPhoto?.url) {
+    return res.status(400).json({ message: 'Upload a profile photo' });
+  }
+
+  try {
+    req.user.name = name;
+    req.user.genderPreference = genderPreference;
+
+    if (req.file) {
+      const generateFullBody = shouldGenerateFullBodyProfileForRequest(req);
+      const { avatarPhoto, bodyPhoto } = await profilePhotosFromUpload(req.file, { generateFullBody, user: req.user });
+      req.user.avatarPhoto = avatarPhoto;
+      req.user.bodyPhoto = bodyPhoto;
+      await req.user.save();
+      generateFullBodyProfileInBackground(req.user._id, bodyPhoto, { enabled: generateFullBody });
+    } else {
+      await req.user.save();
+    }
+
+    res.json({ user: req.user.toClient() });
+  } catch (error) {
+    if (isStorageConfigurationError(error)) return res.status(error.statusCode || 503).json({ message: error.message });
+    if (isBodyPhotoPreparationError(error)) return res.status(400).json({ message: error.message });
+    throw error;
+  }
+});
+
 router.post('/body-photo', requireUser, upload.single('bodyPhoto'), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'Upload a profile photo first' });
   try {
     const generateFullBody = shouldGenerateFullBodyProfileForRequest(req);
-    const bodyPhoto = await bodyPhotoFromUpload(req.file, { generateFullBody });
+    const { avatarPhoto, bodyPhoto } = await profilePhotosFromUpload(req.file, { generateFullBody, user: req.user });
+    req.user.avatarPhoto = avatarPhoto;
     req.user.bodyPhoto = bodyPhoto;
     await req.user.save();
     generateFullBodyProfileInBackground(req.user._id, bodyPhoto, { enabled: generateFullBody });
     res.json({ user: req.user.toClient() });
   } catch (error) {
+    if (isStorageConfigurationError(error)) return res.status(error.statusCode || 503).json({ message: error.message });
     if (isBodyPhotoPreparationError(error)) return res.status(400).json({ message: error.message });
     throw error;
   }

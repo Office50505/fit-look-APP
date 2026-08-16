@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { storedFileToClientUrl } from '../utils/storage.js';
 
 function signupTokens() {
   const value = Number(process.env.SIGNUP_FREE_TOKENS || 20);
@@ -13,6 +14,7 @@ const userSchema = new mongoose.Schema(
   {
     name: { type: String, trim: true, required: true },
     email: { type: String, trim: true, lowercase: true, unique: true, required: true },
+    phone: { type: String, trim: true, unique: true, sparse: true },
     username: {
       type: String,
       trim: true,
@@ -36,9 +38,21 @@ const userSchema = new mongoose.Schema(
       currentPeriodEnd: Date,
       lastOrderId: { type: String, trim: true }
     },
+    avatarPhoto: {
+      filename: String,
+      path: String,
+      url: String,
+      storage: String,
+      mimetype: String,
+      size: Number,
+      source: { type: String, trim: true },
+      uploadedAt: Date
+    },
     bodyPhoto: {
       filename: String,
       path: String,
+      url: String,
+      storage: String,
       mimetype: String,
       size: Number,
       status: { type: String, enum: ['uploaded', 'generating', 'ready', 'failed'], default: 'uploaded' },
@@ -50,11 +64,19 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+userSchema.index({ genderPreference: 1, createdAt: -1 });
+userSchema.index({ 'subscription.status': 1, 'subscription.currentPeriodEnd': 1 });
+
 userSchema.methods.toClient = function toClient() {
+  const bodyPhotoUrl = storedFileToClientUrl(this.bodyPhoto);
+  const avatarPhotoUrl = storedFileToClientUrl(this.avatarPhoto)
+    || (this.bodyPhoto?.source === 'fal-full-body' ? '' : bodyPhotoUrl);
+
   return {
     id: this._id.toString(),
     name: this.name,
     email: this.email,
+    phone: this.phone || '',
     username: this.username,
     genderPreference: this.genderPreference || 'other',
     tokens: this.tokens,
@@ -67,7 +89,8 @@ userSchema.methods.toClient = function toClient() {
     },
     devMode: Boolean(this.devMode),
     joinedAt: this.createdAt,
-    bodyPhotoUrl: this.bodyPhoto?.path ? `/${this.bodyPhoto.path}` : null,
+    avatarPhotoUrl,
+    bodyPhotoUrl,
     bodyPhotoStatus: this.bodyPhoto?.status || 'uploaded',
     bodyPhotoSource: this.bodyPhoto?.source || 'upload',
     bodyPhotoGeneratedAt: this.bodyPhoto?.generatedAt || null

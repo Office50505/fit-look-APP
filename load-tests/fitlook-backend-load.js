@@ -3,8 +3,8 @@ import { check, group, sleep } from 'k6';
 import { Trend } from 'k6/metrics';
 
 const BASE_URL = (__ENV.BASE_URL || 'http://localhost:5050').replace(/\/$/, '');
-const TEST_EMAIL = __ENV.TEST_USER_EMAIL || `k6-${Date.now()}-${Math.random().toString(36).slice(2)}@fitlook.local`;
-const TEST_PASSWORD = __ENV.TEST_USER_PASSWORD || 'LoadTest123!';
+const TEST_PHONE = __ENV.TEST_USER_PHONE || `+1555${String(Math.floor(Math.random() * 10_000_000)).padStart(7, '0')}`;
+const TEST_OTP = __ENV.TEST_USER_OTP || '';
 const USER_AGENT = 'FitLook k6 load test';
 
 http.setResponseCallback(http.expectedStatuses({ min: 200, max: 399 }, 409));
@@ -15,11 +15,9 @@ const endpointTrendDefinitions = [
   ['GET /api/products?category=shirts', 'endpoint_get_products_category_ms'],
   ['GET /api/products regex-character filters', 'endpoint_get_products_regex_filters_ms'],
   ['GET /api/products/:id', 'endpoint_get_product_detail_ms'],
-  ['POST /api/auth/login', 'endpoint_post_auth_login_ms'],
   ['GET /api/auth/me', 'endpoint_get_auth_me_ms'],
-  ['GET /api/auth/me/body-photo', 'endpoint_get_auth_body_photo_ms'],
   ['GET /api/tryons', 'endpoint_get_tryons_ms'],
-  ['GET /api/tryons/cache', 'endpoint_get_tryons_cache_ms']
+  ['GET /api/tryons/credit-history', 'endpoint_get_credit_history_ms']
 ];
 const endpointTrends = Object.fromEntries(
   endpointTrendDefinitions.map(([endpoint, metricName]) => [endpoint, new Trend(metricName, true)])
@@ -81,36 +79,29 @@ function safeJson(response) {
   }
 }
 
-function signupUser() {
-  const payload = {
-    name: 'k6 Load User',
-    email: TEST_EMAIL,
-    password: TEST_PASSWORD,
-    bodyPhoto: http.file('synthetic-load-test-image', 'body-photo.jpg', 'image/jpeg')
-  };
-  return http.post(`${BASE_URL}/api/auth/signup`, payload, {
-    tags: { endpoint: 'POST /api/auth/signup setup-only' },
-    headers: { 'user-agent': USER_AGENT }
-  });
+function sendOtp(phone = TEST_PHONE) {
+  return postJsonEndpoint('POST /api/auth/otp/send setup-only', `${BASE_URL}/api/auth/otp/send`, { phone });
 }
 
-function loginUser(email = TEST_EMAIL, password = TEST_PASSWORD) {
-  return postJsonEndpoint('POST /api/auth/login', `${BASE_URL}/api/auth/login`, { email, password });
+function verifyOtp(phone = TEST_PHONE, otp = TEST_OTP) {
+  return postJsonEndpoint('POST /api/auth/otp/verify setup-only', `${BASE_URL}/api/auth/otp/verify`, { phone, otp });
 }
 
 export function setup() {
   const health = http.get(`${BASE_URL}/api/health`, tagged('GET /api/health setup'));
   check(health, { 'setup health ok': (res) => res.status === 200 });
 
-  const signup = signupUser();
-  check(signup, {
-    'setup signup created or already exists': (res) => res.status === 201 || res.status === 409
+  const otpSend = sendOtp();
+  const otpSendData = safeJson(otpSend);
+  check(otpSend, {
+    'setup otp send ok': (res) => res.status === 200
   });
 
-  const login = loginUser();
-  const loginData = safeJson(login);
-  check(login, {
-    'setup login ok': (res) => res.status === 200 && Boolean(loginData?.token)
+  const otp = TEST_OTP || otpSendData?.devOtp || '123456';
+  const otpVerify = verifyOtp(TEST_PHONE, otp);
+  const otpVerifyData = safeJson(otpVerify);
+  check(otpVerify, {
+    'setup otp verify ok': (res) => res.status === 200 && Boolean(otpVerifyData?.token)
   });
 
   const products = http.get(`${BASE_URL}/api/products?limit=1`, tagged('GET /api/products setup'));
@@ -118,12 +109,11 @@ export function setup() {
   const firstProduct = productData?.products?.[0];
 
   return {
-    token: loginData?.token || '',
+    token: otpVerifyData?.token || '',
     productId: firstProduct?.id || '',
     productCountVisible: productData?.total || 0,
     baseUrl: BASE_URL,
-    testEmail: TEST_EMAIL,
-    testPassword: TEST_PASSWORD
+    testPhone: TEST_PHONE
   };
 }
 
@@ -160,15 +150,8 @@ export default function (data) {
   });
 
   group('auth and user reads', () => {
-    const login = loginUser(data.testEmail, data.testPassword);
-    check(login, { 'login status 200': (res) => res.status === 200 });
-
     check(getEndpoint('GET /api/auth/me', `${BASE_URL}/api/auth/me`, token), {
       'me status 200': (res) => res.status === 200
-    });
-
-    check(getEndpoint('GET /api/auth/me/body-photo', `${BASE_URL}/api/auth/me/body-photo`, token), {
-      'body photo status 200': (res) => res.status === 200
     });
   });
 
@@ -178,8 +161,8 @@ export default function (data) {
       'tryons cache status 200': (res) => res.status === 200
     });
 
-    check(getEndpoint('GET /api/tryons/cache', `${BASE_URL}/api/tryons/cache`, token), {
-      'tryon cache list status 200': (res) => res.status === 200
+    check(getEndpoint('GET /api/tryons/credit-history', `${BASE_URL}/api/tryons/credit-history`, token), {
+      'credit history status 200': (res) => res.status === 200
     });
   });
 
@@ -230,14 +213,13 @@ Covered endpoints:
 - GET /api/products?category=shirts
 - GET /api/products with regex-character brand/gender filters
 - GET /api/products/:id when at least one product exists
-- POST /api/auth/login
 - GET /api/auth/me
-- GET /api/auth/me/body-photo
 - GET /api/tryons
-- GET /api/tryons/cache
+- GET /api/tryons/credit-history
 
-Setup-only endpoint:
-- POST /api/auth/signup, used once to create or reuse the test account
+Setup-only endpoints:
+- POST /api/auth/otp/send
+- POST /api/auth/otp/verify
 
 Not load-tested at 1000 VUs because they create persistent data or call paid/external services:
 - POST /api/tryons/:productId
@@ -287,7 +269,7 @@ ${endpointRows(data)}
 ## Notes
 
 - The regex-character filter request is included specifically to verify the product-filter fix under load.
-- The signup endpoint is exercised once during setup to avoid creating thousands of persistent users.
+- OTP auth is exercised once during setup to avoid creating thousands of persistent users.
 - The try-on generation endpoints were intentionally excluded from high-concurrency load because they can call FAL image-generation services and write generated media.
 `;
 }

@@ -9,6 +9,7 @@
     "dev": "vite",
     "server": "node server/index.js",
     "server:watch": "nodemon server/index.js",
+    "server:create-indexes": "node server/scripts/sync-indexes.js",
     "expo": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start",
     "mobile": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --port 8081",
     "mobile:android": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --android --port 8081",
