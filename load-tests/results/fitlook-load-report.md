@@ -1,6 +1,6 @@
 # FitLook Backend k6 Load Test Report
 
-Generated: 2026-08-07T08:33:19.603Z
+Generated: 2026-08-21T10:29:27.752Z
 Base URL: http://localhost:5050
 
 ## Scope
@@ -38,36 +38,36 @@ Not load-tested at 1000 VUs because they create persistent data or call paid/ext
 
 | Metric | Value |
 | --- | ---: |
-| Total requests | 37151.00 |
-| Request rate/sec | 137.14 |
+| Total requests | 46604.00 |
+| Request rate/sec | 173.88 |
 | Failed request rate | 0.00% |
 | Check pass rate | 100.00% |
 | Max VUs reached | 1000.00 |
-| Avg duration ms | 3234.33 |
-| Median duration ms | 0.84 |
-| p90 duration ms | 13023.20 |
-| p95 duration ms | 19997.52 |
-| p99 duration ms | 28031.55 |
-| Max duration ms | 44237.62 |
-| Avg waiting/TTFB ms | 3234.28 |
-| p95 waiting/TTFB ms | 19997.46 |
+| Avg duration ms | 2517.64 |
+| Median duration ms | 0.77 |
+| p90 duration ms | 8019.98 |
+| p95 duration ms | 13017.06 |
+| p99 duration ms | 13998.61 |
+| Max duration ms | 14942.93 |
+| Avg waiting/TTFB ms | 2517.60 |
+| p95 waiting/TTFB ms | 13017.02 |
 | Avg blocked ms | 0.01 |
-| Data received bytes | 336661392.00 |
-| Data sent bytes | 8551864.00 |
+| Data received bytes | 290734338.00 |
+| Data sent bytes | 10711854.00 |
 
 ## Endpoint Latency
 
 | Endpoint | Avg ms | p95 ms | p99 ms | Max ms |
 | --- | ---: | ---: | ---: | ---: |
-| GET /api/health | 0.86 | 1.25 | 8.39 | 20.20 |
-| GET /api/products | 802.42 | 8682.75 | 14543.54 | 18035.99 |
-| GET /api/products?q=shirt | 1495.52 | 18009.73 | 20649.53 | 21983.11 |
-| GET /api/products?category=shirts | 1540.35 | 13023.77 | 14702.87 | 15603.13 |
-| GET /api/products regex-character filters | 3318.92 | 22987.60 | 24340.73 | 25695.39 |
-| GET /api/products/:id | 3016.97 | 20373.22 | 23624.11 | 24995.73 |
-| GET /api/auth/me | 3516.88 | 11270.33 | 12253.76 | 13776.80 |
-| GET /api/tryons | 7276.23 | 21013.10 | 27073.63 | 29036.22 |
-| GET /api/tryons/credit-history | 8292.91 | 35057.17 | 42001.69 | 44237.62 |
+| GET /api/health | 0.77 | 1.24 | 7.90 | 28.48 |
+| GET /api/products | 763.71 | 5917.02 | 6402.19 | 7012.81 |
+| GET /api/products?q=shirt | 989.13 | 6684.66 | 7064.19 | 7370.66 |
+| GET /api/products?category=shirts | 1593.82 | 6885.46 | 7063.10 | 7675.96 |
+| GET /api/products regex-character filters | 1145.14 | 6822.08 | 6877.11 | 6930.77 |
+| GET /api/products/:id | 1300.13 | 6993.26 | 7009.79 | 7019.96 |
+| GET /api/auth/me | 3177.30 | 6993.80 | 7010.90 | 7675.39 |
+| GET /api/tryons | 6738.75 | 13981.53 | 14010.92 | 14037.76 |
+| GET /api/tryons/credit-history | 7023.92 | 14003.67 | 14024.58 | 14942.93 |
 
 ## Thresholds
 
