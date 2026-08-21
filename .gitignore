@@ -60,6 +60,12 @@ mobile/android/
 .idea/
 .vscode/
 
+# Mobile archives and release exports
+mobile/release/
+mobile/dist-*/
+*.xcarchive/
+*.ipa
+
 # Deploy/provider local state
 .vercel/
 .netlify/

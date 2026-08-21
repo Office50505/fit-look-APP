@@ -26,17 +26,23 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
-import { api, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
-import { categories, images, infoPages } from './src/assets';
+import { API_URL, api, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
+import { categories, images, infoPages, policyPages } from './src/assets';
 import { calculateCreditPercentage, normalizeProduct, normalizeProducts, resolveImageUrl } from './src/products';
 
 const genders = ['men', 'women', 'unisex'];
+const profileGenderOptions = [
+  { value: 'female', label: 'Female', icon: 'female-outline' },
+  { value: 'male', label: 'Male', icon: 'male-outline' },
+  { value: 'other', label: 'Other', icon: 'person-outline' }
+];
 const sortOptions = [
   ['', 'Relevant'],
   ['newest', 'Newest'],
   ['price-asc', 'Price low'],
   ['price-desc', 'Price high']
 ];
+const supportEmail = 'support@lookmefy.com';
 const aiPreviewDisclaimer = 'Note: AI previews can make mistakes. Check fit, colour, and product details before buying.';
 const devOtpFallback = process.env.EXPO_PUBLIC_DEV_OTP || '123456';
 const appTopInset = Platform.OS === 'android' ? Math.max(76, NativeStatusBar.currentHeight || 0) : 0;
@@ -87,6 +93,13 @@ const fontFamilies = {
   bodySemiBold: 'Manrope_600SemiBold',
   bodyBold: 'Manrope_700Bold'
 };
+
+function openSupportEmail(subject = 'Lookmefy support request') {
+  const mailUrl = `mailto:${supportEmail}?subject=${encodeURIComponent(subject)}`;
+  Linking.openURL(mailUrl).catch(() => {
+    Alert.alert('Email support', supportEmail);
+  });
+}
 const typography = {
   display: { fontFamily: fontFamilies.headingBold, fontSize: 30, lineHeight: 38, fontWeight: '700', letterSpacing: 0 },
   h1: { fontFamily: fontFamilies.headingBold, fontSize: 28, lineHeight: 35, fontWeight: '700', letterSpacing: 0 },
@@ -104,22 +117,22 @@ const typography = {
 };
 const aiStudioStarterPrompts = [
   {
-    title: 'Brunch dress',
-    text: 'Clean and easy.',
+    title: 'Linen shirts',
+    text: 'Easy smart-casual.',
     icon: 'shirt-outline',
-    prompt: 'Find me a clean brunch dress with premium basics.'
+    prompt: 'Find linen shirts under ₹1500.'
   },
   {
-    title: 'Party dress',
-    text: 'Sharp evening picks.',
-    icon: 'bag-handle-outline',
-    prompt: 'Show me a black party dress under ₹2000.'
+    title: 'Casual sneakers',
+    text: 'Daily footwear picks.',
+    icon: 'walk-outline',
+    prompt: 'Show casual sneakers under ₹2000.'
   },
   {
-    title: 'Wedding dress',
-    text: 'Modern guest edit.',
-    icon: 'calendar-outline',
-    prompt: 'Find a modern wedding guest dress.'
+    title: 'Office trousers',
+    text: 'Polished work options.',
+    icon: 'briefcase-outline',
+    prompt: 'Find office trousers under ₹1200.'
   }
 ];
 const recentSearchLimit = 5;
@@ -154,8 +167,8 @@ const onboardingTourSteps = [
   {
     key: 'stylist',
     eyebrow: 'AI STUDIO',
-    title: 'Ask for dresses',
-    text: 'Tell Lookmefy the occasion, budget, colour, length, or vibe. AI Studio searches dresses only.',
+    title: 'Ask for fashion',
+    text: 'Tell Lookmefy the item, occasion, budget, colour, fabric, or vibe. AI Studio searches wearable fashion.',
     icon: 'sparkles-outline',
     targetKey: 'ai-studio-composer',
     route: { name: 'tryon' },
@@ -274,7 +287,7 @@ function initialAiStudioMessages(user) {
     {
       id: `welcome-${user?.id || user?._id || user?.phone || 'guest'}`,
       role: 'assistant',
-      text: `Hi${firstName ? ` ${firstName}` : ''}. Tell me what dress you want: occasion, budget, colour, length, fabric, or vibe.`
+      text: `Hi${firstName ? ` ${firstName}` : ''}. Tell me what fashion item you want: shirts, dresses, pants, shoes, accessories, budget, colour, fabric, or vibe.`
     }
   ];
 }
@@ -690,10 +703,53 @@ function useTryOns(user, products, token) {
   return [tryOns, setTryOns];
 }
 
+function showMediaPermissionAlert(title, message, permission) {
+  if (permission?.canAskAgain !== false) {
+    Alert.alert(title, message);
+    return;
+  }
+
+  Alert.alert(title, message, [
+    { text: 'Not now', style: 'cancel' },
+    {
+      text: 'Open Settings',
+      onPress: () => {
+        Linking.openSettings().catch(() => {
+          Alert.alert('Settings unavailable', 'Open Settings and enable access for Lookmefy.');
+        });
+      },
+    },
+  ]);
+}
+
+async function openExternalWebUrl(value) {
+  try {
+    const parsedUrl = new URL(String(value || '').trim());
+    if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) {
+      throw new Error('Unsupported URL');
+    }
+
+    const url = parsedUrl.toString();
+    if (!(await Linking.canOpenURL(url))) {
+      throw new Error('URL cannot be opened');
+    }
+
+    await Linking.openURL(url);
+    return true;
+  } catch {
+    Alert.alert('Link unavailable', 'This shopping link could not be opened.');
+    return false;
+  }
+}
+
 async function pickImage() {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {
-    Alert.alert('Photo access needed', 'Allow photo access to upload images for Lookmefy try-ons.');
+    showMediaPermissionAlert(
+      'Photo access needed',
+      'Allow photo access to upload images for Lookmefy try-ons.',
+      permission,
+    );
     return null;
   }
   const result = await ImagePicker.launchImageLibraryAsync({
@@ -707,7 +763,11 @@ async function pickImage() {
 async function takePhoto() {
   const permission = await ImagePicker.requestCameraPermissionsAsync();
   if (!permission.granted) {
-    Alert.alert('Camera access needed', 'Allow camera access to take a Lookmefy profile photo.');
+    showMediaPermissionAlert(
+      'Camera access needed',
+      'Allow camera access to take a Lookmefy profile photo.',
+      permission,
+    );
     return null;
   }
   const result = await ImagePicker.launchCameraAsync({
@@ -2177,7 +2237,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
     try {
       const data = await api(`/tryons/${state.product.id}`, {
         method: 'POST',
-        body: tryOn?.imageUrl ? JSON.stringify({ force: true }) : undefined
+        timeoutMs: 180000
       });
       setTryOn(data.tryOn);
       if (data.user) setUser(data.user);
@@ -2204,7 +2264,6 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
     try {
       const data = await api(`/tryons/${state.product.id}/video`, {
         method: 'POST',
-        body: tryOn?.videoUrl ? JSON.stringify({ force: true }) : undefined,
         timeoutMs: 180000
       });
       setTryOn(data.tryOn);
@@ -2251,7 +2310,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
       onRequireAuth?.('Log in with your mobile number to shop this brand.');
       return;
     }
-    if (product.affiliateLink) Linking.openURL(product.affiliateLink);
+    if (product.affiliateLink) openExternalWebUrl(product.affiliateLink);
     else onNavigate('shop');
   };
 
@@ -2306,6 +2365,13 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
         <View style={styles.productTagRow}>
           {detailTags.map((tag) => <Text key={tag} style={styles.productSoftTag}>{tag}</Text>)}
         </View>
+        {product.category ? (
+          <TouchableOpacity style={styles.productCategoryMeta} activeOpacity={0.76} onPress={() => onNavigate('shop', { category: product.category })}>
+            <Ionicons name="pricetag-outline" size={13} color="#8c817c" />
+            <Text style={styles.productCategoryMetaLabel}>Category</Text>
+            <Text style={styles.productCategoryMetaValue}>{titleCase(product.category)}</Text>
+          </TouchableOpacity>
+        ) : null}
 
         {colorLabel ? (
           <>
@@ -2347,17 +2413,10 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
             onPress={generateVideo}
           />
         </View>
+        {typeof __DEV__ !== 'undefined' && __DEV__ ? <Text style={styles.productDebugApi}>DEV API: {API_URL.replace(/^https?:\/\//, '').replace(/\/api\/?$/, '')}</Text> : null}
         {tryOn?.imageUrl || tryOn?.videoUrl ? <AiPreviewNote /> : null}
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
         {tryOnVideoError ? <Text style={styles.errorText}>{tryOnVideoError}</Text> : null}
-      </View>
-
-      <View style={styles.productBenefitsBand}>
-        <View style={styles.productBenefitItem}>
-          <Ionicons name="pricetag-outline" size={22} color="#9b5658" />
-          <Text style={styles.productBenefitTitle}>CATEGORY</Text>
-          <Text style={styles.productBenefitText}>{titleCase(product.category || 'Catalog')}</Text>
-        </View>
       </View>
 
       <View style={styles.productAccordion}>
@@ -2730,7 +2789,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   );
 }
 
-const authEntryFeatures = ['Virtual AI Try-On', 'Smart Digital Closet', 'AI Studio Dress Search'];
+const authEntryFeatures = ['Virtual AI Try-On', 'Smart Digital Closet', 'AI Studio Fashion Search'];
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 function AuthEntryScreen({ onNavigate }) {
@@ -4010,7 +4069,7 @@ function StyleBotScreen({
     if (!prompt || busy) return;
     const userMessage = { id: `user-${Date.now()}`, role: 'user', text: prompt };
     const assistantId = `assistant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const loadingMessage = { id: assistantId, role: 'assistant', text: 'AI Studio is searching dresses...', loading: true };
+    const loadingMessage = { id: assistantId, role: 'assistant', text: 'AI Studio is searching fashion...', loading: true };
 
     setQuery('');
     setBusy(true);
@@ -4095,8 +4154,8 @@ function StyleBotScreen({
           </View>
           <View style={styles.aiConversationCopy}>
             <Text style={styles.aiStudioEyebrow}>AI STUDIO</Text>
-            <Text style={styles.aiConversationTitle}>What dress are we finding today?</Text>
-            <Text style={styles.aiConversationSubtitle}>Search dresses by occasion, budget, colour, length, fabric, or vibe. Dress requests only.</Text>
+            <Text style={styles.aiConversationTitle}>What are we finding today?</Text>
+            <Text style={styles.aiConversationSubtitle}>Search clothing, footwear, ethnic wear, watches, bags, and accessories by budget, colour, occasion, fabric, or vibe.</Text>
           </View>
         </View>
 
@@ -4123,7 +4182,7 @@ function StyleBotScreen({
                           tryOnLoading={Boolean(chatTryOnLoading[key])}
                           tryOnError={chatTryOnErrors[key]}
                           onPreview={tryOn?.imageUrl ? () => setLightbox(imageUrl(tryOn.imageUrl)) : null}
-                          onShop={() => product.affiliateLink ? Linking.openURL(product.affiliateLink) : onNavigate('product', { id: product.id })}
+                          onShop={() => product.affiliateLink ? openExternalWebUrl(product.affiliateLink) : onNavigate('product', { id: product.id })}
                           onTryOn={() => generateChatTryOn(product)}
                         />
                       );
@@ -4146,7 +4205,7 @@ function StyleBotScreen({
 
         {!hasUserMessages ? (
           <View style={styles.aiStarterPanel}>
-            <Text style={styles.aiStarterTitle}>Try a dress search</Text>
+            <Text style={styles.aiStarterTitle}>Try a fashion search</Text>
             <View style={styles.aiStarterGrid}>
               {aiStudioStarterPrompts.map((starter) => (
                 <TouchableOpacity key={starter.prompt} style={styles.aiStarterCard} activeOpacity={0.82} onPress={() => submit(starter.prompt)}>
@@ -4169,7 +4228,7 @@ function StyleBotScreen({
         <TouchableOpacity style={styles.aiImageButton} onPress={() => onNavigate('custom')}>
           <Ionicons name="image-outline" size={22} color="#55514f" />
         </TouchableOpacity>
-        <TextInput style={styles.aiComposerInput} value={query} onChangeText={setQuery} placeholder="Search dresses only" placeholderTextColor="#8d8682" returnKeyType="send" onSubmitEditing={() => submit()} />
+        <TextInput style={styles.aiComposerInput} value={query} onChangeText={setQuery} placeholder="Search shirts, shoes, jackets..." placeholderTextColor="#8d8682" returnKeyType="send" onSubmitEditing={() => submit()} />
         <TouchableOpacity style={[styles.aiSendButton, (!query.trim() || busy) && styles.disabledButton]} disabled={!query.trim() || busy} onPress={() => submit()}>
           <Ionicons name={busy ? 'hourglass-outline' : 'send'} size={22} color="#ffffff" />
         </TouchableOpacity>
@@ -4300,9 +4359,15 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
       </TouchableOpacity>
 
       <View style={styles.creditsFooterLinks}>
-        <Text style={styles.creditsFooterLink}>TERMS OF SALE</Text>
-        <Text style={styles.creditsFooterLink}>PRIVACY POLICY</Text>
-        <Text style={styles.creditsFooterLink}>HELP CENTER</Text>
+        <TouchableOpacity activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'returns' })}>
+          <Text style={styles.creditsFooterLink}>REFUNDS</Text>
+        </TouchableOpacity>
+        <TouchableOpacity activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'cancellation' })}>
+          <Text style={styles.creditsFooterLink}>CANCELLATION</Text>
+        </TouchableOpacity>
+        <TouchableOpacity activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'support' })}>
+          <Text style={styles.creditsFooterLink}>HELP CENTER</Text>
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -4488,6 +4553,11 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [lightbox, setLightbox] = useState(null);
+  const [editVisible, setEditVisible] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editGender, setEditGender] = useState('');
+  const [editMessage, setEditMessage] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
   const profileScrollRef = useRef(null);
   const profileAvatarTourTarget = useTourTarget('profile-avatar', registerTourTarget, { request: tourFocusRequest, scrollRef: profileScrollRef, scrollOffset: 94 });
   const creditHistory = useApiState('/tryons/credit-history?limit=20', token, Boolean(user), { events: [] });
@@ -4532,6 +4602,47 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
     }
   };
 
+  const openProfileEditor = () => {
+    setEditName(displayName === 'Lookmefy member' ? '' : displayName);
+    setEditGender(user.genderPreference || 'other');
+    setEditMessage('');
+    setMessage('');
+    setEditVisible(true);
+  };
+
+  const saveProfileDetails = async () => {
+    const nextName = editName.trim().replace(/\s+/g, ' ');
+    if (nextName.length < 2) {
+      setEditMessage('Enter your full name.');
+      return;
+    }
+    if (!editGender) {
+      setEditMessage('Choose your gender preference.');
+      return;
+    }
+    setProfileSaving(true);
+    setEditMessage('Saving profile...');
+    try {
+      const data = await api('/auth/profile', {
+        method: 'PATCH',
+        timeoutMs: 30000,
+        body: JSON.stringify({
+          name: nextName,
+          genderPreference: editGender,
+          requireBodyPhoto: false
+        })
+      });
+      if (data.user) setUser(data.user);
+      setEditVisible(false);
+      setEditMessage('');
+      setMessage('Profile updated.');
+    } catch (error) {
+      setEditMessage(error.message);
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
   return (
     <ScrollView ref={profileScrollRef} style={styles.profileScreen} contentContainerStyle={styles.profileContent} {...screenScrollProps}>
       <AppHeader onNavigate={onNavigate} compact />
@@ -4548,7 +4659,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
         <Text style={styles.profileName}>{displayName}</Text>
         <Text style={styles.profileRole}>{titleCase(user.genderPreference || 'Lookmefy profile')}</Text>
         <Text style={styles.profileBio}>{user.joinedAt ? `Member since ${formatDate(user.joinedAt)}.` : 'Your saved profile powers product previews and wardrobe try-ons.'}</Text>
-        <TouchableOpacity style={styles.profileEditButton} onPress={async () => setPhoto(await pickImage())}>
+        <TouchableOpacity style={styles.profileEditButton} onPress={openProfileEditor}>
           <Text style={styles.profileEditText}>Edit Profile</Text>
         </TouchableOpacity>
       </View>
@@ -4619,7 +4730,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
         ) : null}
         {user.bodyPhotoStatus === 'generating' ? <Text style={styles.profileInlineMessage}>Full-body try-on profile is preparing in the background.</Text> : null}
         {user.bodyPhotoStatus === 'failed' ? <Text style={[styles.profileInlineMessage, styles.errorText]}>Full-body profile generation failed. Upload a clearer profile photo.</Text> : null}
-        {message ? <Text style={[styles.profileInlineMessage, message.includes('updated') || message.includes('saved') ? null : styles.errorText]}>{message}</Text> : null}
+        {message ? <Text style={[styles.profileInlineMessage, /updated|saved|saving|uploading/i.test(message) ? null : styles.errorText]}>{message}</Text> : null}
       </View>
 
       <View style={styles.profileQuickOptions}>
@@ -4662,27 +4773,79 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
       <ProfileSettingsSection
         title="Account Settings"
         rows={[
-          ['Username', username ? `@${username}` : 'Not added'],
-          ['Mobile Number', user.phone || 'Not added'],
-          ['Email Address', displayEmail || 'Not added'],
-          ['Change Password', '']
+          { label: 'Username', value: username ? `@${username}` : 'Not added' },
+          { label: 'Mobile Number', value: user.phone || 'Not added' },
+          { label: 'Email Address', value: displayEmail || 'Not added' },
+          { label: 'Change Password', value: 'Contact support', onPress: () => openSupportEmail('Lookmefy account access request') }
         ]}
       />
 
       <ProfileSettingsSection
         title="Security & Legal"
         rows={[
-          ['Security Center', ''],
-          ['Two-Factor Authentication', ''],
-          ['Data & Privacy', ''],
-          ['Terms of Service', ''],
-          ['Privacy Policy', '']
+          { label: 'Support Center', onPress: () => onNavigate('info', { page: 'support' }) },
+          { label: 'Return and Refund Policy', onPress: () => onNavigate('info', { page: 'returns' }) },
+          { label: 'Cancellation Policy', onPress: () => onNavigate('info', { page: 'cancellation' }) },
+          { label: 'Data & Privacy', onPress: () => onNavigate('info', { page: 'privacy' }) },
+          { label: 'Terms of Service', onPress: () => onNavigate('info', { page: 'terms' }) },
+          { label: 'Privacy Policy', onPress: () => onNavigate('info', { page: 'privacy' }) }
         ]}
       />
 
       <TouchableOpacity style={styles.profileLogoutButton} onPress={onLogout}>
         <Text style={styles.profileLogoutText}>Logout</Text>
       </TouchableOpacity>
+      <Modal visible={editVisible} transparent animationType="fade" onRequestClose={() => setEditVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
+          <Pressable style={styles.profileEditBackdrop} onPress={() => setEditVisible(false)} />
+          <View style={styles.profileEditSheet}>
+            <View style={styles.profileEditHandle} />
+            <View style={styles.profileEditHead}>
+              <View>
+                <Text style={styles.profileEditSheetTitle}>Edit Profile</Text>
+                <Text style={styles.profileEditSheetSub}>Update the name and shopping preference shown in your account.</Text>
+              </View>
+              <TouchableOpacity style={styles.profileEditClose} onPress={() => setEditVisible(false)}>
+                <Ionicons name="close" size={21} color="#2b2321" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.profileEditLabel}>Name</Text>
+            <TextInput
+              style={styles.profileEditInput}
+              value={editName}
+              onChangeText={setEditName}
+              placeholder="Your name"
+              placeholderTextColor="#9a918d"
+              autoCapitalize="words"
+              returnKeyType="done"
+            />
+
+            <Text style={styles.profileEditLabel}>Gender preference</Text>
+            <View style={styles.profileGenderGrid}>
+              {profileGenderOptions.map((option) => {
+                const selected = editGender === option.value;
+                return (
+                  <TouchableOpacity key={option.value} style={[styles.profileGenderOption, selected && styles.profileGenderOptionActive]} activeOpacity={0.84} onPress={() => setEditGender(option.value)}>
+                    <Ionicons name={option.icon} size={18} color={selected ? '#ffffff' : '#9b5658'} />
+                    <Text style={[styles.profileGenderText, selected && styles.profileGenderTextActive]}>{option.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {editMessage ? <Text style={[styles.profileEditMessage, /saving|updated|saved/i.test(editMessage) ? null : styles.errorText]}>{editMessage}</Text> : null}
+
+            <View style={styles.profileEditActions}>
+              <TouchableOpacity style={styles.profileEditCancelButton} activeOpacity={0.84} onPress={() => setEditVisible(false)}>
+                <Text style={styles.profileEditCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.profileEditSaveButton, profileSaving && styles.disabledButton]} activeOpacity={0.88} disabled={profileSaving} onPress={saveProfileDetails}>
+                {profileSaving ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileEditSaveText}>Save</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </ScrollView>
   );
@@ -4693,15 +4856,19 @@ function ProfileSettingsSection({ title, rows }) {
     <View style={styles.profileSection}>
       <Text style={styles.profileSectionTitle}>{title}</Text>
       <View style={styles.profileSettingsList}>
-        {rows.map(([label, value]) => (
-          <TouchableOpacity key={label} style={styles.profileSettingsRow} activeOpacity={0.8}>
-            <View style={styles.profileSettingsCopy}>
-              <Text style={styles.profileSettingsLabel}>{label}</Text>
-              {value ? <Text style={styles.profileSettingsValue}>{value}</Text> : null}
-            </View>
-            <Ionicons name="chevron-forward" size={21} color="#55514f" />
-          </TouchableOpacity>
-        ))}
+        {rows.map((row) => {
+          const item = Array.isArray(row) ? { label: row[0], value: row[1], onPress: row[2] } : row;
+          const actionable = typeof item.onPress === 'function';
+          return (
+            <TouchableOpacity key={item.label} style={styles.profileSettingsRow} activeOpacity={actionable ? 0.8 : 1} disabled={!actionable} onPress={item.onPress}>
+              <View style={styles.profileSettingsCopy}>
+                <Text style={styles.profileSettingsLabel}>{item.label}</Text>
+                {item.value ? <Text style={styles.profileSettingsValue}>{item.value}</Text> : null}
+              </View>
+              {actionable ? <Ionicons name="chevron-forward" size={21} color="#55514f" /> : null}
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </View>
   );
@@ -4734,8 +4901,50 @@ function HowItWorksScreen({ user, onNavigate }) {
 }
 
 function InfoScreen({ page, user, onNavigate }) {
-  const meta = infoPages[page];
+  const policy = policyPages[page];
+  const meta = policy ? [policy.kicker, policy.title, policy.lead, policy.image] : infoPages[page];
   if (!meta) return <NotFoundScreen user={user} onNavigate={onNavigate} />;
+
+  if (policy) {
+    const emailSubject = policy.emailSubject || 'Lookmefy support request';
+    return (
+      <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
+        <View style={styles.pageHero}>
+          <Image source={images[policy.image] || images.hero} style={styles.pageImage} />
+          <View style={styles.pageCopy}>
+            <Text style={styles.kicker}>{policy.kicker}</Text>
+            <Text style={styles.screenTitle}>{policy.title}</Text>
+            <Text style={styles.policyUpdated}>Last updated: {policy.updated}</Text>
+            <Text style={styles.description}>{policy.lead}</Text>
+            <AppButton label="Email Support" icon="mail-outline" onPress={() => openSupportEmail(emailSubject)} />
+          </View>
+        </View>
+
+        <View style={styles.policyGrid}>
+          {policy.sections.map((section) => (
+            <View key={section.title} style={styles.policyCard}>
+              <Text style={styles.policySectionTitle}>{section.title}</Text>
+              {section.body.map((text, index) => (
+                <PolicyText key={`${section.title}-${index}`} text={text} emailSubject={emailSubject} />
+              ))}
+            </View>
+          ))}
+
+          {policy.related?.length ? (
+            <View style={styles.policyRelated}>
+              <Text style={styles.policyRelatedTitle}>Related pages</Text>
+              {policy.related.map(([label, targetPage]) => (
+                <TouchableOpacity key={targetPage} style={styles.policyRelatedRow} activeOpacity={0.8} onPress={() => onNavigate('info', { page: targetPage })}>
+                  <Text style={styles.policyRelatedText}>{label}</Text>
+                  <Ionicons name="chevron-forward" size={19} color="#55514f" />
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      </ScrollView>
+    );
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
@@ -4755,6 +4964,26 @@ function InfoScreen({ page, user, onNavigate }) {
         <InfoCard title="Privacy aware" text="Your full-body photo is part of your personal profile." />
       </View>
     </ScrollView>
+  );
+}
+
+function PolicyText({ text, emailSubject }) {
+  const value = String(text || '');
+  if (!value.includes(supportEmail)) {
+    return <Text style={styles.policyText}>{value}</Text>;
+  }
+  const parts = value.split(supportEmail);
+  return (
+    <Text style={styles.policyText}>
+      {parts.map((part, index) => (
+        <Text key={`${part}-${index}`}>
+          {part}
+          {index < parts.length - 1 ? (
+            <Text style={styles.policyEmail} onPress={() => openSupportEmail(emailSubject)}>{supportEmail}</Text>
+          ) : null}
+        </Text>
+      ))}
+    </Text>
   );
 }
 
@@ -8347,6 +8576,29 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700'
   },
+  productCategoryMeta: {
+    alignSelf: 'flex-start',
+    marginTop: 10,
+    minHeight: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eadfdb',
+    backgroundColor: '#fffdfb',
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6
+  },
+  productCategoryMetaLabel: {
+    color: '#8c817c',
+    fontSize: 10,
+    fontWeight: '700'
+  },
+  productCategoryMetaValue: {
+    color: '#4f4a48',
+    fontSize: 10,
+    fontWeight: '700'
+  },
   productOptionLabel: {
     marginTop: 25,
     color: '#423d3a',
@@ -8443,31 +8695,11 @@ const styles = StyleSheet.create({
   productActionTextActive: {
     color: '#ffffff'
   },
-  productBenefitsBand: {
-    minHeight: 112,
-    paddingHorizontal: 14,
-    backgroundColor: '#f4eeee',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around'
-  },
-  productBenefitItem: {
-    flex: 1,
-    alignItems: 'center'
-  },
-  productBenefitTitle: {
+  productDebugApi: {
     marginTop: 8,
-    color: '#3a3532',
-    fontSize: 10,
+    color: '#64748b',
+    fontSize: 11,
     fontWeight: '700'
-  },
-  productBenefitText: {
-    marginTop: 2,
-    color: '#5f5854',
-    textAlign: 'center',
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: '600'
   },
   productAccordion: {
     paddingHorizontal: 14,
@@ -10780,6 +11012,158 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700'
   },
+  profileEditOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end'
+  },
+  profileEditBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(20, 16, 14, 0.42)'
+  },
+  profileEditSheet: {
+    marginHorizontal: 10,
+    marginBottom: Math.max(screenBottomInset, 12),
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fffdfb',
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 18,
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: -8 },
+    elevation: 8
+  },
+  profileEditHandle: {
+    alignSelf: 'center',
+    width: 42,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#ded3ce',
+    marginBottom: 14
+  },
+  profileEditHead: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16
+  },
+  profileEditSheetTitle: {
+    ...typography.h3,
+    color: '#2b2321',
+    fontSize: 19,
+    lineHeight: 25
+  },
+  profileEditSheetSub: {
+    ...typography.caption,
+    marginTop: 5,
+    maxWidth: 270,
+    color: '#6f6864',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500'
+  },
+  profileEditClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f5efec',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileEditLabel: {
+    ...typography.caption,
+    marginTop: 17,
+    marginBottom: 8,
+    color: '#5d5754',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  profileEditInput: {
+    minHeight: 48,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ded3ce',
+    backgroundColor: '#fbf7f6',
+    paddingHorizontal: 13,
+    color: '#211c1a',
+    fontSize: 15,
+    fontWeight: '700'
+  },
+  profileGenderGrid: {
+    flexDirection: 'row',
+    gap: 8
+  },
+  profileGenderOption: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ded3ce',
+    backgroundColor: '#fbf7f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    paddingHorizontal: 8
+  },
+  profileGenderOptionActive: {
+    borderColor: '#050505',
+    backgroundColor: '#050505'
+  },
+  profileGenderText: {
+    ...typography.caption,
+    color: '#5d5754',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  profileGenderTextActive: {
+    color: '#ffffff'
+  },
+  profileEditMessage: {
+    ...typography.caption,
+    marginTop: 12,
+    color: '#5d5754',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700'
+  },
+  profileEditActions: {
+    marginTop: 20,
+    flexDirection: 'row',
+    gap: 10
+  },
+  profileEditCancelButton: {
+    flex: 1,
+    height: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ded3ce',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileEditCancelText: {
+    ...typography.caption,
+    color: '#5d5754',
+    fontSize: 13,
+    fontWeight: '700'
+  },
+  profileEditSaveButton: {
+    flex: 1,
+    height: 46,
+    borderRadius: 8,
+    backgroundColor: '#050505',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileEditSaveText: {
+    ...typography.caption,
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700'
+  },
   profileCreditsCard: {
     marginHorizontal: 18,
     marginTop: 4,
@@ -12239,6 +12623,71 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     marginBottom: 4
+  },
+  policyGrid: {
+    paddingHorizontal: 16,
+    gap: 10
+  },
+  policyCard: {
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb'
+  },
+  policyUpdated: {
+    ...typography.caption,
+    color: '#8f4f52',
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  policySectionTitle: {
+    ...typography.h4,
+    marginBottom: 8,
+    color: '#111827',
+    fontSize: 17,
+    lineHeight: 23
+  },
+  policyText: {
+    ...typography.smallBody,
+    color: '#4b5563',
+    fontSize: 14,
+    lineHeight: 22,
+    marginTop: 6
+  },
+  policyEmail: {
+    color: '#8f4f52',
+    fontWeight: '700',
+    textDecorationLine: 'underline'
+  },
+  policyRelated: {
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb'
+  },
+  policyRelatedTitle: {
+    ...typography.label,
+    color: '#8f4f52',
+    textTransform: 'uppercase',
+    marginBottom: 8
+  },
+  policyRelatedRow: {
+    minHeight: 44,
+    borderTopWidth: 1,
+    borderTopColor: '#f1ece9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  policyRelatedText: {
+    ...typography.smallBody,
+    flex: 1,
+    color: '#2b2321',
+    fontSize: 14,
+    fontWeight: '700'
   },
   stepCard: {
     marginHorizontal: 16,

@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeModules, Platform } from 'react-native';
 
 const productionApi = 'http://15.206.207.210/api';
+const developmentApi = Platform.OS === 'android' ? 'http://10.0.2.2:5050/api' : 'http://localhost:5050/api';
+const isDevelopmentRuntime = typeof __DEV__ !== 'undefined' && __DEV__;
 function normalizeApiUrl(url) {
   return String(url || '').trim().replace(/\/$/, '');
 }
@@ -50,12 +52,21 @@ function platformApiUrl(url) {
   return normalized;
 }
 
-export const API_URL = platformApiUrl(process.env.EXPO_PUBLIC_API_URL || productionApi);
-const runtimeApiUrl = localRuntimeApiUrl(process.env.EXPO_PUBLIC_API_URL);
-const fallbackApiUrls = String(process.env.EXPO_PUBLIC_API_FALLBACK_URLS || '')
+const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL || '';
+const configuredFallbackApiUrls = String(process.env.EXPO_PUBLIC_API_FALLBACK_URLS || '')
   .split(',')
-  .map(platformApiUrl)
+  .map((url) => url.trim())
   .filter(Boolean);
+
+export const API_URL = isDevelopmentRuntime
+  ? platformApiUrl(localRuntimeApiUrl(configuredApiUrl) || developmentApi)
+  : platformApiUrl(configuredApiUrl || productionApi);
+const runtimeApiUrl = isDevelopmentRuntime
+  ? localRuntimeApiUrl(configuredApiUrl || developmentApi)
+  : localRuntimeApiUrl(configuredApiUrl);
+const fallbackApiUrls = isDevelopmentRuntime
+  ? configuredFallbackApiUrls.map(localRuntimeApiUrl).filter(Boolean)
+  : configuredFallbackApiUrls.map(platformApiUrl).filter(Boolean);
 const preferredApiUrl = runtimeApiUrl || API_URL;
 const apiUrls = [...new Set([preferredApiUrl, API_URL, runtimeApiUrl, ...fallbackApiUrls].map(normalizeApiUrl).filter(Boolean))];
 let activeApiUrl = preferredApiUrl;
@@ -172,6 +183,15 @@ function friendlyHttpError({ status, path, detail }) {
   return detailText || `${feature} request could not be completed.`;
 }
 
+function debugApiSuffix(baseUrl) {
+  if (typeof __DEV__ === 'undefined' || !__DEV__ || !baseUrl) return '';
+  try {
+    return ` [API: ${new URL(baseUrl).host}]`;
+  } catch {
+    return ` [API: ${baseUrl}]`;
+  }
+}
+
 function networkErrorMessage(path, timeoutMs, aborted = false) {
   const feature = featureNameForPath(path);
   if (aborted) return `${feature} took longer than ${Math.round(timeoutMs / 1000)}s. Try again, or check the backend logs if this keeps happening.`;
@@ -198,7 +218,7 @@ async function pollJob(baseUrl, jobId, headers, timeoutMs) {
     const data = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = readableError(data, `Job status failed (${response.status})`);
-      throw new ApiError(friendlyHttpError({ status: response.status, path: `/jobs/${jobId}`, detail }), {
+      throw new ApiError(`${friendlyHttpError({ status: response.status, path: `/jobs/${jobId}`, detail })}${debugApiSuffix(baseUrl)}`, {
         status: response.status,
         path: `/jobs/${jobId}`,
         detail,
@@ -207,11 +227,13 @@ async function pollJob(baseUrl, jobId, headers, timeoutMs) {
     }
     const status = data?.job?.status;
     if (status === 'succeeded') return data.result;
-    if (status === 'failed') throw new ApiError(data?.job?.error || 'Background task failed', {
-      code: 'job_failed',
-      path: `/jobs/${jobId}`,
-      baseUrl
-    });
+    if (status === 'failed') {
+      throw new ApiError(`${data?.job?.error || 'Background task failed'}${debugApiSuffix(baseUrl)}`, {
+        code: 'job_failed',
+        path: `/jobs/${jobId}`,
+        baseUrl
+      });
+    }
   }
 
   throw new ApiError('Still processing. Please try again in a moment.', {
@@ -227,9 +249,14 @@ export async function api(path, options = {}) {
   const isForm = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
   const headers = isForm ? {} : { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (isDevelopmentRuntime && /^\/tryons(?:\/|$)/i.test(path)) headers['x-fitlook-sync'] = '1';
   const requestTimeout = Number(timeoutMs || (isForm ? FORM_TIMEOUT_MS : DEFAULT_TIMEOUT_MS));
 
-  const orderedUrls = [...new Set([activeApiUrl, ...apiUrls])];
+  const method = String(fetchOptions.method || 'GET').toUpperCase();
+  const canRetryAcrossHosts = ['GET', 'HEAD', 'OPTIONS'].includes(method);
+  const orderedUrls = canRetryAcrossHosts
+    ? [...new Set([activeApiUrl, ...apiUrls])]
+    : [activeApiUrl];
   let networkError = null;
   for (const baseUrl of orderedUrls) {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
@@ -245,7 +272,7 @@ export async function api(path, options = {}) {
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         const detail = readableError(data, '');
-        throw new ApiError(friendlyHttpError({ status: response.status, path, detail }), {
+        throw new ApiError(`${friendlyHttpError({ status: response.status, path, detail })}${debugApiSuffix(baseUrl)}`, {
           status: response.status,
           code: data?.code || '',
           path,
@@ -276,10 +303,40 @@ export async function api(path, options = {}) {
   throw networkError || new ApiError(networkErrorMessage(path, requestTimeout), { code: 'network_unreachable', path });
 }
 
+const IMAGE_MIME_TYPES = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  gif: 'image/gif',
+  avif: 'image/avif',
+};
+
+function filenameFromUri(uri) {
+  const value = String(uri || '').split(/[?#]/)[0];
+  const filename = value.split('/').pop() || '';
+
+  try {
+    return decodeURIComponent(filename);
+  } catch {
+    return filename;
+  }
+}
+
 export function filePart(asset, fallbackName = 'upload.jpg') {
   if (!asset?.uri) return null;
-  const name = asset.fileName || fallbackName;
+
+  const candidateName = asset.fileName || filenameFromUri(asset.uri);
+  const name = candidateName && /\.[a-z0-9]+$/i.test(candidateName)
+    ? candidateName
+    : fallbackName;
   const extension = name.split('.').pop()?.toLowerCase() || 'jpg';
-  const type = asset.mimeType || (extension === 'png' ? 'image/png' : 'image/jpeg');
+  const mimeType = String(asset.mimeType || '').toLowerCase();
+  const type = mimeType === 'image/jpg'
+    ? 'image/jpeg'
+    : mimeType || IMAGE_MIME_TYPES[extension] || 'image/jpeg';
+
   return { uri: asset.uri, name, type };
 }

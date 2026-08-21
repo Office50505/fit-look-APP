@@ -13,6 +13,8 @@
       "bundleIdentifier": "com.kratikdhote.lookmefy",
       "buildNumber": "1",
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
         "NSPhotoLibraryUsageDescription": "Lookmefy needs photo access so you can upload profile and clothing images for try-ons.",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true

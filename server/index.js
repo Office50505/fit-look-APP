@@ -125,31 +125,55 @@ const aiSearchConcurrency = createConcurrencyLimiter({
   failClosed: true,
   message: 'AI Studio is already searching for you. Please wait for that result.'
 });
-const tryOnMinuteLimiter = createRateLimiter({
-  name: 'tryon-minute',
+
+function normalizedOriginalPath(req) {
+  return String(req.originalUrl || req.path || '')
+    .split('?')[0]
+    .replace(/\/+$/, '');
+}
+
+function isTryOnVideoRequest(req) {
+  return /\/api\/tryons\/[^/]+\/video$/i.test(normalizedOriginalPath(req));
+}
+
+function tryOnConcurrencyKey(req, action) {
+  const forceKey = req.body?.force || req.body?.refresh ? 'force' : 'cached';
+  return `${rateLimitKeys.principal(req)}:${action}:${normalizedOriginalPath(req)}:${forceKey}`;
+}
+
+const tryOnImageMinuteLimiter = createRateLimiter({
+  name: 'tryon-image-minute',
   windowMs: 60 * 1000,
-  max: Number(process.env.RATE_LIMIT_TRYON_MINUTE_MAX || 3),
+  max: Number(process.env.RATE_LIMIT_TRYON_IMAGE_MINUTE_MAX || process.env.RATE_LIMIT_TRYON_MINUTE_MAX || 15),
   keyGenerator: rateLimitKeys.principal,
-  skip: (req) => req.method !== 'POST',
+  skip: (req) => req.method !== 'POST' || isTryOnVideoRequest(req),
   failClosed: true,
-  message: 'Try-on generation is being requested too quickly. Please wait a moment.'
+  message: 'Image try-on generation is being requested too quickly. Please wait a moment.'
 });
-const tryOnDailyLimiter = createRateLimiter({
-  name: 'tryon-day',
-  windowMs: 24 * 60 * 60 * 1000,
-  max: Number(process.env.RATE_LIMIT_TRYON_DAY_MAX || 30),
+const tryOnVideoMinuteLimiter = createRateLimiter({
+  name: 'tryon-video-minute',
+  windowMs: 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_TRYON_VIDEO_MINUTE_MAX || 10),
   keyGenerator: rateLimitKeys.principal,
   skip: (req) => req.method !== 'POST',
   failClosed: true,
-  message: 'Daily try-on generation limit reached. Please try again tomorrow.'
+  message: 'Video try-on generation is being requested too quickly. Please wait a moment.'
 });
-const tryOnConcurrency = createConcurrencyLimiter({
-  name: 'tryon-generation',
-  ttlMs: Number(process.env.RATE_LIMIT_TRYON_LOCK_MS || 4 * 60 * 1000),
-  keyGenerator: rateLimitKeys.principal,
+const tryOnImageConcurrency = createConcurrencyLimiter({
+  name: 'tryon-image-generation',
+  ttlMs: Number(process.env.RATE_LIMIT_TRYON_IMAGE_LOCK_MS || process.env.RATE_LIMIT_TRYON_LOCK_MS || 3 * 60 * 1000),
+  keyGenerator: (req) => tryOnConcurrencyKey(req, 'image'),
+  skip: (req) => req.method !== 'POST' || isTryOnVideoRequest(req),
+  failClosed: true,
+  message: 'This image try-on is already generating. Please wait for it to finish.'
+});
+const tryOnVideoConcurrency = createConcurrencyLimiter({
+  name: 'tryon-video-generation',
+  ttlMs: Number(process.env.RATE_LIMIT_TRYON_VIDEO_LOCK_MS || 8 * 60 * 1000),
+  keyGenerator: (req) => tryOnConcurrencyKey(req, 'video'),
   skip: (req) => req.method !== 'POST',
   failClosed: true,
-  message: 'A try-on is already generating for your account. Please wait for it to finish.'
+  message: 'This video try-on is already generating. Please wait for it to finish.'
 });
 const profileUploadLimiter = createRateLimiter({
   name: 'profile-upload',
@@ -182,7 +206,8 @@ app.use('/api/auth/profile', profileUploadLimiter);
 app.use('/api/auth/body-photo', profileUploadLimiter);
 app.use('/api/recommendations/studio-chat', aiSearchIpLimiter, aiSearchLimiter, aiSearchConcurrency);
 app.use('/api/products/amazon-search', aiSearchIpLimiter, aiSearchLimiter, aiSearchConcurrency);
-app.use('/api/tryons', tryOnMinuteLimiter, tryOnDailyLimiter, tryOnConcurrency);
+app.use('/api/tryons/:productId/video', tryOnVideoMinuteLimiter, tryOnVideoConcurrency);
+app.use('/api/tryons', tryOnImageMinuteLimiter, tryOnImageConcurrency);
 app.use('/api/closet/items/analyze', closetUploadLimiter);
 app.use('/api/closet/items', closetUploadLimiter);
 app.use('/api/payments/phonepe/subscription', paymentLimiter);

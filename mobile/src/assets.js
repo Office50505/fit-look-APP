@@ -88,3 +88,126 @@ export const infoPages = {
   privacy: ['Privacy', 'Your try-on profile is personal.', 'Account details, full-body photos, token usage, and shopping activity should be handled carefully.', 'hero'],
   terms: ['Terms', 'Terms and conditions.', 'This page outlines where account, token, shopping, and AI try-on usage rules live.', 'hero']
 };
+
+export const policyPages = {
+  support: {
+    kicker: 'Help',
+    title: 'Support Center',
+    updated: '17 August 2026',
+    lead: 'Find help for account access, AI try-on, tokens, product links, shipping, returns, and privacy requests.',
+    image: 'search-shirt-4.jpg',
+    emailSubject: 'Lookmefy support request',
+    related: [
+      ['Return and Refund Policy', 'returns'],
+      ['Cancellation Policy', 'cancellation']
+    ],
+    sections: [
+      {
+        title: 'Fastest way to get help',
+        body: [
+          'Email support@lookmefy.com with your registered account details and issue type. For payments, include transaction/order reference. For Amazon products, include the product URL and seller name.'
+        ]
+      },
+      {
+        title: 'AI generation help',
+        body: [
+          'If image or video generation fails, try a clear full-body profile photo, a wearable product image, and a stable connection. If tokens were deducted for a failed generation, contact support for review.'
+        ]
+      },
+      {
+        title: 'Shopping help',
+        body: [
+          "Lookmefy redirects shopping to Amazon. For delivery, cancellation, return, exchange, warranty, and final refund approval, follow Amazon's and the seller's policy."
+        ]
+      },
+      {
+        title: 'Privacy and deletion',
+        body: [
+          'For privacy, correction, consent withdrawal, or deletion requests, use the Data Deletion Policy or email support with the subject line that matches your request.'
+        ]
+      }
+    ]
+  },
+  returns: {
+    kicker: 'Policy',
+    title: 'Return and Refund Policy',
+    updated: '17 August 2026',
+    lead: 'This policy separates Amazon product returns from Lookmefy token, AI generation, membership, and digital-service refunds.',
+    image: 'hero',
+    emailSubject: 'Lookmefy return or refund request',
+    related: [
+      ['Support Center', 'support'],
+      ['Cancellation Policy', 'cancellation']
+    ],
+    sections: [
+      {
+        title: 'Product returns',
+        body: [
+          "For products bought on Amazon, Amazon's and the listed seller's return, exchange, replacement, and refund policy applies. Check size, hygiene exclusions, return window, tags, packaging, pickup availability, and refund method before purchase. Lookmefy redirects users to Amazon and can help locate the product/order support path, but final approval is controlled by Amazon or the seller."
+        ]
+      },
+      {
+        title: 'Token and AI generation refunds',
+        body: [
+          'Tokens used for completed AI outputs are generally non-refundable because the generation cost is incurred when the request is processed. If tokens are deducted and generation fails without a usable output, Lookmefy may restore the deducted tokens after review. The primary remedy for failed generation is token restoration, not cash refund.'
+        ]
+      },
+      {
+        title: 'Monthly membership refunds',
+        body: [
+          'Monthly membership payments are charged through the payment flow shown in the app. Used tokens, credited tokens, and completed AI generations are generally not refundable. If a duplicate charge, payment mismatch, or technical billing error is confirmed, an approved refund will be processed within 5-7 business days, subject to payment provider and bank timelines.'
+        ]
+      },
+      {
+        title: 'Payment refunds',
+        body: [
+          'Accepted refunds will normally be returned to the original payment method or credited as account tokens, depending on the case, payment processor rules, and applicable law. Approved Lookmefy refunds are initiated within 5-7 business days. Actual bank, card, UPI, or payment-app posting time may vary.'
+        ]
+      },
+      {
+        title: 'Non-returnable cases',
+        body: [
+          'AI previews are not guarantees of exact fit, product quality, or Amazon/seller fulfilment. A difference between AI preview and real-world product appearance does not by itself make an Amazon product return eligible unless Amazon or the seller policy allows it. Items marked final sale, hygiene-sensitive, customized, damaged after delivery, missing tags/packaging, or outside the return window may be refused by Amazon or sellers.'
+        ]
+      }
+    ]
+  },
+  cancellation: {
+    kicker: 'Policy',
+    title: 'Cancellation Policy',
+    updated: '17 August 2026',
+    lead: 'This policy explains cancellation for AI generation requests, token purchases, and third-party product orders.',
+    image: 'hero',
+    emailSubject: 'Lookmefy cancellation request',
+    related: [
+      ['Support Center', 'support'],
+      ['Return and Refund Policy', 'returns']
+    ],
+    sections: [
+      {
+        title: 'AI generation cancellation',
+        body: [
+          'Image/video generation starts quickly after you submit a request. Once submitted to the AI provider, a generation request may not be cancellable because provider cost may already be incurred. If the request fails and no usable output is delivered, token restoration may apply under the Return and Refund Policy.'
+        ]
+      },
+      {
+        title: 'Token purchase cancellation',
+        body: [
+          'Token top-ups and digital credits may be cancelled only before successful payment confirmation. After tokens are credited, cancellation/refund is handled under the Return and Refund Policy. If a payment succeeds but tokens do not appear, contact support with the transaction reference so we can verify and credit or reverse as applicable.'
+        ]
+      },
+      {
+        title: 'Monthly membership cancellation',
+        body: [
+          'Monthly membership is available now. You can cancel future renewal/mandate billing through the payment or account flow when available, or by contacting support from your registered account email. Cancelling future billing does not automatically refund already-used tokens, credited tokens, or completed AI generations. Confirmed duplicate or technical billing errors may be refunded under the Return and Refund Policy.'
+        ]
+      },
+      {
+        title: 'Amazon order cancellation',
+        body: [
+          "For products ordered on Amazon, cancellation is governed by Amazon's and the seller's policy and order status. Any cancellation charges or restrictions should be reviewed on Amazon before checkout."
+        ]
+      }
+    ]
+  }
+};

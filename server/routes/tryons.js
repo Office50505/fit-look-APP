@@ -10,6 +10,7 @@ import TryOn, { tryOnToClient } from '../models/TryOn.js';
 import User from '../models/User.js';
 import { requireUser } from './auth.js';
 import { inlineOrQueue, registerJobHandler } from '../utils/jobs.js';
+import { logger } from '../utils/logger.js';
 import { isStorageConfigurationError, readStoredFile, saveStoredFile, storedFileToClientUrl } from '../utils/storage.js';
 import { inferTryOnModel, normalizeTryOnModel } from '../utils/tryOnModel.js';
 import { wearableCompatibility } from '../utils/wearable.js';
@@ -116,7 +117,7 @@ function readableError(value, fallback = 'Request failed') {
   if (!value) return fallback;
   if (typeof value === 'string') {
     if (/content[_\s-]?policy|safety|flagged|content[_\s-]?policy[_\s-]?violation/i.test(value)) {
-      return 'This try-on was blocked by the image provider safety check. Please try again with the fitted/swimwear try-on mode.';
+      return 'This try-on was blocked by the image provider safety check. Try another product image or upload a clearer profile photo.';
     }
     return redactLargeData(value);
   }
@@ -124,7 +125,7 @@ function readableError(value, fallback = 'Request failed') {
   if (Array.isArray(value)) {
     const policyError = value.find((item) => /content[_\s-]?policy|safety|flagged/i.test([item?.type, item?.code, item?.msg, item?.message].filter(Boolean).join(' ')));
     if (policyError) {
-      return 'This try-on was blocked by the image provider safety check. Lookmefy will use the fitted/swimwear try-on mode for this product.';
+      return 'This try-on was blocked by the image provider safety check. Try another product image or upload a clearer profile photo.';
     }
     const imageSizeError = value.find((item) => item?.type === 'image_too_small');
     if (imageSizeError) {
@@ -137,7 +138,7 @@ function readableError(value, fallback = 'Request failed') {
   if (typeof value === 'object') {
     const policyText = [value.type, value.code, value.msg, value.message, value.error].filter((item) => typeof item === 'string').join(' ');
     if (/content[_\s-]?policy|safety|flagged/i.test(policyText)) {
-      return 'This try-on was blocked by the image provider safety check. Lookmefy will use the fitted/swimwear try-on mode for this product.';
+      return 'This try-on was blocked by the image provider safety check. Try another product image or upload a clearer profile photo.';
     }
     if (value.type === 'image_too_small') {
       return 'Reference image is too small for Wan 2.6. Wan requires every reference image to be at least 384x384px.';
@@ -198,8 +199,57 @@ function pixverseImageToVideoDuration() {
   return Number.isFinite(value) && value > 0 ? value : 5;
 }
 
+function prunaBaseUrl() {
+  const raw = String(process.env.PRUNA_BASE_URL || 'https://api.pruna.ai/v1').trim() || 'https://api.pruna.ai/v1';
+  const clean = raw.replace(/\/+$/, '');
+  try {
+    const url = new URL(clean);
+    if (url.origin === 'https://api.pruna.ai' && (!url.pathname || url.pathname === '/')) {
+      url.pathname = '/v1';
+      return url.toString().replace(/\/+$/, '');
+    }
+  } catch {
+    return clean;
+  }
+  return clean;
+}
+
+function prunaTryOnModel() {
+  return process.env.PRUNA_TRYON_MODEL || 'p-image-try-on';
+}
+
+function prunaGlassesModel() {
+  return process.env.PRUNA_GLASSES_MODEL || 'p-try-on-glasses';
+}
+
+function prunaTrySync() {
+  const value = process.env.PRUNA_TRYON_SYNC ?? process.env.PRUNA_IMAGE_TRY_SYNC ?? '';
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
+function prunaOutputFormat() {
+  return process.env.PRUNA_TRYON_OUTPUT_FORMAT || 'jpg';
+}
+
+function prunaOutputMimetype() {
+  const format = String(prunaOutputFormat() || '').toLowerCase();
+  if (format.includes('png')) return 'image/png';
+  if (format.includes('webp')) return 'image/webp';
+  if (format.includes('avif')) return 'image/avif';
+  return 'image/jpeg';
+}
+
+function prunaOutputQuality() {
+  const value = Number(process.env.PRUNA_TRYON_OUTPUT_QUALITY || 95);
+  return Number.isFinite(value) && value > 0 ? Math.min(100, Math.round(value)) : 95;
+}
+
+function prunaPreserveInputSize() {
+  return !['0', 'false', 'no', 'off'].includes(String(process.env.PRUNA_TRYON_PRESERVE_INPUT_SIZE ?? 'true').toLowerCase());
+}
+
 function tryOnModelForProduct() {
-  return 'fitroom/tryon-v2';
+  return 'pruna/p-image-try-on';
 }
 
 function imageQuality() {
@@ -392,6 +442,30 @@ function setCachedDataUri(cache, key, value) {
   return value;
 }
 
+function isMissingStoredImageError(error) {
+  return /Bunny storage \(404\)|ENOENT|no such file or directory|Stored file is missing/i.test(readableError(error, ''));
+}
+
+function storedImageUnavailableMessage(label) {
+  if (label === 'person') {
+    return 'Your saved try-on profile photo is unavailable. Upload a new profile photo from Profile, then try again.';
+  }
+  if (label === 'product') {
+    return 'This product image is unavailable for AI try-on. Try another product.';
+  }
+  const readableLabel = String(label || 'Uploaded').replace(/[-_]+/g, ' ').replace(/^\w/, (char) => char.toUpperCase());
+  return `${readableLabel} image is unavailable. Upload it again and try once more.`;
+}
+
+async function readRequiredStoredImage(image, label) {
+  try {
+    return await readStoredFile(image);
+  } catch (error) {
+    if (isMissingStoredImageError(error)) throw new Error(storedImageUnavailableMessage(label));
+    throw error;
+  }
+}
+
 async function cachedDataUri({ cache, key, timer, label, load }) {
   const cached = getCachedDataUri(cache, key);
   if (cached) {
@@ -423,7 +497,7 @@ async function dataUriFromUpload(image, label, timer, options = {}) {
     timer,
     label,
     load: async () => {
-      const stored = await readStoredFile(image);
+      const stored = await readRequiredStoredImage(image, label);
       const normalized = await normalizeAvifImage({
         bytes: stored.bytes,
         mimetype: stored.mimetype || mimetype,
@@ -490,7 +564,7 @@ async function dataUriFromProduct(product, timer, options = {}) {
 async function filePartFromUpload(image, label, timer) {
   if (!image?.path) throw new Error(`${label} image is missing`);
   const mimetype = image.mimetype || 'image/jpeg';
-  const stored = await readStoredFile(image);
+  const stored = await readRequiredStoredImage(image, label);
   const normalized = await normalizeAvifImage({
     bytes: stored.bytes,
     mimetype: stored.mimetype || mimetype,
@@ -573,6 +647,232 @@ function appendFilePart(form, name, file) {
   form.append(name, new Blob([file.bytes], { type: file.mimetype }), file.filename);
 }
 
+function prunaHeaders(extra = {}) {
+  const apiKey = process.env.PRUNA_API_KEY || process.env.PRUNA_KEY || process.env.PRUNA_TOKEN;
+  if (!apiKey) throw new Error('PRUNA_API_KEY is missing on the server');
+  return {
+    apikey: apiKey,
+    ...extra
+  };
+}
+
+function prunaApiUrl(pathname = '') {
+  return `${prunaBaseUrl()}${String(pathname || '').startsWith('/') ? pathname : `/${pathname}`}`;
+}
+
+function envPositiveNumber(names, fallback) {
+  const keys = Array.isArray(names) ? names : [names];
+  const raw = keys.map((key) => process.env[key]).find((value) => value !== undefined && value !== '');
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30_000, label = 'Request') {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(250, timeoutMs));
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: options.signal || controller.signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function prunaUploadTimeoutMs() {
+  return envPositiveNumber(['PRUNA_UPLOAD_TIMEOUT_MS', 'PRUNA_IMAGE_UPLOAD_TIMEOUT_MS'], 30_000);
+}
+
+function prunaSubmitTimeoutMs() {
+  return envPositiveNumber(['PRUNA_SUBMIT_TIMEOUT_MS', 'PRUNA_IMAGE_SUBMIT_TIMEOUT_MS'], prunaTrySync() ? 25_000 : 15_000);
+}
+
+function prunaStatusTimeoutMs() {
+  return envPositiveNumber(['PRUNA_STATUS_TIMEOUT_MS', 'PRUNA_IMAGE_STATUS_TIMEOUT_MS'], 12_000);
+}
+
+function prunaDownloadTimeoutMs() {
+  return envPositiveNumber(['PRUNA_DOWNLOAD_TIMEOUT_MS', 'PRUNA_IMAGE_DOWNLOAD_TIMEOUT_MS'], 30_000);
+}
+
+function prunaAbsoluteUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^(?:https?:|data:image\/)/i.test(raw)) return raw;
+  if (/^file-[a-z0-9_-]+$/i.test(raw)) return prunaApiUrl(`/files/${raw}`);
+  if (raw.startsWith('/')) {
+    const origin = new URL(prunaBaseUrl()).origin;
+    return `${origin}${raw}`;
+  }
+  if (/^predictions\/delivery\//i.test(raw) || /^v1\/predictions\/delivery\//i.test(raw)) {
+    const origin = new URL(prunaBaseUrl()).origin;
+    return `${origin}/${raw.replace(/^\/+/, '')}`;
+  }
+  return '';
+}
+
+function prunaGeneratedImageUrl(value = '') {
+  const url = prunaAbsoluteUrl(value);
+  if (!url) return '';
+  if (/^data:image\//i.test(url)) return url;
+  try {
+    const parsed = new URL(url);
+    if (/\/predictions\/(?:status|cancel)\//i.test(parsed.pathname)) return '';
+    if (/\/predictions\/delivery\//i.test(parsed.pathname)) return url;
+    if (/\.(?:jpe?g|png|webp|gif|avif)(?:$|\?)/i.test(parsed.pathname + parsed.search)) return url;
+    if (/^https?:$/i.test(parsed.protocol)) return url;
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function firstPrunaAssetUrl(value, depth = 0) {
+  if (!value || depth > 8) return '';
+  if (typeof value === 'string') return prunaAbsoluteUrl(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstPrunaAssetUrl(item, depth + 1);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (typeof value !== 'object') return '';
+  for (const key of ['url', 'get', 'file_url', 'fileUrl', 'download_url', 'downloadUrl', 'content', 'href']) {
+    const found = firstPrunaAssetUrl(value[key], depth + 1);
+    if (found) return found;
+  }
+  for (const key of ['urls', 'file', 'asset', 'data', 'result']) {
+    const found = firstPrunaAssetUrl(value[key], depth + 1);
+    if (found) return found;
+  }
+  const id = value.id || value.file_id || value.fileId;
+  if (id) {
+    const direct = prunaAbsoluteUrl(String(id));
+    if (direct) return direct;
+    return prunaApiUrl(`/files/${encodeURIComponent(String(id).trim())}`);
+  }
+  return Object.values(value).map((item) => firstPrunaAssetUrl(item, depth + 1)).find(Boolean) || '';
+}
+
+function firstPrunaImageUrl(value, depth = 0) {
+  if (!value || depth > 8) return '';
+  if (typeof value === 'string') return prunaGeneratedImageUrl(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstPrunaImageUrl(item, depth + 1);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (typeof value !== 'object') return '';
+  for (const key of ['generation_url', 'generationUrl', 'output_url', 'outputUrl', 'image_url', 'imageUrl', 'url']) {
+    const found = firstPrunaImageUrl(value[key], depth + 1);
+    if (found) return found;
+  }
+  for (const key of ['images', 'image', 'output', 'outputs', 'result', 'results', 'data']) {
+    const found = firstPrunaImageUrl(value[key], depth + 1);
+    if (found) return found;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (/^(input|person|person_image|garment|garment_images|glass|urls?|status_url|cancel_url|response_url)$/i.test(key)) continue;
+    const found = firstPrunaImageUrl(child, depth + 1);
+    if (found) return found;
+  }
+  return '';
+}
+
+function prunaPredictionId(value = {}) {
+  return String(value.id || value.prediction_id || value.predictionId || value.request_id || value.requestId || '').trim();
+}
+
+function prunaPredictionStatus(value = {}) {
+  return String(value.status || value.state || value.prediction_status || '').trim().toLowerCase();
+}
+
+function isPrunaSucceeded(value = {}) {
+  const status = prunaPredictionStatus(value);
+  return ['succeeded', 'success', 'completed', 'complete', 'done'].includes(status) || Boolean(firstPrunaImageUrl(value));
+}
+
+function isPrunaFailed(value = {}) {
+  const status = prunaPredictionStatus(value);
+  return ['failed', 'error', 'canceled', 'cancelled'].includes(status) || Boolean(value.error);
+}
+
+async function uploadPrunaFile(file, label, timer) {
+  const form = new FormData();
+  appendFilePart(form, 'content', file);
+  timer?.mark(`pruna ${label} upload start`, { kb: Math.round(file.bytes.length / 1024), mimetype: file.mimetype });
+  const response = await fetchWithTimeout(prunaApiUrl('/files'), {
+    method: 'POST',
+    headers: prunaHeaders(),
+    body: form
+  }, prunaUploadTimeoutMs(), `Pruna ${label} upload`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(readableError(data.error || data.detail || data.message || data, `Could not upload ${label} image to Pruna`));
+  const fileUrl = firstPrunaAssetUrl(data);
+  if (!fileUrl) throw new Error(`Pruna uploaded ${label} image but did not return a file URL`);
+  timer?.mark(`pruna ${label} uploaded`);
+  return fileUrl;
+}
+
+async function prunaPredictionStatusRequest(predictionId) {
+  const response = await fetchWithTimeout(prunaApiUrl(`/predictions/status/${encodeURIComponent(predictionId)}`), {
+    headers: prunaHeaders()
+  }, prunaStatusTimeoutMs(), 'Pruna status request');
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(readableError(data.error || data.detail || data.message || data, 'Pruna prediction status request failed'));
+  return data;
+}
+
+async function waitForPrunaPrediction(initial, timer) {
+  if (isPrunaSucceeded(initial)) return initial;
+  if (isPrunaFailed(initial)) throw new Error(readableError(initial.error || initial, 'Pruna try-on generation failed'));
+  const predictionId = prunaPredictionId(initial);
+  if (!predictionId) throw new Error('Pruna did not return a prediction id or generated image');
+
+  const configuredAttempts = envPositiveNumber(['PRUNA_POLL_ATTEMPTS', 'PRUNA_IMAGE_POLL_ATTEMPTS'], 45);
+  const configuredPollMs = envPositiveNumber(['PRUNA_POLL_MS', 'PRUNA_IMAGE_POLL_MS'], 1000);
+  const maxAttempts = Number.isFinite(configuredAttempts) && configuredAttempts > 0 ? Math.round(configuredAttempts) : 45;
+  const pollMs = Number.isFinite(configuredPollMs) && configuredPollMs > 0 ? Math.max(250, configuredPollMs) : 1000;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    const status = await prunaPredictionStatusRequest(predictionId);
+    if (attempt === 0 || attempt % 5 === 0 || isPrunaSucceeded(status)) {
+      timer?.mark('pruna status poll', { attempt, status: prunaPredictionStatus(status) });
+    }
+    if (isPrunaSucceeded(status)) return status;
+    if (isPrunaFailed(status)) throw new Error(readableError(status.error || status, 'Pruna try-on generation failed'));
+  }
+  throw new Error(`Pruna try-on generation timed out after ${Math.round((maxAttempts * pollMs) / 1000)} seconds`);
+}
+
+async function callPrunaPrediction({ model, input, timer, label = 'pruna' }) {
+  const modelName = String(model || prunaTryOnModel()).replace(/^pruna\//, '');
+  const headers = prunaHeaders({
+    'Content-Type': 'application/json',
+    Model: modelName
+  });
+  if (prunaTrySync()) headers['Try-Sync'] = 'true';
+  timer?.mark(`${label} prediction submit`, { model: modelName, sync: prunaTrySync(), fields: Object.keys(input || {}) });
+  const response = await fetchWithTimeout(prunaApiUrl('/predictions'), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ input })
+  }, prunaSubmitTimeoutMs(), 'Pruna prediction submit');
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(readableError(data.error || data.detail || data.message || data, 'Pruna try-on request failed'));
+  timer?.mark(`${label} prediction submitted`, { status: prunaPredictionStatus(data) || 'submitted', predictionId: prunaPredictionId(data) });
+  return waitForPrunaPrediction(data, timer);
+}
+
 async function fitRoomJson(pathname, options = {}) {
   const response = await fetch(`${fitRoomBaseUrl()}${pathname}`, {
     ...options,
@@ -636,6 +936,109 @@ async function callFitRoomTryOn({ user, product, garmentFile, clothType, timer }
     model: 'fitroom/tryon-v2',
     quality: fitRoomHdMode() ? 'hd' : 'standard'
   };
+}
+
+function tryOnText(product = {}) {
+  return [
+    product.name,
+    product.productName,
+    product.brand,
+    product.category,
+    product.gender,
+    product.description,
+    Array.isArray(product.tags) ? product.tags.join(' ') : product.tags
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function tryOnIntentForProduct(product = {}, options = {}) {
+  const text = tryOnText(product);
+  const category = String(product.category || '').toLowerCase();
+  const source = `${category} ${text}`;
+
+  if (/\b(wallets?|card\s*holders?|key\s*chains?|keychains?|umbrellas?|phone\s*cases?)\b/i.test(source)) {
+    return {
+      key: 'unsupported',
+      label: 'handheld accessory',
+      unsupportedMessage: 'This accessory is not supported for AI try-on yet. Try clothing, shoes, bags, watches, eyewear, or wearable jewelry.'
+    };
+  }
+  if (/\b(sunglasses?|sun\s*glasses|eye\s*glasses|eyeglasses|spectacles?|optical\s*frames?|goggles?|eyewear)\b/i.test(source)) {
+    return { key: 'eyewear', label: 'glasses', action: 'place only the glasses or sunglasses on the face' };
+  }
+  if (/\b(watches?|smart\s*watches?|smartwatches?|bracelets?|wristwear|chronograph)\b/i.test(source)) {
+    return { key: 'wristwear-single', label: 'watch or bracelet', action: 'apply one watch or bracelet to the visible wrist only' };
+  }
+  if (/\b(shoes?|sneakers?|boots?|loafers?|sandals?|slippers?|heels?|pumps?|flats?|footwear|trainers?|socks?)\b/i.test(source)) {
+    return { key: 'feet', label: 'footwear', action: 'replace only the footwear' };
+  }
+  if (/\b(handbags?|bags?|backpacks?|totes?|sling\s*bags?|crossbody|duffels?|clutches?|purses?)\b/i.test(source)) {
+    return { key: 'bags', label: 'bag', action: 'place only the bag naturally on or near the person' };
+  }
+  if (/\b(caps?|hats?|beanies?|headwear|face\s*masks?)\b/i.test(source)) {
+    return { key: 'headwear', label: 'headwear', action: 'apply only the headwear' };
+  }
+  if (/\b(scarves?|ties?|necklaces?|chokers?|neckwear)\b/i.test(source)) {
+    return { key: 'neckwear', label: 'neckwear', action: 'apply only the neckwear accessory' };
+  }
+  if (/\b(rings?|earrings?|jewellery|jewelry)\b/i.test(source)) {
+    return { key: 'jewelry-single', label: 'jewelry', action: 'apply only the visible single jewelry item' };
+  }
+  if (/\b(accessories|accessory)\b/i.test(source)) {
+    return { key: 'accessory', label: 'accessory', action: 'apply only the wearable accessory' };
+  }
+  if (/\b(dresses?|gowns?|frocks?|jumpsuits?|rompers?|robes?|bodycon|maxi|midi|mini\s*dress|one\s*piece)\b/i.test(source)) {
+    return { key: 'dresses', label: 'dress or one-piece garment', action: 'replace only the one-piece dress or jumpsuit' };
+  }
+  if (/\b(pants?|trousers?|jeans?|denims?|joggers?|trackpants?|leggings?|chinos?|shorts?|skirts?|skorts?|bottomwear|belt)\b/i.test(source)) {
+    return { key: 'bottoms', label: 'bottoms', action: 'replace only the bottoms' };
+  }
+  if (/\b(coats?|jackets?|parkas?|fleeces?|outerwear)\b/i.test(source)) {
+    return { key: 'outerwear', label: 'outerwear', action: 'replace only the outerwear layer' };
+  }
+  if (/\b(hoodies?|sweatshirts?|sweaters?|cardigans?|pullovers?|jumpers?|blazers?|vests?|waistcoats?|top\s*layers?)\b/i.test(source)) {
+    return { key: 'top-layers', label: 'top layer', action: 'replace only the top layer' };
+  }
+  if (/\b(shirts?|t\s*-?\s*shirts?|tshirts?|tees?|polo\s*shirts?|tops?|blouses?|tunics?|crop\s*tops?|tank\s*tops?|kurtas?|kurtis?)\b/i.test(source)) {
+    return { key: 'tops', label: 'shirt or top', action: 'replace only the shirt or top' };
+  }
+  if (/\b(underwear|innerwear|lingerie|bras?|bralettes?|swimwear|bikinis?|swimsuits?|nightwear|sleepwear|pajamas?|pyjamas?)\b/i.test(source)) {
+    return { key: 'underwear', label: 'fitted garment', action: 'replace only the fitted garment' };
+  }
+  return {
+    key: options.custom ? 'custom-garment' : 'garment',
+    label: options.custom ? 'uploaded garment' : 'wearable item',
+    action: 'use only the primary wearable item from the garment image'
+  };
+}
+
+function prunaTurboForIntent(intent) {
+  if (intent?.key === 'wristwear-single') return false;
+  const configured = process.env.PRUNA_TRYON_TURBO;
+  if (configured === undefined) return true;
+  return !['0', 'false', 'no', 'off'].includes(String(configured).toLowerCase());
+}
+
+function prunaTryOnPrompt(product = {}, intent = tryOnIntentForProduct(product), options = {}) {
+  const productName = String(product.name || product.productName || options.fallbackName || intent.label || 'the selected item').replace(/\s+/g, ' ').trim().slice(0, 180);
+  const brand = String(product.brand || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+  const identityRule = 'Preserve the person, face, hair, skin tone, pose, body shape, hands, background, lighting, and all non-target clothing exactly.';
+  const targetRule = `${intent.action} from garment image 1${productName ? ` (${productName}${brand ? ` by ${brand}` : ''})` : ''}.`;
+  const accessoryRule = intent.key === 'wristwear-single'
+    ? 'Do not add stacked bracelets, extra watches, changed sleeves, altered hands, or new jewelry.'
+    : intent.key === 'feet'
+      ? 'Do not change pants, legs, socks, background, or body shape; only update the shoes or footwear.'
+      : intent.key === 'bags'
+        ? 'Do not change clothing, hands, face, hair, or body; keep the bag as the only added accessory.'
+        : intent.key === 'accessory'
+          ? 'Do not change clothing, face, hair, body shape, shoes, background, or unrelated accessories.'
+          : 'Do not alter unrelated garments, accessories, face, hair, hands, shoes, body, or background.';
+  return [
+    targetRule,
+    identityRule,
+    accessoryRule,
+    'Keep the product color, fabric, texture, silhouette, pattern, logos, seams, and details faithful to the reference.',
+    'Generate one realistic retail virtual try-on image.'
+  ].join(' ');
 }
 
 function tryOnPrompt(product) {
@@ -827,12 +1230,20 @@ async function generatedBytesFromUrl(url, timer) {
 
   let lastStatus = '';
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const response = await fetch(url, {
-      headers: {
-        accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-        'user-agent': 'Mozilla/5.0 Lookmefy generated image fetcher'
+    const headers = {
+      accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      'user-agent': 'Mozilla/5.0 Lookmefy generated image fetcher'
+    };
+    try {
+      if (new URL(url).origin === new URL(prunaBaseUrl()).origin) {
+        Object.assign(headers, prunaHeaders());
       }
-    });
+    } catch {
+      // Non-URL data has already been handled above.
+    }
+    const response = await fetchWithTimeout(url, {
+      headers
+    }, prunaDownloadTimeoutMs(), 'Generated image download');
     if (response.ok) {
       const bytes = Buffer.from(await response.arrayBuffer());
       return {
@@ -1004,11 +1415,13 @@ function readableVideoError(value, fallback = 'Could not generate video try-on')
 }
 
 async function videoFirstFrameDataUri(image, label, timer) {
-  if (!image?.path) throw new Error(`${label} image is missing`);
-  const stored = await readStoredFile(image);
+  if (!image?.path && !image?.sourceUrl) throw new Error(`${label} image is missing`);
+  const stored = image.sourceUrl
+    ? await generatedBytesFromUrl(image.sourceUrl, timer)
+    : await readStoredFile(image);
   const normalized = await normalizeAvifImage({
     bytes: stored.bytes,
-    mimetype: image.mimetype || 'image/jpeg',
+    mimetype: stored.mimetype || image.mimetype || 'image/jpeg',
     filename: image.filename,
     label,
     timer
@@ -1086,6 +1499,87 @@ async function callPixverseTryOnVideo({ tryOn, product, user, timer }) {
     providerName: 'PixVerse',
     timer
   });
+}
+
+async function callPrunaGlassesTryOn({ user, product, garmentFile, timer, intent }) {
+  const [personFile, glassFile] = await Promise.all([
+    filePartFromUpload(user.bodyPhoto, 'person', timer),
+    garmentFile ? filePartFromMemoryFile(garmentFile, 'garment', timer) : filePartFromProduct(product, timer)
+  ]);
+  const [person, glass] = await Promise.all([
+    uploadPrunaFile(personFile, 'person', timer),
+    uploadPrunaFile(glassFile, 'glasses', timer)
+  ]);
+  const result = await callPrunaPrediction({
+    model: prunaGlassesModel(),
+    input: {
+      person,
+      glass,
+      disable_safety_checker: ['1', 'true', 'yes', 'on'].includes(String(process.env.PRUNA_DISABLE_SAFETY_CHECKER || '').toLowerCase())
+    },
+    timer,
+    label: 'pruna glasses try-on'
+  });
+  const generatedUrl = firstPrunaImageUrl(result);
+  if (!generatedUrl) {
+    timer?.mark('pruna glasses returned no image', { keys: Object.keys(result || {}) });
+    throw new Error(`Pruna glasses try-on returned no image. Response keys: ${Object.keys(result || {}).join(', ')}`);
+  }
+  timer?.mark('pruna glasses image ready', { url: shortUrlForLog(generatedUrl) });
+  return {
+    remoteUrl: generatedUrl,
+    mimetype: prunaOutputMimetype(),
+    prompt: prunaTryOnPrompt(product, intent),
+    provider: 'pruna',
+    model: prunaGlassesModel(),
+    quality: 'glasses'
+  };
+}
+
+async function callPrunaTryOn({ user, product = {}, garmentFile, timer, custom = false }) {
+  const intent = tryOnIntentForProduct(product, { custom });
+  if (intent.key === 'unsupported') throw new Error(intent.unsupportedMessage);
+  if (intent.key === 'eyewear') return callPrunaGlassesTryOn({ user, product, garmentFile, timer, intent });
+
+  const [personFile, garment] = await Promise.all([
+    filePartFromUpload(user.bodyPhoto, 'person', timer),
+    garmentFile ? filePartFromMemoryFile(garmentFile, 'garment', timer) : filePartFromProduct(product, timer)
+  ]);
+  const [personImage, garmentImage] = await Promise.all([
+    uploadPrunaFile(personFile, 'person', timer),
+    uploadPrunaFile(garment, 'garment', timer)
+  ]);
+  const prompt = prunaTryOnPrompt(product, intent, { custom, fallbackName: garmentFile?.originalname || '' });
+  const turbo = prunaTurboForIntent(intent);
+  const input = {
+    person_image: personImage,
+    garment_images: [garmentImage],
+    prompt,
+    turbo,
+    preserve_input_size: prunaPreserveInputSize(),
+    output_format: prunaOutputFormat(),
+    output_quality: prunaOutputQuality()
+  };
+  const result = await callPrunaPrediction({
+    model: prunaTryOnModel(),
+    input,
+    timer,
+    label: `pruna ${turbo ? 'turbo' : 'standard'} try-on`
+  });
+  const generatedUrl = firstPrunaImageUrl(result);
+  if (!generatedUrl) {
+    timer?.mark('pruna returned no image', { keys: Object.keys(result || {}) });
+    throw new Error(`Pruna try-on returned no image. Response keys: ${Object.keys(result || {}).join(', ')}`);
+  }
+  timer?.mark('pruna generated image ready', { intent: intent.key, turbo, url: shortUrlForLog(generatedUrl) });
+  return {
+    remoteUrl: generatedUrl,
+    mimetype: prunaOutputMimetype(),
+    prompt,
+    provider: 'pruna',
+    model: prunaTryOnModel(),
+    quality: turbo ? 'turbo' : 'standard'
+  };
 }
 
 async function callFalWanImageToImage({ user, product, garmentDataUri, prompt, timer }) {
@@ -1197,9 +1691,115 @@ async function saveUserCacheFile({ user, bytes, filename, mimetype }) {
   });
 }
 
+function tryOnImageProxyPath(scope, id) {
+  return `/api/tryons/image/${encodeURIComponent(scope)}/${encodeURIComponent(String(id))}`;
+}
+
+function generatedImageModelForScope(scope) {
+  if (scope === 'product') return TryOn;
+  if (scope === 'external') return ExternalTryOn;
+  if (scope === 'custom') return CustomTryOn;
+  return null;
+}
+
+function canUseRemoteFirstImage(generated = {}) {
+  return /^https?:\/\//i.test(String(generated.remoteUrl || ''));
+}
+
+function pendingRemoteImage({ scope, id, filename, sourceUrl, mimetype }) {
+  return {
+    filename,
+    path: tryOnImageProxyPath(scope, id),
+    sourceUrl,
+    storage: 'remote-pending',
+    mimetype: mimetype || 'image/jpeg',
+    size: 0
+  };
+}
+
+async function generatedImageForResponse({ user, generated, filename, scope, id, timer }) {
+  if (canUseRemoteFirstImage(generated)) {
+    const image = pendingRemoteImage({
+      scope,
+      id,
+      filename,
+      sourceUrl: generated.remoteUrl,
+      mimetype: generated.mimetype
+    });
+    timer?.mark('generated image queued for background storage', { scope, imageUrl: image.path });
+    persistGeneratedImageInBackground({
+      scope,
+      id,
+      userId: user._id.toString(),
+      sourceUrl: generated.remoteUrl,
+      filename,
+      mimetype: generated.mimetype
+    });
+    return image;
+  }
+
+  let bytes = generated.bytes;
+  let mimetype = generated.mimetype;
+  if (!bytes && generated.remoteUrl) {
+    const downloaded = await generatedBytesFromUrl(generated.remoteUrl, timer);
+    bytes = downloaded.bytes;
+    mimetype = downloaded.mimetype || mimetype;
+  }
+  return saveUserCacheFile({ user, bytes, filename, mimetype });
+}
+
+function persistGeneratedImageInBackground({ scope, id, userId, sourceUrl, filename, mimetype }) {
+  setImmediate(() => {
+    persistGeneratedImage({ scope, id, userId, sourceUrl, filename, mimetype })
+      .catch((error) => logger.error('tryon_background_image_persist_failed', {
+        scope,
+        id: String(id),
+        error
+      }));
+  });
+}
+
+async function persistGeneratedImage({ scope, id, userId, sourceUrl, filename, mimetype }) {
+  const Model = generatedImageModelForScope(scope);
+  if (!Model) throw new Error(`Unknown try-on image scope: ${scope}`);
+  const { bytes, mimetype: downloadedMimetype } = await generatedBytesFromUrl(sourceUrl);
+  const image = await saveStoredFile({
+    buffer: bytes,
+    filename,
+    mimetype: downloadedMimetype || mimetype || 'image/jpeg',
+    userId,
+    folder: 'tryons',
+    prefix: 'tryon'
+  });
+  let updated = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    updated = await Model.findOneAndUpdate(
+      { _id: id, 'image.sourceUrl': sourceUrl },
+      { $set: { image } }
+    );
+    if (updated) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (!updated) {
+    logger.warn('tryon_background_image_persist_update_missed', {
+      scope,
+      id: String(id)
+    });
+  }
+  logger.info('tryon_background_image_persisted', {
+    scope,
+    id: String(id),
+    storage: image.storage,
+    size: image.size
+  });
+}
+
 async function generateProductTryOnImage({ user, product, tryOnModel, timer }) {
   const selectedModel = tryOnModel || tryOnModelForProduct(product);
   timer?.mark('image generator selected', { tryOnModel: selectedModel });
+  if (selectedModel === 'pruna/p-image-try-on' || selectedModel === 'pruna/p-try-on-glasses' || selectedModel === prunaTryOnModel() || selectedModel === prunaGlassesModel()) {
+    return callPrunaTryOn({ user, product, timer });
+  }
   if (selectedModel === 'fitroom/tryon-v2') {
     const clothType = fitRoomClothTypeForProduct(product);
     timer?.mark('fitroom cloth type selected', { clothType });
@@ -1220,48 +1820,50 @@ async function generateProductTryOnImage({ user, product, tryOnModel, timer }) {
 async function saveGeneratedTryOn({ user, product, tryOnModel, timer }) {
   const generated = await generateProductTryOnImage({ user, product, tryOnModel, timer });
   const filename = `tryon-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
-  const image = await saveUserCacheFile({ user, bytes: generated.bytes, filename, mimetype: generated.mimetype });
-  timer?.mark('generated image saved', { path: image.path });
-
-  return TryOn.create({
+  const tryOn = new TryOn({
     user: user._id,
     product: product._id,
-    provider: generated.model?.includes('fitroom') ? 'fitroom' : 'fal',
+    provider: generated.provider || (generated.model?.includes('fitroom') ? 'fitroom' : 'fal'),
     model: generated.model,
     quality: generated.quality,
     prompt: generated.prompt,
-    tokenCost: chargedTokenCost(user),
-    image
+    tokenCost: chargedTokenCost(user)
   });
+  tryOn.image = await generatedImageForResponse({
+    user,
+    generated,
+    filename,
+    scope: 'product',
+    id: tryOn._id,
+    timer
+  });
+  timer?.mark('generated image record ready', { path: tryOn.image.path, storage: tryOn.image.storage });
+  return tryOn.save();
 }
 
 async function replaceGeneratedTryOn({ user, product, tryOnModel, timer }) {
   const generated = await generateProductTryOnImage({ user, product, tryOnModel, timer });
   const filename = `tryon-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
-  const image = await saveUserCacheFile({ user, bytes: generated.bytes, filename, mimetype: generated.mimetype });
-  timer?.mark('generated image replaced', { path: image.path });
-
-  return TryOn.findOneAndUpdate(
-    { user: user._id, product: product._id },
-    {
-      $set: {
-        provider: generated.model?.includes('fitroom') ? 'fitroom' : 'fal',
-        model: generated.model,
-        quality: generated.quality,
-        prompt: generated.prompt,
-        tokenCost: chargedTokenCost(user),
-        image
-      },
-      $unset: {
-        video: ''
-      },
-      $setOnInsert: {
-        user: user._id,
-        product: product._id
-      }
-    },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
-  );
+  const tryOn = await TryOn.findOne({ user: user._id, product: product._id }) || new TryOn({
+    user: user._id,
+    product: product._id
+  });
+  tryOn.provider = generated.provider || (generated.model?.includes('fitroom') ? 'fitroom' : 'fal');
+  tryOn.model = generated.model;
+  tryOn.quality = generated.quality;
+  tryOn.prompt = generated.prompt;
+  tryOn.tokenCost = chargedTokenCost(user);
+  tryOn.image = await generatedImageForResponse({
+    user,
+    generated,
+    filename,
+    scope: 'product',
+    id: tryOn._id,
+    timer
+  });
+  tryOn.video = undefined;
+  timer?.mark('generated image replacement ready', { path: tryOn.image.path, storage: tryOn.image.storage });
+  return tryOn.save();
 }
 
 function cleanUrl(value) {
@@ -1292,14 +1894,9 @@ function externalProductFromBody(value = {}) {
 }
 
 async function saveGeneratedExternalTryOn({ user, product, timer }) {
-  const clothType = fitRoomClothTypeForProduct(product);
-  timer?.mark('external fitroom cloth type selected', { clothType });
-  const generated = await callFitRoomTryOn({ user, product, clothType, timer });
+  const generated = await callPrunaTryOn({ user, product, timer });
   const filename = `tryon-external-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
-  const image = await saveUserCacheFile({ user, bytes: generated.bytes, filename, mimetype: generated.mimetype });
-  timer?.mark('external try-on saved', { path: image.path });
-
-  return ExternalTryOn.create({
+  const tryOn = new ExternalTryOn({
     user: user._id,
     sourceUrl: product.sourceUrl,
     affiliateLink: product.affiliateLink,
@@ -1307,13 +1904,22 @@ async function saveGeneratedExternalTryOn({ user, product, timer }) {
     brand: product.brand,
     category: product.category,
     imageUrl: product.imageUrl,
-    provider: 'fitroom',
+    provider: generated.provider || 'pruna',
     model: generated.model,
     quality: generated.quality,
     prompt: generated.prompt,
-    tokenCost: chargedTokenCost(user),
-    image
+    tokenCost: chargedTokenCost(user)
   });
+  tryOn.image = await generatedImageForResponse({
+    user,
+    generated,
+    filename,
+    scope: 'external',
+    id: tryOn._id,
+    timer
+  });
+  timer?.mark('external try-on record ready', { path: tryOn.image.path, storage: tryOn.image.storage });
+  return tryOn.save();
 }
 
 async function normalizeMemoryImageFile(file, label, timer) {
@@ -1348,24 +1954,37 @@ async function saveUploadFile(file, prefix, user) {
 }
 
 async function saveGeneratedCustomTryOn({ user, garmentFile, timer }) {
-  const clothType = fitRoomDefaultClothType();
-  timer?.mark('custom fitroom cloth type selected', { clothType });
-  const generated = await callFitRoomTryOn({ user, garmentFile, clothType, timer });
+  const generated = await callPrunaTryOn({
+    user,
+    product: {
+      name: garmentFile?.originalname || 'Uploaded garment',
+      category: 'clothing'
+    },
+    garmentFile,
+    timer,
+    custom: true
+  });
   const filename = `tryon-custom-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
-  const image = await saveUserCacheFile({ user, bytes: generated.bytes, filename, mimetype: generated.mimetype });
   const garment = await saveUploadFile(garmentFile, 'garment', user);
-  timer?.mark('custom try-on saved', { path: image.path });
-
-  return CustomTryOn.create({
+  const tryOn = new CustomTryOn({
     user: user._id,
-    provider: 'fitroom',
+    provider: generated.provider || 'pruna',
     model: generated.model,
     quality: generated.quality,
     prompt: generated.prompt,
     tokenCost: chargedTokenCost(user),
-    garment,
-    image
+    garment
   });
+  tryOn.image = await generatedImageForResponse({
+    user,
+    generated,
+    filename,
+    scope: 'custom',
+    id: tryOn._id,
+    timer
+  });
+  timer?.mark('custom try-on record ready', { path: tryOn.image.path, storage: tryOn.image.storage });
+  return tryOn.save();
 }
 
 async function reserveToken(user, timer, cost = tokenCost()) {
@@ -1634,6 +2253,37 @@ router.get('/credit-history', requireUser, async (req, res) => {
     .limit(limit)
     .lean();
   res.json({ events: events.map(creditEventToClient) });
+});
+
+router.get('/image/:scope/:id', async (req, res) => {
+  try {
+    const scope = String(req.params.scope || '').toLowerCase();
+    const Model = generatedImageModelForScope(scope);
+    if (!Model) return res.status(404).json({ message: 'Generated image not found' });
+    const record = await Model.findById(req.params.id).select('image').lean();
+    const image = record?.image;
+    if (!image) return res.status(404).json({ message: 'Generated image not found' });
+
+    if (image.sourceUrl) {
+      const { bytes, mimetype } = await generatedBytesFromUrl(image.sourceUrl);
+      res.set({
+        'Content-Type': mimetype || image.mimetype || 'image/jpeg',
+        'Cache-Control': 'public, max-age=300'
+      });
+      return res.send(bytes);
+    }
+
+    const finalUrl = storedFileToClientUrl(image);
+    if (finalUrl) return res.redirect(302, finalUrl);
+    return res.status(404).json({ message: 'Generated image is not available yet' });
+  } catch (error) {
+    logger.error('tryon_image_proxy_failed', {
+      scope: req.params.scope,
+      id: req.params.id,
+      error
+    });
+    return res.status(502).json({ message: 'Generated image is temporarily unavailable' });
+  }
 });
 
 router.post('/custom', requireUser, upload.single('garment'), async (req, res) => {

@@ -19,6 +19,7 @@ const externalTryOnSchema = new mongoose.Schema(
       filename: String,
       path: String,
       url: String,
+      sourceUrl: String,
       storage: String,
       mimetype: String,
       size: Number

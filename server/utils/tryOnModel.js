@@ -29,6 +29,8 @@ const WAN_MODEL_TERMS = [
 const LEGACY_UNRESTRICTED_MODEL = ['v' + 'to', 'unrestricted'].join('-');
 
 function normalizeTryOnModel(value) {
+  if (value === 'pruna/p-image-try-on' || value === 'p-image-try-on') return 'pruna/p-image-try-on';
+  if (value === 'pruna/p-try-on-glasses' || value === 'p-try-on-glasses') return 'pruna/p-try-on-glasses';
   if (value === 'wan-v2.6-image-to-image' || value === 'wan/v2.6/image-to-image') return 'wan-v2.6-image-to-image';
   return value === LEGACY_UNRESTRICTED_MODEL ? 'wan-v2.6-image-to-image' : 'gpt-image-2';
 }

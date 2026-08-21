@@ -8,12 +8,13 @@ import { requireUser } from './auth.js';
 import { createHybridCache } from '../utils/cache.js';
 import { inlineOrQueue, registerJobHandler } from '../utils/jobs.js';
 import { productGenderForPreference } from '../utils/genderPreference.js';
+import { wearableCompatibility } from '../utils/wearable.js';
 
 const router = express.Router();
 const recommendationCacheTtlMs = Number(process.env.RECOMMENDATION_READ_CACHE_TTL_MS || 30 * 1000);
 const productPoolCache = createHybridCache('recommendations:product-pool', { ttlMs: recommendationCacheTtlMs, maxItems: 20 });
 const similarProductsCache = createHybridCache('recommendations:similar', { ttlMs: recommendationCacheTtlMs, maxItems: 300 });
-const aiStudioDressResultCache = createHybridCache('recommendations:ai-studio-dress-results', {
+const aiStudioFashionResultCache = createHybridCache('recommendations:ai-studio-fashion-results', {
   ttlMs: Number(process.env.AI_STUDIO_SEARCH_CACHE_TTL_MS || 10 * 60 * 1000),
   maxItems: 120
 });
@@ -213,32 +214,24 @@ router.get('/recent-searches', requireUser, async (req, res) => {
   res.json({ searches });
 });
 
-const nonDressSearchPattern = /\b(sarees?|saris?|lehengas?|dupattas?|kurtas?|kurtis?|salwars?|churidars?|anarkali|palazzos?|shararas?|dress\s*materials?|ethnic\s*wear|underwear|briefs?|boxers?|trunks?|vests?|innerwear|lingerie|bras?|bralettes?|pant(?:y|ies)|camisoles?|shapewear|bikinis?|swimwear|sleepwear|night(?:y|ie|wear|gown|suit)|pajamas?|pyjamas?|loungewear|robes?|shoes?|sneakers?|heels?|sandals?|boots?|slippers?|footwear|loafers?|pumps?|flats?|shirts?|t\s*-?\s*shirts?|tshirts?|tees?|tops?|blouses?|tunics?|pants?|trousers?|joggers?|leggings?|jeans?|denims?|bottomwear|shorts?|skirts?|jackets?|coats?|blazers?|hoodies?|sweaters?|watches?|smart\s*watches?|bags?|handbags?|wallets?|purses?|belts?|caps?|hats?|scarves?|sunglasses?|eyewear|glasses|jewellery|jewelry|earrings?|necklaces?|bracelets?|accessories|beauty|makeup|cosmetics?|perfume|cookware|kitchen|home|toys?|kids?)\b/i;
-const dressProductPattern = /\b(dresses?|gowns?|frocks?|bodycon|maxi|midi|mini\s*dress|a-line\s*dress|wrap\s*dress|party\s*dress|cocktail\s*dress|slip\s*dress|shirt\s*dress|skater\s*dress)\b/i;
-const nonDressProductPattern = /\b(skirts?|shirts?|t\s*-?\s*shirts?|tshirts?|tees?|tops?|pants?|trousers?|jeans?|shorts?|shoes?|sneakers?|heels?|sandals?|boots?|slippers?|bags?|watches?|jewellery|jewelry|eyewear|innerwear|lingerie|sarees?|kurtis?|lehengas?|dress\s*materials?)\b/i;
+const wearableProductPattern = /\b(dresses?|gowns?|frocks?|bodycon|maxi|midi|mini\s*dress|a-line\s*dress|wrap\s*dress|party\s*dress|cocktail\s*dress|slip\s*dress|shirt\s*dress|skater\s*dress|sarees?|saris?|lehengas?|dupattas?|kurtas?|kurtis?|salwars?|churidars?|anarkali|palazzos?|shararas?|ethnic\s*wear|shirts?|t\s*-?\s*shirts?|tshirts?|tees?|tops?|blouses?|tunics?|pants?|trousers?|trackpants?|joggers?|leggings?|jeans?|denims?|bottomwear|shorts?|skirts?|jackets?|coats?|blazers?|hoodies?|sweatshirts?|sweaters?|suits?|waistcoats?|vests?|shoes?|sneakers?|heels?|sandals?|boots?|slippers?|footwear|loafers?|pumps?|flats?|watches?|smart\s*watches?|bags?|handbags?|wallets?|purses?|belts?|caps?|hats?|scarves?|sunglasses?|eyewear|glasses|jewellery|jewelry|earrings?|necklaces?|bracelets?|accessories|loungewear|sleepwear|nightwear|pajamas?|pyjamas?)\b/i;
+const nonWearableSearchPattern = /\b(beauty|makeup|cosmetics?|perfume|fragrance|skincare|serum|lipsticks?|cookware|kitchen|home\s*decor|furniture|appliances?|toys?|books?|electronics?|phones?|laptops?|groceries|food|medicine|kids?\s*toys?)\b/i;
 
-function dressSearchBlock(message = '') {
+function fashionSearchBlock(message = '') {
   const lower = String(message || '').toLowerCase();
-  if (!nonDressSearchPattern.test(lower)) return '';
-  return 'AI Studio is dress-only right now. I can search dresses by colour, budget, fabric, length, occasion, or vibe, but I cannot show shirts, shoes, accessories, beauty, or other categories here.';
+  if (!nonWearableSearchPattern.test(lower)) return '';
+  return 'AI Studio can search wearable fashion here. Try shirts, dresses, pants, shoes, jackets, ethnic wear, watches, bags, or accessories by colour, budget, occasion, fabric, or vibe.';
 }
 
-function productLooksLikeDress(product = {}) {
-  const normalizedName = String(product.name || '').replace(/\bshirt\s+dresses?\b/gi, 'dress');
-  const text = [
-    normalizedName,
-    product.category,
-    product.description,
-    ...(Array.isArray(product.tags) ? product.tags : [])
-  ].filter(Boolean).join(' ');
-  if (!dressProductPattern.test(text)) return false;
-  return !nonDressProductPattern.test(normalizedName);
+function productLooksWearable(product = {}, query = '') {
+  return wearableCompatibility(product, { query }).compatible;
 }
 
-function amazonDressQuery(message = '') {
+function amazonFashionQuery(message = '', user = {}) {
   const prompt = String(message || '').trim();
-  if (dressProductPattern.test(prompt)) return prompt;
-  return `${prompt} dress`.trim();
+  if (wearableProductPattern.test(prompt)) return prompt;
+  const genderWord = user?.genderPreference === 'male' ? 'men' : user?.genderPreference === 'female' ? 'women' : '';
+  return `${prompt} ${genderWord} fashion`.replace(/\s+/g, ' ').trim();
 }
 
 function budgetCeiling(message = '') {
@@ -247,13 +240,13 @@ function budgetCeiling(message = '') {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
-function dressCatalogTerms(message = '') {
+function fashionCatalogTerms(message = '') {
   return queryTerms(message)
-    .filter((term) => !['dress', 'dresses', 'under', 'below', 'upto', 'than', 'women', 'woman', 'female', 'mens', 'male'].includes(term))
+    .filter((term) => !['fashion', 'wear', 'under', 'below', 'upto', 'than', 'women', 'woman', 'female', 'mens', 'male'].includes(term))
     .slice(0, 8);
 }
 
-function scoreCatalogDress(product = {}, message = '', user = {}) {
+function scoreCatalogFashion(product = {}, message = '', user = {}) {
   const text = [
     product.name,
     product.brand,
@@ -262,13 +255,13 @@ function scoreCatalogDress(product = {}, message = '', user = {}) {
     ...(Array.isArray(product.tags) ? product.tags : []),
     ...(Array.isArray(product.colors) ? product.colors : [])
   ].filter(Boolean).join(' ').toLowerCase();
-  const terms = dressCatalogTerms(message);
+  const terms = fashionCatalogTerms(message);
   const budget = budgetCeiling(message);
   const preferredGender = productGenderForPreference(user?.genderPreference);
   const price = Number(product.price);
 
   let score = 0;
-  if (/^dresses?$/i.test(product.category || '')) score += 20;
+  if (productLooksWearable(product, message)) score += 18;
   if (preferredGender && String(product.gender || '').toLowerCase() === preferredGender) score += 10;
   if (preferredGender && String(product.gender || '').toLowerCase() === 'unisex') score += 4;
   if (budget && Number.isFinite(price) && price <= budget) score += 12;
@@ -282,11 +275,10 @@ function scoreCatalogDress(product = {}, message = '', user = {}) {
   return score;
 }
 
-async function catalogDressFallback(message = '', user = {}) {
+async function catalogFashionFallback(message = '', user = {}) {
   const preferredGender = productGenderForPreference(user?.genderPreference);
-  const categoryFilter = { category: /^dresses?$/i };
   const genderFilter = preferredGender ? { $or: [{ gender: preferredGender }, { gender: 'unisex' }, { gender: { $exists: false } }] } : {};
-  const query = catalogFilter({ ...categoryFilter, ...genderFilter });
+  const query = catalogFilter(genderFilter);
   let products = await Product.find(query).sort({ isFeatured: -1, isNewArrival: -1, rating: -1, createdAt: -1 }).limit(80).lean();
 
   if (products.length < 4) {
@@ -294,10 +286,10 @@ async function catalogDressFallback(message = '', user = {}) {
   }
 
   return products
-    .filter(productLooksLikeDress)
+    .filter((product) => productLooksWearable(product, message))
     .map((product) => ({
       product,
-      score: scoreCatalogDress(product, message, user)
+      score: scoreCatalogFashion(product, message, user)
     }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
@@ -317,38 +309,38 @@ function uniqueStrings(values = []) {
     });
 }
 
-function aiStudioDressSearchVariants(message = '', user = {}) {
+function aiStudioSearchVariants(message = '', user = {}) {
   const prompt = String(message || '').trim();
-  const base = amazonDressQuery(prompt);
+  const base = amazonFashionQuery(prompt, user);
   const genderWord = user?.genderPreference === 'male' ? 'men' : 'women';
   const budget = prompt.match(/(?:under|below|upto|up to|less than)\s*(?:rs\.?|₹|inr)?\s*(\d{2,6})/i)?.[1];
   const colour = prompt.match(/\b(black|white|red|pink|blue|green|yellow|beige|brown|maroon|purple|lavender|grey|gray|cream)\b/i)?.[1] || '';
-  const occasion = prompt.match(/\b(party|wedding|brunch|office|date|dinner|summer|vacation|casual|formal|cocktail)\b/i)?.[1] || '';
+  const occasion = prompt.match(/\b(party|wedding|brunch|office|date|dinner|summer|vacation|casual|formal|cocktail|gym|travel|workout)\b/i)?.[1] || '';
 
   return uniqueStrings([
     base,
     `${base} ${genderWord}`,
     `${genderWord} ${base}`,
-    colour ? `${colour} ${genderWord} dress` : '',
-    occasion ? `${occasion} ${genderWord} dress` : '',
-    budget ? `${genderWord} dress under ${budget}` : '',
-    `${prompt} western dress`,
-    `${prompt} one piece dress`
+    colour ? `${colour} ${genderWord} fashion` : '',
+    occasion ? `${occasion} ${genderWord} outfit` : '',
+    budget ? `${genderWord} fashion under ${budget}` : '',
+    `${prompt} clothing`,
+    `${prompt} accessories`
   ]).slice(0, 5);
 }
 
 function aiStudioSearchFailureReply(detail = '') {
   const text = String(detail || '');
   if (/blocked|captcha|automated access|unusual traffic|robot/i.test(text)) {
-    return 'Amazon is blocking live dress search right now. Try a simpler dress request in a moment, like “black midi dress under 1500”.';
+    return 'Amazon is blocking live fashion search right now. Try a simpler request in a moment, like “black shirt under 1500”.';
   }
   if (/did not expose|no usable|no results|did not find|none were compatible|none could be used|compatible with AI try-on/i.test(text)) {
-    return 'I could not find usable Amazon dress cards for that request. Try another colour, length, budget, or occasion and I will search dresses again.';
+    return 'I could not find usable Amazon fashion cards for that request. Try another item type, colour, budget, or occasion and I will search again.';
   }
   if (/timed out|network|fetch|respond/i.test(text)) {
-    return 'Live dress search is taking longer than usual. Try again in a moment with a shorter dress query.';
+    return 'Live fashion search is taking longer than usual. Try again in a moment with a shorter query.';
   }
-  return 'I could not complete live dress search right now. Try another dress colour, budget, length, or occasion.';
+  return 'I could not complete live fashion search right now. Try another item type, colour, budget, or occasion.';
 }
 
 function falAiStudioEndpoint() {
@@ -381,14 +373,14 @@ function flattenText(value, depth = 0) {
   return Object.values(value).map((item) => flattenText(item, depth + 1)).filter(Boolean).join('\n');
 }
 
-async function findDressProducts(message, user) {
+async function findFashionProducts(message, user) {
   const { searchAmazonProductsForQuery } = await import('./products.js');
-  const variants = aiStudioDressSearchVariants(message, user);
+  const variants = aiStudioSearchVariants(message, user);
   const cacheKey = JSON.stringify({
     variants: variants.map((item) => item.toLowerCase()),
     genderPreference: user?.genderPreference || ''
   });
-  const cached = await aiStudioDressResultCache.get(cacheKey);
+  const cached = await aiStudioFashionResultCache.get(cacheKey);
   if (cached) return Array.isArray(cached) ? { products: cached, source: 'amazon' } : cached;
 
   const failures = [];
@@ -401,7 +393,7 @@ async function findDressProducts(message, user) {
         limit: 4,
         user
       });
-      for (const product of batch.filter(productLooksLikeDress)) {
+      for (const product of batch.filter((entry) => productLooksWearable(entry, message))) {
         const key = product.sourceUrl || product.affiliateLink || product.id || product.name;
         if (!key || seen.has(key)) continue;
         seen.add(key);
@@ -416,18 +408,18 @@ async function findDressProducts(message, user) {
 
   if (products.length) {
     const payload = { products: products.slice(0, 4), source: 'amazon' };
-    await aiStudioDressResultCache.set(cacheKey, payload);
+    await aiStudioFashionResultCache.set(cacheKey, payload);
     return payload;
   }
 
-  const fallbackProducts = await catalogDressFallback(message, user);
+  const fallbackProducts = await catalogFashionFallback(message, user);
   if (fallbackProducts.length) {
     const payload = {
       products: fallbackProducts,
       source: 'catalog-fallback',
       diagnostics: failures.slice(0, 5)
     };
-    await aiStudioDressResultCache.set(cacheKey, payload);
+    await aiStudioFashionResultCache.set(cacheKey, payload);
     return payload;
   }
 
@@ -438,21 +430,23 @@ async function findDressProducts(message, user) {
   throw error;
 }
 
-function dressFollowUps(message) {
+function fashionFollowUps(message) {
   const lower = String(message || '').toLowerCase();
-  if (/wedding|party|dinner|date|office|interview/.test(lower)) return ['Black midi dress', 'Under ₹999 dress', 'Premium evening dress'];
-  if (/summer|vacation|beach|brunch/.test(lower)) return ['Floral summer dress', 'Casual cotton dress', 'White day dress'];
-  if (/black|red|white|blue|pink/.test(lower)) return ['More premium dress', 'Short dress', 'Long dress'];
-  return ['Wedding guest dress', 'Black party dress', 'Under ₹999 dress'];
+  if (/shoe|sneaker|heel|sandal|boot/.test(lower)) return ['White sneakers', 'Black formal shoes', 'Sandals under ₹999'];
+  if (/shirt|tee|top|blouse/.test(lower)) return ['Black shirts under ₹999', 'Linen shirts', 'Oversized t-shirts'];
+  if (/pant|trouser|jean|jogger|short/.test(lower)) return ['Office trousers', 'Relaxed jeans', 'Track pants under ₹999'];
+  if (/watch|bag|belt|jewellery|jewelry|sunglass|accessor/.test(lower)) return ['Minimal watches', 'Crossbody bags', 'Sunglasses under ₹999'];
+  if (/wedding|party|dinner|date|office|interview/.test(lower)) return ['Black party outfit', 'Office shirts', 'Wedding guest dress'];
+  return ['Casual sneakers', 'Black shirts under ₹999', 'Office trousers'];
 }
 
 function aiStudioPrompt({ message, history, products, source = 'amazon' }) {
   const sourceLabel = source === 'catalog-fallback' ? 'Lookmefy catalog' : 'Amazon';
   return [
-    'You are Lookmefy AI Studio, a dress-only shopping chatbot.',
-    `Recommend only dresses from the ${sourceLabel} result cards below.`,
-    'Never recommend shirts, pants, shoes, accessories, beauty, ethnic wear, innerwear, skirts, or other non-dress categories.',
-    'If no result card fits, say that no matching dresses are available and ask for another dress preference.',
+    'You are Lookmefy AI Studio, a wearable fashion shopping chatbot.',
+    `Recommend wearable clothing, footwear, ethnic wear, watches, bags, or accessories from the ${sourceLabel} result cards below.`,
+    'Do not recommend beauty, home, electronics, toys, groceries, or non-fashion products.',
+    'If no result card fits, say that no matching fashion items are available and ask for another item type, colour, budget, or occasion.',
     source === 'catalog-fallback' ? 'Be transparent that live Amazon results were unavailable and these are catalog fallback picks.' : '',
     'Reply conversationally in 2-4 short sentences. Do not claim a try-on image was generated.',
     '',
@@ -475,21 +469,21 @@ function aiStudioPrompt({ message, history, products, source = 'amazon' }) {
   ].join('\n');
 }
 
-function localDressReply(message, products, source = 'amazon') {
+function localFashionReply(message, products, source = 'amazon') {
   if (!products.length) {
-    return 'I could not find matching dress results. Try a colour, occasion, budget, or length and I will search dresses again.';
+    return 'I could not find matching fashion results. Try an item type, colour, occasion, budget, or fit and I will search again.';
   }
   const top = products.slice(0, 3).map((product) => product.name).filter(Boolean);
   if (source === 'catalog-fallback') {
-    return `Live Amazon did not expose usable product cards, so I pulled matching dresses from the Lookmefy catalog for now. Start with ${top[0]}, then compare ${top.slice(1).join(' or ') || 'the remaining picks'} by price, colour, and occasion fit.`;
+    return `Live Amazon did not expose usable product cards, so I pulled matching fashion picks from the Lookmefy catalog for now. Start with ${top[0]}, then compare ${top.slice(1).join(' or ') || 'the remaining picks'} by price, colour, and occasion fit.`;
   }
   if (/black/i.test(message)) {
-    return `I found black dress options from Amazon. Start with ${top[0]}, and compare it with ${top.slice(1).join(' or ') || 'the other dress picks'} based on length, sleeve style, and price.`;
+    return `I found black fashion options from Amazon. Start with ${top[0]}, and compare it with ${top.slice(1).join(' or ') || 'the other picks'} based on fit, material, and price.`;
   }
-  return `I found a few Amazon dress options that match your brief. Start with ${top[0]}, then compare ${top.slice(1).join(' or ') || 'the remaining picks'} for colour, fabric, and occasion fit.`;
+  return `I found a few Amazon fashion picks that match your brief. Start with ${top[0]}, then compare ${top.slice(1).join(' or ') || 'the remaining picks'} for colour, fabric, and occasion fit.`;
 }
 
-async function falAiStudioDressReply({ message, history, products, source }) {
+async function falAiStudioReply({ message, history, products, source }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Number(process.env.FAL_AI_STUDIO_TIMEOUT_MS || 20_000));
   try {
@@ -514,7 +508,7 @@ async function falAiStudioDressReply({ message, history, products, source }) {
   }
 }
 
-async function aiStudioDressChatService({ userId, body = {} }) {
+async function aiStudioChatService({ userId, body = {} }) {
   const user = await User.findById(userId);
   if (!user) {
     const error = new Error('User not found');
@@ -533,47 +527,47 @@ async function aiStudioDressChatService({ userId, body = {} }) {
     type: 'style_bot_query',
     query: message,
     weight: eventWeight('style_bot_query'),
-    metadata: { source: 'ai_studio_dress_search' }
+    metadata: { source: 'ai_studio_fashion_search' }
   });
-  await updatePreference({ userId: user._id, type: 'style_bot_query', query: message, metadata: { source: 'ai_studio_dress_search' } });
+  await updatePreference({ userId: user._id, type: 'style_bot_query', query: message, metadata: { source: 'ai_studio_fashion_search' } });
 
-  const blocked = dressSearchBlock(message);
+  const blocked = fashionSearchBlock(message);
   if (blocked) {
     return {
       reply: blocked,
       products: [],
-      suggestions: dressFollowUps('')
+      suggestions: fashionFollowUps('')
     };
   }
 
   try {
-    const result = await findDressProducts(message, user);
+    const result = await findFashionProducts(message, user);
     const products = result.products || [];
     let reply = '';
     try {
-      reply = await falAiStudioDressReply({ message, history: body?.history, products, source: result.source });
+      reply = await falAiStudioReply({ message, history: body?.history, products, source: result.source });
     } catch (error) {
       console.warn('[ai-studio] FAL request failed', readableError(error));
-      reply = localDressReply(message, products, result.source);
+      reply = localFashionReply(message, products, result.source);
     }
     return {
       reply,
       products: products.slice(0, 4),
-      suggestions: dressFollowUps(message)
+      suggestions: fashionFollowUps(message)
     };
   } catch (error) {
-    const detail = readableError(error, 'Could not search Amazon for dresses right now. Try another dress colour, budget, or occasion.');
+    const detail = readableError(error, 'Could not search Amazon for fashion right now. Try another item type, colour, budget, or occasion.');
     const reply = error.publicMessage || aiStudioSearchFailureReply(detail);
-    console.warn('[ai-studio] Amazon dress search failed', detail);
+    console.warn('[ai-studio] Amazon fashion search failed', detail);
     return {
       reply,
       products: [],
-      suggestions: dressFollowUps(message)
+      suggestions: fashionFollowUps(message)
     };
   }
 }
 
-async function aiStudioDressChat(req, res) {
+async function aiStudioChat(req, res) {
   const message = String(req.body?.message || '').trim().slice(0, 600);
   if (!message) return res.status(400).json({ message: 'Message AI Studio first' });
 
@@ -582,7 +576,7 @@ async function aiStudioDressChat(req, res) {
       req,
       res,
       type: 'ai-studio-search',
-      key: `${req.user._id}:dress:${message.toLowerCase()}`,
+      key: `${req.user._id}:fashion:${message.toLowerCase()}`,
       payload: {
         body: {
           message,
@@ -592,7 +586,7 @@ async function aiStudioDressChat(req, res) {
       maxAttempts: 1,
       runInline: async () => ({
         statusCode: 200,
-        body: await aiStudioDressChatService({ userId: req.user._id, body: req.body })
+        body: await aiStudioChatService({ userId: req.user._id, body: req.body })
       })
     });
   } catch (error) {
@@ -602,12 +596,12 @@ async function aiStudioDressChat(req, res) {
 
 function registerRecommendationJobHandlers() {
   registerJobHandler('ai-studio-search', async ({ payload, job }) => (
-    aiStudioDressChatService({ userId: job.user, body: payload.body })
+    aiStudioChatService({ userId: job.user, body: payload.body })
   ));
 }
 
-router.post('/studio-chat', requireUser, aiStudioDressChat);
-router.post('/stylist-chat', requireUser, aiStudioDressChat);
+router.post('/studio-chat', requireUser, aiStudioChat);
+router.post('/stylist-chat', requireUser, aiStudioChat);
 
 router.get('/admin/stats', requireAdmin, async (_req, res) => {
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
