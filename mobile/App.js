@@ -26,9 +26,11 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
-import { API_URL, api, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
+import { api, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
 import { categories, images, infoPages, policyPages } from './src/assets';
 import { calculateCreditPercentage, normalizeProduct, normalizeProducts, resolveImageUrl } from './src/products';
+
+const logoSymbol = require('./assets/lookmefy-symbol.png');
 
 const genders = ['men', 'women', 'unisex'];
 const profileGenderOptions = [
@@ -44,7 +46,6 @@ const sortOptions = [
 ];
 const supportEmail = 'support@lookmefy.com';
 const aiPreviewDisclaimer = 'Note: AI previews can make mistakes. Check fit, colour, and product details before buying.';
-const devOtpFallback = process.env.EXPO_PUBLIC_DEV_OTP || '123456';
 const appTopInset = Platform.OS === 'android' ? Math.max(76, NativeStatusBar.currentHeight || 0) : 0;
 const bottomNavigationHeight = Platform.OS === 'ios' ? 86 : 78;
 const screenBottomInset = 40;
@@ -78,6 +79,7 @@ const homeHeroSlides = [
   { key: 'archway', title: 'NEW SEASON EDIT', cta: 'VIEW ALL', image: 'homeSliderArchway', route: 'shop' }
 ];
 const fontAssets = {
+  BodoniModa_400Regular: require('@expo-google-fonts/bodoni-moda/400Regular/BodoniModa_400Regular.ttf'),
   PlusJakartaSans_600SemiBold: require('@expo-google-fonts/plus-jakarta-sans/600SemiBold/PlusJakartaSans_600SemiBold.ttf'),
   PlusJakartaSans_700Bold: require('@expo-google-fonts/plus-jakarta-sans/700Bold/PlusJakartaSans_700Bold.ttf'),
   Manrope_400Regular: require('@expo-google-fonts/manrope/400Regular/Manrope_400Regular.ttf'),
@@ -86,6 +88,7 @@ const fontAssets = {
   Manrope_700Bold: require('@expo-google-fonts/manrope/700Bold/Manrope_700Bold.ttf')
 };
 const fontFamilies = {
+  logo: 'BodoniModa_400Regular',
   headingSemiBold: 'PlusJakartaSans_600SemiBold',
   headingBold: 'PlusJakartaSans_700Bold',
   bodyRegular: 'Manrope_400Regular',
@@ -214,7 +217,7 @@ const onboardingTourSteps = [
     })
   }
 ];
-const validRoutes = new Set(['auth', 'home', 'shop', 'search', 'tryon', 'closet', 'custom', 'stylebot', 'tokens', 'profile', 'product', 'wishlist', 'orders', 'signup', 'login', 'how', 'info']);
+const validRoutes = new Set(['auth', 'home', 'shop', 'search', 'tryon', 'closet', 'custom', 'stylebot', 'tokens', 'profile', 'generation-history', 'product', 'wishlist', 'orders', 'signup', 'login', 'how', 'info']);
 
 function normalizeRoute(name, params = {}) {
   const routeName = typeof name === 'string' && validRoutes.has(name) ? name : 'home';
@@ -266,6 +269,10 @@ function normalizePhoneInput(value = '') {
   const digits = String(value || '').replace(/\D/g, '');
   if (digits.length > 10 && digits.startsWith('91')) return digits.slice(-10);
   return digits.slice(0, 10);
+}
+
+function normalizeOtpInput(value = '') {
+  return String(value || '').replace(/\D/g, '').slice(0, 8);
 }
 
 function shopResultTitle(filters = {}, tryOnMode = false) {
@@ -800,6 +807,27 @@ function AppButton({ label, icon, variant = 'primary', disabled, onPress, style 
   );
 }
 
+function BrandLogo({ compact = false, light = false, style, textStyle, symbolStyle, dividerStyle }) {
+  return (
+    <View style={[styles.brandLogo, compact && styles.brandLogoCompact, style]}>
+      <Image
+        source={logoSymbol}
+        style={[
+          styles.brandLogoSymbol,
+          compact && styles.brandLogoSymbolCompact,
+          light && styles.brandLogoSymbolLight,
+          symbolStyle
+        ]}
+        resizeMode="contain"
+      />
+      <View style={[styles.brandLogoDivider, compact && styles.brandLogoDividerCompact, light && styles.brandLogoDividerLight, dividerStyle]} />
+      <Text style={[styles.brandLogoText, compact && styles.brandLogoTextCompact, light && styles.brandLogoTextLight, textStyle]} numberOfLines={1}>
+        Lookmefy
+      </Text>
+    </View>
+  );
+}
+
 function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
   const avatarUri = userAvatarUrl(user);
   return (
@@ -812,9 +840,9 @@ function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
         ) : null}
         <View>
           <Pressable onPress={() => onNavigate('home')}>
-            <Text style={styles.brand}>Lookmefy</Text>
+            <BrandLogo />
           </Pressable>
-          <Text style={styles.headerSub}>{user?.devMode ? 'Dev Mode active' : user ? `${user.tokens} tokens ready` : 'AI fitting room'}</Text>
+          <Text style={styles.headerSub}>{user ? `${user.tokens} tokens ready` : 'AI fitting room'}</Text>
           {user?.bodyPhotoStatus === 'generating' ? <Text style={styles.headerNotice}>Profile preparing</Text> : null}
         </View>
       </View>
@@ -862,7 +890,7 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
         </View>
       ) : null}
       <Pressable accessibilityRole="button" accessibilityLabel="Go to feed" onPress={() => onNavigate('home')} style={[styles.appHeaderBrandWrap, brandLeft && styles.appHeaderBrandWrapLeft]}>
-        <Text style={styles.appHeaderBrand} numberOfLines={1}>{title}</Text>
+        {title === 'Lookmefy' ? <BrandLogo compact={compact} /> : <Text style={styles.appHeaderBrand} numberOfLines={1}>{title}</Text>}
       </Pressable>
       <View style={[styles.appHeaderSide, styles.appHeaderRightSide]}>
         {showSearchAction ? (
@@ -887,7 +915,13 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
 
 function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
   const routeName = route?.name || 'home';
-  const activeRoute = routeName === 'product' || routeName === 'wishlist' || routeName === 'search' ? 'shop' : routeName === 'stylebot' ? 'tryon' : routeName;
+  const activeRoute = routeName === 'generation-history' || routeName === 'orders'
+    ? 'profile'
+    : routeName === 'product' || routeName === 'wishlist' || routeName === 'search'
+      ? 'shop'
+      : routeName === 'stylebot'
+        ? 'tryon'
+        : routeName;
   const items = [
     ['home', 'home-outline', 'Home'],
     ['shop', 'grid-outline', 'Categories'],
@@ -900,11 +934,12 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
       {items.map(([name, icon, label]) => {
         const active = activeRoute === name;
         return (
-          <TouchableOpacity key={name} activeOpacity={0.82} accessibilityRole="tab" accessibilityState={{ selected: active }} style={[styles.navItem, active && styles.navItemCenterActive]} onPress={() => onNavigate(name)}>
+          <TouchableOpacity key={name} activeOpacity={0.82} accessibilityRole="tab" accessibilityState={{ selected: active }} style={styles.navItem} onPress={() => onNavigate(name)}>
             <View style={[styles.navIconWrap, active && styles.navIconWrapCenter]}>
-              <Ionicons name={icon} size={active ? 20 : 21} color={active ? '#8f4f52' : '#8d8682'} />
+              <Ionicons name={icon} size={active ? 20 : 21} color={active ? '#111111' : '#8d8682'} />
             </View>
             <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+            <View style={[styles.navActiveUnderline, active && styles.navActiveUnderlineVisible]} />
           </TouchableOpacity>
         );
       })}
@@ -1753,7 +1788,7 @@ function FilterChips({ selected, options, onSelect, compact, wrap }) {
 function FilterDropdown({ label, selected, options, onSelect }) {
   const [open, setOpen] = useState(false);
   const selectedOption = options.find((option) => (Array.isArray(option) ? option[0] : option) === selected) || options[0];
-  const selectedLabel = Array.isArray(selectedOption) ? selectedOption[1] : titleCase(selectedOption);
+  const selectedLabel = String(Array.isArray(selectedOption) ? selectedOption[1] : titleCase(selectedOption || '') || label);
   const hasValue = Boolean(selected) || label === 'Sort';
 
   return (
@@ -2413,7 +2448,6 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
             onPress={generateVideo}
           />
         </View>
-        {typeof __DEV__ !== 'undefined' && __DEV__ ? <Text style={styles.productDebugApi}>DEV API: {API_URL.replace(/^https?:\/\//, '').replace(/\/api\/?$/, '')}</Text> : null}
         {tryOn?.imageUrl || tryOn?.videoUrl ? <AiPreviewNote /> : null}
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
         {tryOnVideoError ? <Text style={styles.errorText}>{tryOnVideoError}</Text> : null}
@@ -2463,13 +2497,18 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
   );
 }
 
+const phoneAuthPerks = [
+  { label: 'Try-on', icon: 'sparkles-outline' },
+  { label: 'Wishlist', icon: 'heart-outline' },
+  { label: 'Wardrobe', icon: 'shirt-outline' }
+];
+
 function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   const isSignup = mode === 'signup';
   const { width, height } = useWindowDimensions();
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [otpSent, setOtpSent] = useState(false);
-  const [devOtp, setDevOtp] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [signupStage, setSignupStage] = useState('otp');
@@ -2481,8 +2520,49 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   const authScreenPadding = clamp(width * 0.064, 20, 30);
   const titleSize = clamp(width * 0.082, 31, 38);
   const fieldHeight = clamp(height * 0.052, 54, 60);
+  const authEditorialHeight = clamp(height * 0.17, 118, 158);
   const phoneValue = normalizePhoneInput(phone);
   const completingSignup = signupStage === 'details';
+
+  const finishVerifiedOtp = async (data) => {
+    await saveToken(data.token);
+    if (data.isNewUser) {
+      setVerifiedToken(data.token);
+      setVerifiedUser(data.user);
+      setDetailName('');
+      setDetailGender('');
+      setDetailPhoto(null);
+      setSignupStage('details');
+      setMessage('');
+      return;
+    }
+    setToken(data.token);
+    setUser(data.user);
+    onNavigate('home');
+  };
+
+  const verifyOtpCode = async (otpCode, manageLoading = true) => {
+    const cleanOtp = normalizeOtpInput(otpCode);
+    if (phoneValue.length !== 10 || !cleanOtp) {
+      setMessage('Enter your mobile number and OTP.');
+      return false;
+    }
+    if (manageLoading) setLoading(true);
+    setMessage('Verifying OTP...');
+    try {
+      const data = await api('/auth/otp/verify', {
+        method: 'POST',
+        body: JSON.stringify({ phone: phoneValue, otp: cleanOtp })
+      });
+      await finishVerifiedOtp(data);
+      return true;
+    } catch (error) {
+      setMessage(error.message);
+      return false;
+    } finally {
+      if (manageLoading) setLoading(false);
+    }
+  };
 
   const sendOtp = async () => {
     if (phoneValue.length !== 10) {
@@ -2496,14 +2576,10 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
         method: 'POST',
         body: JSON.stringify({ phone: phoneValue })
       });
+      setOtp('');
       setOtpSent(true);
-      setDevOtp(data.devOtp || devOtpFallback);
-      setMessage(data.message || 'OTP sent.');
+      setMessage(data.message ? `${data.message}. Enter the code from SMS.` : 'OTP sent. Enter the code from SMS.');
     } catch (error) {
-      if (/network request failed|failed to fetch|unable to connect|timed out/i.test(error.message || '')) {
-        setOtpSent(true);
-        setDevOtp(devOtpFallback);
-      }
       setMessage(error.message);
     } finally {
       setLoading(false);
@@ -2511,36 +2587,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   };
 
   const verifyOtp = async () => {
-    if (phoneValue.length !== 10 || !otp.trim()) {
-      setMessage('Enter your mobile number and OTP.');
-      return;
-    }
-    setLoading(true);
-    setMessage('Verifying OTP...');
-    try {
-      const data = await api('/auth/otp/verify', {
-        method: 'POST',
-        body: JSON.stringify({ phone: phoneValue, otp: otp.trim() })
-      });
-      await saveToken(data.token);
-      if (data.isNewUser) {
-        setVerifiedToken(data.token);
-        setVerifiedUser(data.user);
-        setDetailName('');
-        setDetailGender('');
-        setDetailPhoto(null);
-        setSignupStage('details');
-        setMessage('');
-        return;
-      }
-      setToken(data.token);
-      setUser(data.user);
-      onNavigate('home');
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
+    await verifyOtpCode(otp);
   };
 
   const exitSignupDetails = async () => {
@@ -2605,7 +2652,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   };
 
   const submit = otpSent ? verifyOtp : sendOtp;
-  const actionLabel = otpSent ? 'Verify & Continue' : 'Send OTP';
+  const actionLabel = otpSent ? 'Verify & Continue' : 'Continue';
 
   if (completingSignup) {
     const genderOptions = [
@@ -2623,7 +2670,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
           {...screenScrollProps}
         >
           <View style={styles.phoneAuthTopRow}>
-            <Text style={styles.signupBrand}>Lookmefy</Text>
+            <BrandLogo compact style={styles.signupBrandLogo} />
             <TouchableOpacity style={styles.phoneAuthClose} activeOpacity={0.78} onPress={exitSignupDetails}>
               <Ionicons name="close" size={20} color="#2b2321" />
             </TouchableOpacity>
@@ -2712,11 +2759,11 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.phoneAuthContent, { paddingHorizontal: authScreenPadding, paddingTop: clamp(height * 0.085, 58, 88) }]}
+        contentContainerStyle={[styles.phoneAuthContent, { paddingHorizontal: authScreenPadding, paddingTop: clamp(height * 0.065, 46, 70) }]}
         {...screenScrollProps}
       >
         <View style={styles.phoneAuthTopRow}>
-          <Text style={styles.signupBrand}>Lookmefy</Text>
+          <BrandLogo compact style={styles.signupBrandLogo} />
           <TouchableOpacity style={styles.phoneAuthClose} activeOpacity={0.78} onPress={() => onNavigate('home')}>
             <Ionicons name="close" size={20} color="#2b2321" />
           </TouchableOpacity>
@@ -2729,7 +2776,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
           <Text style={[styles.loginTitle, { fontSize: titleSize, lineHeight: titleSize * 1.18 }]}>
             {isSignup ? 'Create Account' : 'Welcome Back'}
           </Text>
-          <Text style={styles.phoneAuthSubtitle}>Use your mobile number to continue with a one-time OTP.</Text>
+          <Text style={styles.phoneAuthSubtitle}>Use your mobile number to continue to your profile, wishlist, and try-ons.</Text>
 
           <View style={styles.phoneAuthFieldStack}>
             <View style={[styles.loginInputWrap, { minHeight: fieldHeight }]}>
@@ -2753,7 +2800,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
                   <TextInput
                     style={styles.loginInput}
                     value={otp}
-                    onChangeText={(value) => setOtp(value.replace(/\D/g, '').slice(0, 8))}
+                    onChangeText={(value) => setOtp(normalizeOtpInput(value))}
                     placeholder="Enter OTP"
                     placeholderTextColor="#6f7687"
                     keyboardType="number-pad"
@@ -2761,7 +2808,6 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
                     maxLength={8}
                   />
                 </View>
-                <Text style={styles.phoneAuthDevOtp}>Dev OTP: {devOtp || devOtpFallback}</Text>
               </View>
             ) : null}
           </View>
@@ -2773,12 +2819,32 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
           </TouchableOpacity>
 
           {otpSent ? (
-            <TouchableOpacity style={styles.phoneAuthTextButton} activeOpacity={0.75} onPress={() => { setOtpSent(false); setOtp(''); setDevOtp(''); setMessage(''); }}>
+            <TouchableOpacity style={styles.phoneAuthTextButton} activeOpacity={0.75} onPress={() => { setOtpSent(false); setOtp(''); setMessage(''); }}>
               <Text style={styles.phoneAuthTextButtonLabel}>Change mobile number</Text>
             </TouchableOpacity>
           ) : null}
 
-          {message ? <Text style={[styles.formMessage, styles.signupMessage, /sent|Verifying|Sending/i.test(message) ? styles.phoneAuthMessage : styles.errorText]}>{message}</Text> : null}
+          {message ? <Text style={[styles.formMessage, styles.signupMessage, /sent|Verifying|Sending|Preparing/i.test(message) ? styles.phoneAuthMessage : styles.errorText]}>{message}</Text> : null}
+        </View>
+
+        <View style={styles.phoneAuthEditorial}>
+          <View style={[styles.phoneAuthEditorialImageFrame, { height: authEditorialHeight }]}>
+            <Image source={images.homeSliderAtelier} style={styles.phoneAuthEditorialImage} resizeMode="cover" />
+            <View style={styles.phoneAuthEditorialShade} />
+            <View style={styles.phoneAuthEditorialBadge}>
+              <Ionicons name="sparkles-outline" size={15} color="#111111" />
+              <Text style={styles.phoneAuthEditorialBadgeText}>Styled profile</Text>
+            </View>
+          </View>
+          <Text style={styles.phoneAuthEditorialTitle}>Save looks, generate try-ons, and keep your wardrobe in one place.</Text>
+          <View style={styles.phoneAuthPerkRow}>
+            {phoneAuthPerks.map((item) => (
+              <View key={item.label} style={styles.phoneAuthPerk}>
+                <Ionicons name={item.icon} size={15} color="#2b2321" />
+                <Text style={styles.phoneAuthPerkText}>{item.label}</Text>
+              </View>
+            ))}
+          </View>
         </View>
 
         <TouchableOpacity style={styles.phoneAuthBrowseButton} activeOpacity={0.75} onPress={() => onNavigate('home')}>
@@ -2833,7 +2899,13 @@ function AuthEntryScreen({ onNavigate }) {
 
       <View style={[styles.authEntryMain, compact && styles.authEntryMainCompact]}>
         <View style={styles.authEntryBrand}>
-          <Text style={[styles.authEntryLogo, { fontSize: logoSize, lineHeight: logoSize * 1.08 }]}>Lookmefy</Text>
+          <BrandLogo
+            light
+            style={styles.authEntryLogoMark}
+            symbolStyle={{ width: logoSize * 0.9, height: logoSize * 0.9 }}
+            dividerStyle={{ height: logoSize * 0.72 }}
+            textStyle={{ fontSize: logoSize * 0.72, lineHeight: logoSize * 0.86 }}
+          />
           <Text style={[styles.authEntryTagline, { fontSize: taglineSize, lineHeight: taglineSize * 1.48, letterSpacing: taglineSpace }]}>AI-POWERED FASHION</Text>
           <Text style={[styles.authEntryTagline, { fontSize: taglineSize, lineHeight: taglineSize * 1.48, letterSpacing: taglineSpace }]}>EXPERIENCE</Text>
         </View>
@@ -3416,7 +3488,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
             <TouchableOpacity style={styles.addStudioTopButton} onPress={discardAddDraft}>
               <Ionicons name="close" size={24} color="#171412" />
             </TouchableOpacity>
-            <Text style={styles.addStudioBrand}>Lookmefy</Text>
+            <BrandLogo compact style={styles.addStudioBrandLogo} />
             <TouchableOpacity style={styles.addStudioTopButton} onPress={() => onNavigate('closet')}>
               <Ionicons name="cube-outline" size={22} color="#171412" />
             </TouchableOpacity>
@@ -4547,6 +4619,151 @@ function OrdersScreen({ onNavigate, token }) {
   );
 }
 
+function GenerationHistoryPreview({ items = [], total = 0, loading, error, onNavigate }) {
+  const previewItems = items.slice(0, 4);
+  const savedCount = Math.max(Number(total) || 0, previewItems.length);
+
+  return (
+    <View style={styles.generationPreviewCard}>
+      <View style={styles.generationPreviewHead}>
+        <View style={styles.generationPreviewTitleBlock}>
+          <Text style={styles.generationPreviewTitle}>Generation History</Text>
+          <Text style={styles.generationPreviewSubtitle}>View all AI try-on images you've created.</Text>
+        </View>
+        <View style={styles.generationPreviewIcon}>
+          <Ionicons name="sparkles" size={16} color="#2b2321" />
+        </View>
+      </View>
+
+      <View style={styles.generationPreviewThumbRow}>
+        {loading ? Array.from({ length: 3 }).map((_, index) => (
+          <SkeletonBlock key={`history-preview-skeleton-${index}`} style={styles.generationPreviewThumb} />
+        )) : null}
+        {!loading && previewItems.length ? previewItems.map((item) => (
+          <Pressable key={item.id} style={styles.generationPreviewThumb} onPress={() => onNavigate('generation-history')}>
+            <ResilientImage
+              source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : null}
+              fallbackSource={item.sourceImageUrl ? { uri: imageUrl(item.sourceImageUrl) } : null}
+              style={styles.generationPreviewImage}
+              resizeMode="cover"
+              fallbackIcon="sparkles-outline"
+            />
+          </Pressable>
+        )) : null}
+        {!loading && !previewItems.length ? (
+          <View style={styles.generationPreviewEmpty}>
+            <Ionicons name="images-outline" size={20} color="#9b8f89" />
+            <Text style={styles.generationPreviewEmptyText}>{error || 'Your saved try-ons will appear here.'}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.generationPreviewDivider} />
+      <View style={styles.generationPreviewFooter}>
+        <Text style={styles.generationPreviewCount}>{savedCount} saved creation{savedCount === 1 ? '' : 's'}</Text>
+        <TouchableOpacity style={styles.generationPreviewButton} activeOpacity={0.84} onPress={() => onNavigate('generation-history')}>
+          <Text style={styles.generationPreviewButtonText}>View History</Text>
+          <Ionicons name="arrow-forward" size={14} color="#2b2321" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+function GenerationHistoryScreen({ user, setUser, setToken, token, onNavigate }) {
+  const history = useApiState('/tryons/history?limit=60', token, Boolean(user), { items: [], total: 0 });
+  const [lightbox, setLightbox] = useState(null);
+
+  if (!user) return <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
+
+  const items = history.data?.items || [];
+  const total = Math.max(Number(history.data?.total) || 0, items.length);
+
+  const renderHistoryItem = ({ item }) => {
+    const imageSource = item.imageUrl ? { uri: imageUrl(item.imageUrl) } : null;
+    const fallbackSource = item.sourceImageUrl ? { uri: imageUrl(item.sourceImageUrl) } : null;
+    return (
+      <View style={styles.generationGridCard}>
+        <Pressable style={styles.generationGridImageWrap} onPress={() => item.imageUrl && setLightbox(imageUrl(item.imageUrl))}>
+          <ResilientImage
+            source={imageSource}
+            fallbackSource={fallbackSource}
+            style={styles.generationGridImage}
+            resizeMode="cover"
+            alt={item.title || 'Generated try-on'}
+            fallbackIcon="sparkles-outline"
+          />
+          <View style={styles.generationGridBadge}>
+            <Text style={styles.generationGridBadgeText}>{item.label || 'AI Try-On'}</Text>
+          </View>
+        </Pressable>
+        <View style={styles.generationGridCopy}>
+          <Text style={styles.generationGridTitle} numberOfLines={2}>{item.title || 'Generated try-on'}</Text>
+          <Text style={styles.generationGridMeta} numberOfLines={1}>{item.subtitle || formatDate(item.createdAt)}</Text>
+          <View style={styles.generationGridFooter}>
+            <Text style={styles.generationGridDate}>{formatDate(item.createdAt)}</Text>
+            {item.productId ? (
+              <TouchableOpacity style={styles.generationGridProductButton} onPress={() => onNavigate('product', { id: item.productId })}>
+                <Ionicons name="open-outline" size={13} color="#2b2321" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        </View>
+      </View>
+    );
+  };
+
+  return (
+    <View style={styles.generationHistoryScreen}>
+      <AppHeader onNavigate={onNavigate} compact />
+      <FlatList
+        data={items}
+        keyExtractor={(item) => item.id}
+        numColumns={2}
+        renderItem={renderHistoryItem}
+        columnWrapperStyle={items.length > 1 ? styles.generationGridRow : undefined}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.generationHistoryContent}
+        ListHeaderComponent={(
+          <View style={styles.generationHistoryHeader}>
+            <View>
+              <Text style={styles.generationHistoryTitle}>Generation History</Text>
+              <Text style={styles.generationHistorySubtitle}>Your AI Try-On creations, all in one place.</Text>
+              <Text style={styles.generationHistoryTotal}>{total} saved creation{total === 1 ? '' : 's'}</Text>
+            </View>
+            <TouchableOpacity style={styles.generationHistoryRefresh} activeOpacity={0.84} onPress={history.reload}>
+              <Ionicons name="refresh" size={18} color="#2b2321" />
+            </TouchableOpacity>
+          </View>
+        )}
+        ListFooterComponent={history.loading && items.length ? (
+          <Text style={styles.generationHistoryFootnote}>Refreshing history...</Text>
+        ) : null}
+        ListEmptyComponent={history.loading ? (
+          <View style={styles.generationGridSkeleton}>
+            {Array.from({ length: 4 }).map((_, index) => (
+              <View key={`generation-history-skeleton-${index}`} style={styles.generationGridCard}>
+                <SkeletonBlock style={styles.generationGridImage} />
+                <SkeletonBlock style={styles.generationGridSkeletonLine} />
+                <SkeletonBlock style={styles.generationGridSkeletonShort} />
+              </View>
+            ))}
+          </View>
+        ) : (
+          <EmptyStateCard
+            icon={history.error ? 'alert-circle-outline' : 'sparkles-outline'}
+            title={history.error ? 'History unavailable' : 'No generations yet'}
+            text={history.error || 'Generate a try-on from any product or AI Studio to save it here.'}
+            actionLabel="Start Trying On"
+            onAction={() => onNavigate('tryon')}
+          />
+        )}
+      />
+      <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
+    </View>
+  );
+}
+
 function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, registerTourTarget, tourFocusRequest }) {
   const [photo, setPhoto] = useState(null);
   const [profilePhotoMode, setProfilePhotoMode] = useState('ai-full-body');
@@ -4558,9 +4775,11 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
   const [editGender, setEditGender] = useState('');
   const [editMessage, setEditMessage] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
+  const [accountDeleting, setAccountDeleting] = useState(false);
   const profileScrollRef = useRef(null);
   const profileAvatarTourTarget = useTourTarget('profile-avatar', registerTourTarget, { request: tourFocusRequest, scrollRef: profileScrollRef, scrollOffset: 94 });
   const creditHistory = useApiState('/tryons/credit-history?limit=20', token, Boolean(user), { events: [] });
+  const generationHistory = useApiState('/tryons/history?limit=12', token, Boolean(user), { items: [], total: 0 });
 
   if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
 
@@ -4643,6 +4862,39 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
     }
   };
 
+  const deleteAccount = async () => {
+    setAccountDeleting(true);
+    setMessage('Deleting account...');
+    let deleted = false;
+    try {
+      await api('/auth/me', { method: 'DELETE', timeoutMs: 60000 });
+      await clearToken();
+      deleted = true;
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setAccountDeleting(false);
+    }
+
+    if (deleted) {
+      setToken(null);
+      setUser(null);
+      Alert.alert('Account deleted', 'Your Lookmefy account deletion request has been completed.');
+      onNavigate('home');
+    }
+  };
+
+  const confirmDeleteAccount = () => {
+    Alert.alert(
+      'Delete account?',
+      'This permanently removes your profile, photos, try-on history, wardrobe, credits, and account access. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete Account', style: 'destructive', onPress: deleteAccount }
+      ]
+    );
+  };
+
   return (
     <ScrollView ref={profileScrollRef} style={styles.profileScreen} contentContainerStyle={styles.profileContent} {...screenScrollProps}>
       <AppHeader onNavigate={onNavigate} compact />
@@ -4705,6 +4957,14 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
           {!creditHistory.loading && !creditHistory.error && !creditEvents.length ? <Text style={styles.profileCreditEmptyText}>No credit activity yet.</Text> : null}
         </View>
       </View>
+
+      <GenerationHistoryPreview
+        items={generationHistory.data?.items || []}
+        total={generationHistory.data?.total || 0}
+        loading={generationHistory.loading}
+        error={generationHistory.error}
+        onNavigate={onNavigate}
+      />
 
       <View style={styles.profileSection}>
         <View style={styles.profileSectionHead}>
@@ -4786,6 +5046,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
           { label: 'Support Center', onPress: () => onNavigate('info', { page: 'support' }) },
           { label: 'Return and Refund Policy', onPress: () => onNavigate('info', { page: 'returns' }) },
           { label: 'Cancellation Policy', onPress: () => onNavigate('info', { page: 'cancellation' }) },
+          { label: 'Account & Data Deletion', onPress: () => onNavigate('info', { page: 'deletion' }) },
           { label: 'Data & Privacy', onPress: () => onNavigate('info', { page: 'privacy' }) },
           { label: 'Terms of Service', onPress: () => onNavigate('info', { page: 'terms' }) },
           { label: 'Privacy Policy', onPress: () => onNavigate('info', { page: 'privacy' }) }
@@ -4794,6 +5055,9 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
 
       <TouchableOpacity style={styles.profileLogoutButton} onPress={onLogout}>
         <Text style={styles.profileLogoutText}>Logout</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[styles.profileDeleteButton, accountDeleting && styles.disabledButton]} disabled={accountDeleting} onPress={confirmDeleteAccount}>
+        {accountDeleting ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileDeleteText}>Delete Account</Text>}
       </TouchableOpacity>
       <Modal visible={editVisible} transparent animationType="fade" onRequestClose={() => setEditVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
@@ -5054,7 +5318,7 @@ function WishlistDoneButton({ saved, onPress, compact }) {
       style={[styles.wishlistDoneButton, compact && styles.wishlistDoneButtonCompact, saved && styles.wishlistDoneButtonSaved]}
       onPress={handlePress}
     >
-      <Ionicons name={saved ? 'heart' : 'heart-outline'} size={compact ? 17 : 19} color={saved ? '#ffffff' : '#9b5658'} />
+      <Ionicons name={saved ? 'heart' : 'heart-outline'} size={compact ? 17 : 19} color={saved ? '#ffffff' : '#111111'} />
     </TouchableOpacity>
   );
 }
@@ -5172,14 +5436,31 @@ function AuthPromptModal({ visible, message, onContinue, onClose }) {
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.authPromptBackdrop} onPress={onClose}>
         <Pressable style={styles.authPromptSheet} onPress={(event) => event.stopPropagation()}>
+          <BrandLogo
+            compact
+            style={styles.authPromptBrand}
+            symbolStyle={styles.authPromptBrandSymbol}
+            textStyle={styles.authPromptBrandText}
+            dividerStyle={styles.authPromptBrandDivider}
+          />
           <View style={styles.authPromptIcon}>
-            <Ionicons name="lock-closed-outline" size={22} color="#9b5658" />
+            <Ionicons name="lock-closed-outline" size={21} color="#2b2321" />
           </View>
-          <Text style={styles.authPromptTitle}>Login Required</Text>
+          <Text style={styles.authPromptTitle}>Sign in to continue</Text>
           <Text style={styles.authPromptText}>{message || 'Log in with your mobile number to continue.'}</Text>
+          <View style={styles.authPromptChipRow}>
+            <View style={styles.authPromptChip}>
+              <Ionicons name="heart-outline" size={14} color="#2b2321" />
+              <Text style={styles.authPromptChipText}>Wishlist</Text>
+            </View>
+            <View style={styles.authPromptChip}>
+              <Ionicons name="sparkles-outline" size={14} color="#2b2321" />
+              <Text style={styles.authPromptChipText}>Try-on</Text>
+            </View>
+          </View>
           <TouchableOpacity style={styles.authPromptPrimary} activeOpacity={0.88} onPress={onContinue}>
-            <Ionicons name="phone-portrait-outline" size={18} color="#ffffff" />
-            <Text style={styles.authPromptPrimaryText}>Continue with OTP</Text>
+            <Text style={styles.authPromptPrimaryText}>Continue</Text>
+            <Ionicons name="arrow-forward" size={19} color="#ffffff" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.authPromptSecondary} activeOpacity={0.75} onPress={onClose}>
             <Text style={styles.authPromptSecondaryText}>Not now</Text>
@@ -5448,6 +5729,8 @@ export default function App() {
         return <TokensScreen user={user} setUser={setUser} onNavigate={guardedNavigate} onRequireAuth={requestAuth} />;
       case 'profile':
         return <ProfileScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onLogout={logout} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
+      case 'generation-history':
+        return user ? <GenerationHistoryScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'wishlist':
         return user ? <WishlistScreen onNavigate={guardedNavigate} token={token} wishlistProducts={wishlistProducts} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'orders':
@@ -5491,9 +5774,10 @@ export default function App() {
   const aiStudioRoute = currentRoute.name === 'tryon';
   const tokensRoute = currentRoute.name === 'tokens';
   const profileRoute = currentRoute.name === 'profile';
+  const generationHistoryRoute = currentRoute.name === 'generation-history';
   const wishlistRoute = currentRoute.name === 'wishlist';
   const ordersRoute = currentRoute.name === 'orders';
-  const accountChildRoute = wishlistRoute || ordersRoute;
+  const accountChildRoute = wishlistRoute || ordersRoute || generationHistoryRoute;
 
   return (
     <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe]}>
@@ -5663,6 +5947,52 @@ const styles = StyleSheet.create({
     fontSize: 20,
     lineHeight: 24
   },
+  brandLogo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    maxWidth: '100%'
+  },
+  brandLogoCompact: {
+    gap: 8
+  },
+  brandLogoSymbol: {
+    width: 42,
+    height: 42
+  },
+  brandLogoSymbolCompact: {
+    width: 32,
+    height: 32
+  },
+  brandLogoSymbolLight: {
+    tintColor: '#ffffff'
+  },
+  brandLogoDivider: {
+    width: 1,
+    height: 31,
+    backgroundColor: '#cfc7c2'
+  },
+  brandLogoDividerCompact: {
+    height: 25
+  },
+  brandLogoDividerLight: {
+    backgroundColor: 'rgba(255, 255, 255, 0.58)'
+  },
+  brandLogoText: {
+    color: '#050505',
+    fontFamily: fontFamilies.logo,
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '400',
+    letterSpacing: 0
+  },
+  brandLogoTextCompact: {
+    fontSize: 25,
+    lineHeight: 30
+  },
+  brandLogoTextLight: {
+    color: '#ffffff'
+  },
   appHeaderAvatar: {
     width: 34,
     height: 34,
@@ -5691,11 +6021,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     flex: 1
-  },
-  brand: {
-    ...typography.h1,
-    fontSize: 28,
-    color: '#111827'
   },
   headerSub: {
     ...typography.caption,
@@ -5760,39 +6085,45 @@ const styles = StyleSheet.create({
     minWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
-    minHeight: 56
-  },
-  navItemCenterActive: {
-    marginTop: 0
+    gap: 2,
+    minHeight: 60
   },
   navIconWrap: {
     width: 44,
-    height: 34,
+    height: 30,
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent'
   },
   navIconWrapCenter: {
-    width: 48,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#ebd9d5',
-    backgroundColor: '#fff5f3'
+    width: 44,
+    height: 30,
+    borderRadius: 0,
+    borderWidth: 0,
+    backgroundColor: 'transparent'
   },
   navText: {
     ...typography.nav,
-    fontSize: 10,
-    lineHeight: 12,
+    fontSize: 11,
+    lineHeight: 14,
     color: '#8d8682',
     fontWeight: '600'
   },
   navTextActive: {
-    color: '#9b5658',
+    color: '#111111',
     fontFamily: fontFamilies.bodyBold,
     fontWeight: '700'
+  },
+  navActiveUnderline: {
+    width: 42,
+    height: 3,
+    borderRadius: 2,
+    marginTop: 5,
+    backgroundColor: 'transparent'
+  },
+  navActiveUnderlineVisible: {
+    backgroundColor: '#111111'
   },
   homeScreen: {
     flex: 1,
@@ -7024,13 +7355,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center'
   },
-  addStudioBrand: {
-    ...typography.h2,
+  addStudioBrandLogo: {
     flex: 1,
-    color: '#171412',
-    fontSize: 25,
-    lineHeight: 31,
-    fontWeight: '600'
+    justifyContent: 'center'
   },
   addStudioIntro: {
     paddingHorizontal: 20,
@@ -7645,8 +7972,8 @@ const styles = StyleSheet.create({
     borderRadius: 16
   },
   wishlistDoneButtonSaved: {
-    borderColor: '#9b5658',
-    backgroundColor: '#9b5658'
+    borderColor: '#111111',
+    backgroundColor: '#111111'
   },
   lockOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -8041,33 +8368,35 @@ const styles = StyleSheet.create({
   filterRail: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    alignItems: 'flex-start',
     gap: 8
   },
   dropdownButton: {
-    flex: 0,
-    minWidth: 0,
-    minHeight: 32,
-    borderRadius: 16,
+    minWidth: 96,
+    height: 40,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: '#e2d8d2',
     backgroundColor: '#ffffff',
-    paddingHorizontal: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 6
+    alignSelf: 'flex-start',
+    gap: 7
   },
   dropdownButtonActive: {
     borderColor: '#e2c9c5',
     backgroundColor: '#f6ece9'
   },
   dropdownCopy: {
-    flex: 1,
+    flexShrink: 1,
     minWidth: 0
   },
   dropdownLabel: {
     color: '#7b716a',
-    fontSize: 7,
+    fontSize: 8,
     lineHeight: 10,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -8694,12 +9023,6 @@ const styles = StyleSheet.create({
   },
   productActionTextActive: {
     color: '#ffffff'
-  },
-  productDebugApi: {
-    marginTop: 8,
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '700'
   },
   productAccordion: {
     paddingHorizontal: 14,
@@ -9534,10 +9857,9 @@ const styles = StyleSheet.create({
   authEntryBrand: {
     alignItems: 'center'
   },
-  authEntryLogo: {
-    ...typography.display,
-    color: '#fff',
-    fontWeight: '700'
+  authEntryLogoMark: {
+    justifyContent: 'center',
+    marginBottom: 4
   },
   authEntryTagline: {
     ...typography.body,
@@ -9602,11 +9924,8 @@ const styles = StyleSheet.create({
     paddingTop: Platform.OS === 'android' ? 34 : 54,
     paddingBottom: 34
   },
-  signupBrand: {
-    ...typography.display,
-    color: '#050505',
-    lineHeight: 35,
-    fontWeight: '700'
+  signupBrandLogo: {
+    flex: 1
   },
   signupTitle: {
     ...typography.h1,
@@ -10237,12 +10556,85 @@ const styles = StyleSheet.create({
   phoneAuthOtpBlock: {
     gap: 7
   },
-  phoneAuthDevOtp: {
+  phoneAuthEditorial: {
+    width: '100%',
+    maxWidth: 520,
+    marginTop: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fffdfb',
+    padding: 10,
+    shadowColor: '#2a211d',
+    shadowOpacity: 0.05,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2
+  },
+  phoneAuthEditorialImageFrame: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#e8ded9'
+  },
+  phoneAuthEditorialImage: {
+    width: '100%',
+    height: '100%'
+  },
+  phoneAuthEditorialShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(17, 17, 17, 0.14)'
+  },
+  phoneAuthEditorialBadge: {
+    position: 'absolute',
+    left: 10,
+    bottom: 10,
+    minHeight: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10
+  },
+  phoneAuthEditorialBadgeText: {
     ...typography.caption,
-    color: '#dc2626',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700'
+    color: '#111111',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800'
+  },
+  phoneAuthEditorialTitle: {
+    ...typography.productTitle,
+    marginTop: 12,
+    color: '#2b2321',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '800'
+  },
+  phoneAuthPerkRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    gap: 8
+  },
+  phoneAuthPerk: {
+    flex: 1,
+    minHeight: 34,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eee3dc',
+    backgroundColor: '#fbf7f6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 6
+  },
+  phoneAuthPerkText: {
+    ...typography.caption,
+    color: '#2b2321',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '800'
   },
   phoneAuthTextButton: {
     marginTop: 14,
@@ -10890,6 +11282,300 @@ const styles = StyleSheet.create({
     color: '#0f766e',
     fontWeight: '700'
   },
+  generationPreviewCard: {
+    marginHorizontal: 18,
+    marginTop: 24,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5dcd9',
+    backgroundColor: '#fffdfc',
+    shadowColor: '#2a211d',
+    shadowOpacity: 0.04,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 2
+  },
+  generationPreviewHead: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 14
+  },
+  generationPreviewTitleBlock: {
+    flex: 1,
+    minWidth: 0
+  },
+  generationPreviewTitle: {
+    ...typography.h3,
+    color: '#2b2321',
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: '700'
+  },
+  generationPreviewSubtitle: {
+    ...typography.caption,
+    marginTop: 4,
+    color: '#7c7470',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    textTransform: 'uppercase'
+  },
+  generationPreviewIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#f5efec',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  generationPreviewThumbRow: {
+    minHeight: 82,
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10
+  },
+  generationPreviewThumb: {
+    width: 58,
+    height: 76,
+    borderRadius: 6,
+    overflow: 'hidden',
+    backgroundColor: '#efe8e4'
+  },
+  generationPreviewImage: {
+    width: '100%',
+    height: '100%'
+  },
+  generationPreviewEmpty: {
+    flex: 1,
+    minHeight: 76,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#e2d8d2',
+    backgroundColor: '#fbf7f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 14
+  },
+  generationPreviewEmptyText: {
+    ...typography.caption,
+    color: '#7c7470',
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700'
+  },
+  generationPreviewDivider: {
+    marginTop: 14,
+    height: 1,
+    backgroundColor: '#efe4df'
+  },
+  generationPreviewFooter: {
+    minHeight: 42,
+    paddingTop: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  generationPreviewCount: {
+    ...typography.caption,
+    flex: 1,
+    minWidth: 0,
+    color: '#9b928d',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700'
+  },
+  generationPreviewButton: {
+    minHeight: 34,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ded3ce',
+    paddingHorizontal: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#fffdfc'
+  },
+  generationPreviewButtonText: {
+    ...typography.caption,
+    color: '#2b2321',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700'
+  },
+  generationHistoryScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  generationHistoryContent: {
+    paddingHorizontal: 18,
+    paddingTop: 28,
+    paddingBottom: bottomNavigationHeight + screenBottomInset
+  },
+  generationHistoryHeader: {
+    marginBottom: 20,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 14
+  },
+  generationHistoryTitle: {
+    ...typography.display,
+    color: '#2b2321',
+    fontSize: 32,
+    lineHeight: 38
+  },
+  generationHistorySubtitle: {
+    ...typography.caption,
+    marginTop: 5,
+    color: '#7c7470',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600'
+  },
+  generationHistoryTotal: {
+    ...typography.caption,
+    marginTop: 8,
+    color: '#9b928d',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700'
+  },
+  generationHistoryRefresh: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fffdfc',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  generationGridRow: {
+    gap: 14
+  },
+  generationGridCard: {
+    flex: 1,
+    flexBasis: '48%',
+    maxWidth: '48%',
+    marginBottom: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e9dfda',
+    overflow: 'hidden',
+    backgroundColor: '#fffdfc'
+  },
+  generationGridImageWrap: {
+    position: 'relative',
+    backgroundColor: '#efe8e4'
+  },
+  generationGridImage: {
+    width: '100%',
+    aspectRatio: 0.76
+  },
+  generationGridBadge: {
+    position: 'absolute',
+    left: 9,
+    top: 9,
+    maxWidth: '82%',
+    minHeight: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 253, 252, 0.92)',
+    paddingHorizontal: 9,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  generationGridBadgeText: {
+    ...typography.caption,
+    color: '#9b5658',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase'
+  },
+  generationGridCopy: {
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 11
+  },
+  generationGridTitle: {
+    ...typography.productTitle,
+    color: '#2b2321',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '800'
+  },
+  generationGridMeta: {
+    ...typography.caption,
+    marginTop: 5,
+    color: '#7c7470',
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '700'
+  },
+  generationGridFooter: {
+    marginTop: 9,
+    minHeight: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8
+  },
+  generationGridDate: {
+    ...typography.caption,
+    flex: 1,
+    color: '#9b928d',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700'
+  },
+  generationGridProductButton: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fbf7f6'
+  },
+  generationGridSkeleton: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14
+  },
+  generationGridSkeletonLine: {
+    width: '78%',
+    height: 10,
+    borderRadius: 5,
+    marginTop: 10,
+    marginHorizontal: 10
+  },
+  generationGridSkeletonShort: {
+    width: '48%',
+    height: 9,
+    borderRadius: 5,
+    marginTop: 8,
+    marginHorizontal: 10,
+    marginBottom: 12
+  },
+  generationHistoryFootnote: {
+    ...typography.caption,
+    marginTop: 4,
+    color: '#7c7470',
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700'
+  },
   profileScreen: {
     flex: 1,
     backgroundColor: '#fbf7f6'
@@ -11508,7 +12194,7 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   profileLogoutButton: {
-    marginTop: 78,
+    marginTop: 58,
     marginHorizontal: 35,
     height: 47,
     borderRadius: 8,
@@ -11521,6 +12207,22 @@ const styles = StyleSheet.create({
   profileLogoutText: {
     ...typography.caption,
     color: '#c85664',
+    fontSize: 13,
+    letterSpacing: 0,
+    fontWeight: '700'
+  },
+  profileDeleteButton: {
+    marginTop: 12,
+    marginHorizontal: 35,
+    height: 47,
+    borderRadius: 8,
+    backgroundColor: '#b91c1c',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileDeleteText: {
+    ...typography.caption,
+    color: '#ffffff',
     fontSize: 13,
     letterSpacing: 0,
     fontWeight: '700'
@@ -13045,55 +13747,97 @@ const styles = StyleSheet.create({
   },
   authPromptBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(17, 17, 17, 0.38)',
+    backgroundColor: 'rgba(17, 17, 17, 0.46)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 22
+    paddingHorizontal: 20
   },
   authPromptSheet: {
     width: '100%',
-    maxWidth: 360,
+    maxWidth: 372,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#eaded9',
     backgroundColor: '#fffdfb',
-    padding: 20,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 17,
     alignItems: 'center',
     shadowColor: '#111111',
-    shadowOpacity: 0.18,
-    shadowRadius: 26,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 8
+    shadowOpacity: 0.22,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 18 },
+    elevation: 10
+  },
+  authPromptBrand: {
+    alignSelf: 'flex-start',
+    marginBottom: 16
+  },
+  authPromptBrandSymbol: {
+    width: 26,
+    height: 26
+  },
+  authPromptBrandDivider: {
+    height: 22,
+    backgroundColor: '#d4cbc5'
+  },
+  authPromptBrandText: {
+    fontSize: 22,
+    lineHeight: 27
   },
   authPromptIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     backgroundColor: '#fff5f3',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 14
+    marginBottom: 13
   },
   authPromptTitle: {
     color: '#2b2321',
-    fontSize: 20,
-    lineHeight: 25,
-    fontWeight: '700'
+    fontSize: 21,
+    lineHeight: 27,
+    fontWeight: '800'
   },
   authPromptText: {
-    marginTop: 8,
+    marginTop: 7,
     color: '#5d5754',
     textAlign: 'center',
-    fontSize: 13,
-    lineHeight: 20,
-    fontWeight: '700'
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: '700',
+    paddingHorizontal: 5
+  },
+  authPromptChipRow: {
+    marginTop: 15,
+    flexDirection: 'row',
+    gap: 8
+  },
+  authPromptChip: {
+    minHeight: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#eee3dc',
+    backgroundColor: '#fbf7f6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10
+  },
+  authPromptChipText: {
+    ...typography.caption,
+    color: '#2b2321',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800'
   },
   authPromptPrimary: {
-    marginTop: 20,
-    minHeight: 46,
+    marginTop: 18,
+    minHeight: 50,
     alignSelf: 'stretch',
     borderRadius: 8,
-    backgroundColor: '#9b5658',
+    backgroundColor: '#050606',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -13101,21 +13845,21 @@ const styles = StyleSheet.create({
   },
   authPromptPrimaryText: {
     color: '#ffffff',
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '700'
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '800'
   },
   authPromptSecondary: {
-    marginTop: 10,
-    minHeight: 38,
+    marginTop: 9,
+    minHeight: 36,
     alignItems: 'center',
     justifyContent: 'center'
   },
   authPromptSecondaryText: {
-    color: '#77716f',
+    color: '#5d5754',
     fontSize: 13,
     lineHeight: 18,
-    fontWeight: '700'
+    fontWeight: '800'
   },
   lightbox: {
     flex: 1,

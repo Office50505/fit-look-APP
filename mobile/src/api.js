@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeModules, Platform } from 'react-native';
 
-const productionApi = 'http://15.206.207.210/api';
+const productionApi = 'http://43.205.133.61/api';
 const developmentApi = Platform.OS === 'android' ? 'http://10.0.2.2:5050/api' : 'http://localhost:5050/api';
 const isDevelopmentRuntime = typeof __DEV__ !== 'undefined' && __DEV__;
 function normalizeApiUrl(url) {
@@ -52,21 +52,39 @@ function platformApiUrl(url) {
   return normalized;
 }
 
+function isLocalApiUrl(url) {
+  const normalized = normalizeApiUrl(url);
+  if (!normalized) return false;
+  try {
+    const { hostname } = new URL(normalized);
+    return (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '10.0.2.2' ||
+      hostname === '0.0.0.0'
+    );
+  } catch {
+    return false;
+  }
+}
+
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL || '';
 const configuredFallbackApiUrls = String(process.env.EXPO_PUBLIC_API_FALLBACK_URLS || '')
   .split(',')
   .map((url) => url.trim())
   .filter(Boolean);
+const productionConfiguredApiUrl = configuredApiUrl && !isLocalApiUrl(configuredApiUrl) ? configuredApiUrl : '';
+const productionConfiguredFallbackApiUrls = configuredFallbackApiUrls.filter((url) => !isLocalApiUrl(url));
 
 export const API_URL = isDevelopmentRuntime
-  ? platformApiUrl(localRuntimeApiUrl(configuredApiUrl) || developmentApi)
-  : platformApiUrl(configuredApiUrl || productionApi);
+  ? platformApiUrl(productionConfiguredApiUrl || localRuntimeApiUrl(configuredApiUrl) || developmentApi)
+  : platformApiUrl(productionConfiguredApiUrl || productionApi);
 const runtimeApiUrl = isDevelopmentRuntime
-  ? localRuntimeApiUrl(configuredApiUrl || developmentApi)
-  : localRuntimeApiUrl(configuredApiUrl);
+  ? (productionConfiguredApiUrl ? '' : localRuntimeApiUrl(configuredApiUrl || developmentApi))
+  : '';
 const fallbackApiUrls = isDevelopmentRuntime
-  ? configuredFallbackApiUrls.map(localRuntimeApiUrl).filter(Boolean)
-  : configuredFallbackApiUrls.map(platformApiUrl).filter(Boolean);
+  ? configuredFallbackApiUrls.map((url) => (isLocalApiUrl(url) ? localRuntimeApiUrl(url) : platformApiUrl(url))).filter(Boolean)
+  : productionConfiguredFallbackApiUrls.map(platformApiUrl).filter(Boolean);
 const preferredApiUrl = runtimeApiUrl || API_URL;
 const apiUrls = [...new Set([preferredApiUrl, API_URL, runtimeApiUrl, ...fallbackApiUrls].map(normalizeApiUrl).filter(Boolean))];
 let activeApiUrl = preferredApiUrl;
@@ -183,15 +201,6 @@ function friendlyHttpError({ status, path, detail }) {
   return detailText || `${feature} request could not be completed.`;
 }
 
-function debugApiSuffix(baseUrl) {
-  if (typeof __DEV__ === 'undefined' || !__DEV__ || !baseUrl) return '';
-  try {
-    return ` [API: ${new URL(baseUrl).host}]`;
-  } catch {
-    return ` [API: ${baseUrl}]`;
-  }
-}
-
 function networkErrorMessage(path, timeoutMs, aborted = false) {
   const feature = featureNameForPath(path);
   if (aborted) return `${feature} took longer than ${Math.round(timeoutMs / 1000)}s. Try again, or check the backend logs if this keeps happening.`;
@@ -218,7 +227,7 @@ async function pollJob(baseUrl, jobId, headers, timeoutMs) {
     const data = await response.json().catch(() => null);
     if (!response.ok) {
       const detail = readableError(data, `Job status failed (${response.status})`);
-      throw new ApiError(`${friendlyHttpError({ status: response.status, path: `/jobs/${jobId}`, detail })}${debugApiSuffix(baseUrl)}`, {
+      throw new ApiError(friendlyHttpError({ status: response.status, path: `/jobs/${jobId}`, detail }), {
         status: response.status,
         path: `/jobs/${jobId}`,
         detail,
@@ -228,7 +237,7 @@ async function pollJob(baseUrl, jobId, headers, timeoutMs) {
     const status = data?.job?.status;
     if (status === 'succeeded') return data.result;
     if (status === 'failed') {
-      throw new ApiError(`${data?.job?.error || 'Background task failed'}${debugApiSuffix(baseUrl)}`, {
+      throw new ApiError(data?.job?.error || 'Background task failed', {
         code: 'job_failed',
         path: `/jobs/${jobId}`,
         baseUrl
@@ -272,7 +281,7 @@ export async function api(path, options = {}) {
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         const detail = readableError(data, '');
-        throw new ApiError(`${friendlyHttpError({ status: response.status, path, detail })}${debugApiSuffix(baseUrl)}`, {
+        throw new ApiError(friendlyHttpError({ status: response.status, path, detail }), {
           status: response.status,
           code: data?.code || '',
           path,

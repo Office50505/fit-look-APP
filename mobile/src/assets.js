@@ -99,7 +99,8 @@ export const policyPages = {
     emailSubject: 'Lookmefy support request',
     related: [
       ['Return and Refund Policy', 'returns'],
-      ['Cancellation Policy', 'cancellation']
+      ['Cancellation Policy', 'cancellation'],
+      ['Account & Data Deletion', 'deletion']
     ],
     sections: [
       {
@@ -137,7 +138,8 @@ export const policyPages = {
     emailSubject: 'Lookmefy return or refund request',
     related: [
       ['Support Center', 'support'],
-      ['Cancellation Policy', 'cancellation']
+      ['Cancellation Policy', 'cancellation'],
+      ['Privacy Policy', 'privacy']
     ],
     sections: [
       {
@@ -181,7 +183,8 @@ export const policyPages = {
     emailSubject: 'Lookmefy cancellation request',
     related: [
       ['Support Center', 'support'],
-      ['Return and Refund Policy', 'returns']
+      ['Return and Refund Policy', 'returns'],
+      ['Terms of Service', 'terms']
     ],
     sections: [
       {
@@ -206,6 +209,146 @@ export const policyPages = {
         title: 'Amazon order cancellation',
         body: [
           "For products ordered on Amazon, cancellation is governed by Amazon's and the seller's policy and order status. Any cancellation charges or restrictions should be reviewed on Amazon before checkout."
+        ]
+      }
+    ]
+  },
+  privacy: {
+    kicker: 'Privacy',
+    title: 'Privacy Policy',
+    updated: '22 August 2026',
+    lead: 'This policy explains how Lookmefy handles account details, profile photos, try-on assets, wardrobe data, credits, product activity, and support requests.',
+    image: 'hero',
+    emailSubject: 'Lookmefy privacy request',
+    related: [
+      ['Account & Data Deletion', 'deletion'],
+      ['Terms of Service', 'terms'],
+      ['Support Center', 'support']
+    ],
+    sections: [
+      {
+        title: 'Information we collect',
+        body: [
+          'We collect the account information you provide, such as name, mobile number, email or generated account email, username, gender preference, profile photo, and full-body try-on photo.',
+          'We also process wardrobe uploads, product images or links you submit, generated try-on images or videos, wishlists, credits, token activity, payment/order references, support messages, and app usage events such as searches, product views, and try-on requests.'
+        ]
+      },
+      {
+        title: 'How we use information',
+        body: [
+          'We use this information to provide login, profile, AI try-on, wardrobe, wishlist, support, credits, checkout, safety, abuse prevention, troubleshooting, analytics, and service improvement.',
+          'Profile photos, garment images, and generation prompts may be sent to AI, storage, payment, hosting, messaging, analytics, or infrastructure providers only as needed to operate Lookmefy.'
+        ]
+      },
+      {
+        title: 'Third-party shopping and payments',
+        body: [
+          'Lookmefy may redirect product shopping to Amazon or other third-party stores. Those stores control their checkout, delivery, returns, refunds, and separate privacy practices.',
+          'Payment details are handled by the payment provider shown in the app. Lookmefy stores order references, payment status, credit balance changes, and support information needed to operate the credits service.'
+        ]
+      },
+      {
+        title: 'Retention, security, and sharing',
+        body: [
+          'We keep account and generated content while your account is active or as needed for support, fraud prevention, billing, security, legal, tax, dispute, or compliance reasons.',
+          'We do not sell personal information. We use reasonable technical and organizational safeguards, but no internet service can guarantee absolute security.'
+        ]
+      },
+      {
+        title: 'Your choices',
+        body: [
+          'You can update profile details in the app, contact support@lookmefy.com for privacy requests, and use the Account & Data Deletion page or Delete Account button in Profile to request deletion of your account and associated app data.'
+        ]
+      }
+    ]
+  },
+  terms: {
+    kicker: 'Terms',
+    title: 'Terms of Service',
+    updated: '22 August 2026',
+    lead: 'These terms explain the rules for using Lookmefy accounts, AI try-on, credits, wardrobe tools, product discovery, and third-party shopping links.',
+    image: 'hero',
+    emailSubject: 'Lookmefy terms question',
+    related: [
+      ['Privacy Policy', 'privacy'],
+      ['Return and Refund Policy', 'returns'],
+      ['Cancellation Policy', 'cancellation']
+    ],
+    sections: [
+      {
+        title: 'Using Lookmefy',
+        body: [
+          'You are responsible for the information, photos, links, and images you submit. Use Lookmefy only for lawful personal styling, shopping, wardrobe, and try-on purposes.',
+          "Do not upload content that is illegal, abusive, infringing, sexually explicit, deceptive, harmful, or violates another person's privacy, publicity, intellectual property, or platform rights."
+        ]
+      },
+      {
+        title: 'AI try-on limitations',
+        body: [
+          'AI previews are generated estimates. They may be inaccurate, incomplete, delayed, unavailable, or different from real-world fit, colour, material, sizing, lighting, body shape, product quality, or seller fulfilment.',
+          'Always check the product listing, seller terms, size chart, return window, and real product details before buying.'
+        ]
+      },
+      {
+        title: 'Credits and memberships',
+        body: [
+          'Credits or tokens are used for AI generation features. Completed generations generally consume credits because provider costs are incurred when processing starts.',
+          'Credits, token purchases, membership billing, cancellations, failed generations, and refunds are handled under the Cancellation Policy and Return and Refund Policy.'
+        ]
+      },
+      {
+        title: 'Third-party stores and services',
+        body: [
+          'Products may be listed from or redirected to Amazon or other third-party services. Lookmefy does not control third-party prices, availability, seller claims, delivery, returns, warranties, refunds, or checkout decisions.',
+          'Third-party AI, messaging, storage, payment, hosting, and shopping providers may process information as needed to deliver the service.'
+        ]
+      },
+      {
+        title: 'Account access and changes',
+        body: [
+          'Keep your login details and OTP private. We may limit, suspend, or remove access if activity risks security, violates these terms, causes abuse, or is required for legal or platform compliance.',
+          'We may update features, pricing, policies, and these terms. Continued use after updates means you accept the updated terms.'
+        ]
+      }
+    ]
+  },
+  deletion: {
+    kicker: 'Privacy',
+    title: 'Account & Data Deletion',
+    updated: '22 August 2026',
+    lead: 'Lookmefy gives signed-in users an in-app path to delete their account and associated app data.',
+    image: 'hero',
+    emailSubject: 'Lookmefy account deletion request',
+    related: [
+      ['Privacy Policy', 'privacy'],
+      ['Support Center', 'support'],
+      ['Terms of Service', 'terms']
+    ],
+    sections: [
+      {
+        title: 'How to delete your account',
+        body: [
+          'In the app, go to Profile, scroll to the bottom, and tap Delete Account. Confirming the prompt submits the deletion request from your signed-in account.',
+          'If you cannot access the app, email support@lookmefy.com from your registered contact details with the subject "Account deletion request". We may ask for information to verify account ownership.'
+        ]
+      },
+      {
+        title: 'What is deleted',
+        body: [
+          'Account deletion removes your Lookmefy account access, profile details, uploaded profile and try-on photos, generated try-on history, wardrobe items, wardrobe outfits, app preferences, credit events, token order records held in the app database, queued jobs, and app activity tied to your account from active systems.'
+        ]
+      },
+      {
+        title: 'What may be retained',
+        body: [
+          'Some records may be retained if required for law, tax, accounting, fraud prevention, security, payment disputes, abuse prevention, or enforcing our terms. Retained records are limited to the purpose that requires retention.'
+        ]
+      },
+      {
+        title: 'Timing and effect',
+        body: [
+          'In-app deletion starts immediately after confirmation. Backup, logging, CDN cache, payment provider, support, and third-party store systems may take additional time to expire or process their separate retention obligations.',
+          'Deletion is permanent. You will need to create a new account if you want to use Lookmefy again.'
         ]
       }
     ]

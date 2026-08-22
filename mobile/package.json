@@ -12,6 +12,7 @@
     "web": "/opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --web --port 8081"
   },
   "dependencies": {
+    "@expo-google-fonts/bodoni-moda": "^0.4.2",
     "@expo-google-fonts/manrope": "^0.4.2",
     "@expo-google-fonts/plus-jakarta-sans": "^0.4.2",
     "@expo/metro-runtime": "~5.0.5",

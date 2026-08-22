@@ -329,6 +329,67 @@ const pageMeta = {
   '/accessibility': ['Accessibility', 'Accessibility matters at every step.', 'Accessibility goals cover navigation, forms, image alt text, contrast, and keyboard-friendly flows.', 'hero2.png']
 };
 
+const supportEmail = 'support@lookmefy.com';
+const policyPages = {
+  '/privacy': {
+    emailSubject: 'Lookmefy privacy request',
+    sections: [
+      ['Information we collect', [
+        'Lookmefy collects account details such as name, mobile number, email or generated account email, username, gender preference, profile photo, and full-body try-on photo.',
+        'We also process wardrobe uploads, product images or links you submit, generated try-on images or videos, wishlists, credits, token activity, payment/order references, support messages, and app usage events such as searches, product views, and try-on requests.'
+      ]],
+      ['How we use information', [
+        'We use this information to provide login, profile, AI try-on, wardrobe, wishlist, support, credits, checkout, safety, abuse prevention, troubleshooting, analytics, and service improvement.',
+        'Profile photos, garment images, and generation prompts may be sent to AI, storage, payment, hosting, messaging, analytics, or infrastructure providers only as needed to operate Lookmefy.'
+      ]],
+      ['Third-party shopping and payments', [
+        'Lookmefy may redirect product shopping to Amazon or other third-party stores. Those stores control checkout, delivery, returns, refunds, and their separate privacy practices.',
+        'Payment details are handled by the payment provider shown in the app. Lookmefy stores order references, payment status, credit balance changes, and support information needed to operate the credits service.'
+      ]],
+      ['Retention and choices', [
+        'We keep account and generated content while your account is active or as needed for support, fraud prevention, billing, security, legal, tax, dispute, or compliance reasons.',
+        `You can update profile details in the app, contact ${supportEmail} for privacy requests, and use Profile > Delete Account in the app to request deletion of your account and associated app data.`
+      ]]
+    ]
+  },
+  '/terms': {
+    emailSubject: 'Lookmefy terms question',
+    sections: [
+      ['Using Lookmefy', [
+        'Use Lookmefy only for lawful personal styling, shopping, wardrobe, and try-on purposes. You are responsible for the information, photos, links, and images you submit.',
+        "Do not upload content that is illegal, abusive, infringing, sexually explicit, deceptive, harmful, or violates another person's privacy, publicity, intellectual property, or platform rights."
+      ]],
+      ['AI try-on limitations', [
+        'AI previews are generated estimates and may differ from real-world fit, colour, material, sizing, lighting, body shape, product quality, or seller fulfilment.',
+        'Always check the product listing, seller terms, size chart, return window, and real product details before buying.'
+      ]],
+      ['Credits, memberships, and refunds', [
+        'Credits or tokens are used for AI generation features. Completed generations generally consume credits because provider costs are incurred when processing starts.',
+        'Credits, token purchases, membership billing, cancellations, failed generations, and refunds are handled under the cancellation and refund policies shown in the app.'
+      ]],
+      ['Third-party services', [
+        'Products may be listed from or redirected to Amazon or other third-party services. Lookmefy does not control third-party prices, availability, seller claims, delivery, returns, warranties, refunds, or checkout decisions.'
+      ]]
+    ]
+  },
+  '/delete-account': {
+    emailSubject: 'Lookmefy account deletion request',
+    meta: ['Privacy', 'Account & Data Deletion', 'Signed-in users can delete their Lookmefy account and associated app data from Profile in the app.', 'hero2.png'],
+    sections: [
+      ['How to delete your account', [
+        'In the app, go to Profile, scroll to the bottom, and tap Delete Account. Confirming the prompt submits the deletion request from your signed-in account.',
+        `If you cannot access the app, email ${supportEmail} from your registered contact details with the subject "Account deletion request". We may ask for information to verify account ownership.`
+      ]],
+      ['What is deleted', [
+        'Account deletion removes your Lookmefy account access, profile details, uploaded profile and try-on photos, generated try-on history, wardrobe items, wardrobe outfits, app preferences, credit events, token order records held in the app database, queued jobs, and app activity tied to your account from active systems.'
+      ]],
+      ['What may be retained', [
+        'Some records may be retained if required for law, tax, accounting, fraud prevention, security, payment disputes, abuse prevention, or enforcing our terms. Retained records are limited to the purpose that requires retention.'
+      ]]
+    ]
+  }
+};
+
 function normalizePath() {
   const path = window.location.pathname.replace(/\.html$/, '').replace(/\/$/, '');
   return path || '/';
@@ -596,7 +657,7 @@ function Footer() {
           <FooterCol title="Help" links={[['FAQ', '/support'], ['Shipping', '/support'], ['Returns & Exchanges', '/support'], ['Track Order', '/support'], ['Contact Us', '/contact']]} />
           <div className="newsletter"><h3>Join Our Community</h3><p>Subscribe to get new arrivals and token offers.</p><form className="newsletter-form"><input type="email" placeholder="Enter your email" /><button>Sign Up</button></form></div>
         </div>
-        <div className="footer-bottom"><div>© 2024 FitLook. All rights reserved.</div><div className="legal"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/accessibility">Accessibility</a></div></div>
+        <div className="footer-bottom"><div>© 2024 FitLook. All rights reserved.</div><div className="legal"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/delete-account">Delete Account</a><a href="/accessibility">Accessibility</a></div></div>
       </div>
     </footer>
   );
@@ -2887,6 +2948,24 @@ function InfoPage({ meta, children, user, ctaLabel, ctaHref }) {
   );
 }
 
+function PolicyPage({ meta, policy, user }) {
+  const emailHref = `mailto:${supportEmail}?subject=${encodeURIComponent(policy.emailSubject || 'Lookmefy support request')}`;
+  return (
+    <InfoPage meta={policy.meta || meta} user={user} ctaLabel="Email Support" ctaHref={emailHref}>
+      <section className="section">
+        <div className="wrap info-grid">
+          {policy.sections.map(([title, body]) => (
+            <article className="info-card" key={title}>
+              <h3>{title}</h3>
+              {body.map((text) => <p key={text}>{text}</p>)}
+            </article>
+          ))}
+        </div>
+      </section>
+    </InfoPage>
+  );
+}
+
 function AuthPage({ mode, setUser }) {
   const bodyPhotoCameraRef = useRef(null);
   const [message, setMessage] = useState('');
@@ -3084,6 +3163,7 @@ function App() {
     if (path === '/signup') return <AuthPage mode="signup" setUser={setUser} />;
     if (path === '/login') return <AuthPage mode="login" setUser={setUser} />;
     if (path === '/how-it-works') return <HowItWorks user={user} />;
+    if (policyPages[path]) return <PolicyPage meta={pageMeta[path]} policy={policyPages[path]} user={user} />;
     if (pageMeta[path]) return <InfoPage meta={pageMeta[path]} user={user} />;
     return <InfoPage meta={['Not Found', 'This page is not available yet.', 'Use the navigation to continue shopping with FitLook.', 'hero2.png']} user={user} ctaLabel="Back to Shop" ctaHref="/search" />;
   }, [path, user]);

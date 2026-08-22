@@ -5,7 +5,17 @@ import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import path from 'node:path';
 import sharp from 'sharp';
+import ClosetItem from '../models/ClosetItem.js';
+import ClosetOutfit from '../models/ClosetOutfit.js';
+import CreditEvent from '../models/CreditEvent.js';
+import CustomTryOn from '../models/CustomTryOn.js';
+import ExternalTryOn from '../models/ExternalTryOn.js';
+import Job from '../models/Job.js';
+import TokenOrder from '../models/TokenOrder.js';
+import TryOn from '../models/TryOn.js';
 import User from '../models/User.js';
+import UserEvent from '../models/UserEvent.js';
+import UserPreference from '../models/UserPreference.js';
 import { normalizeGenderPreference } from '../utils/genderPreference.js';
 import { deleteStoredFile, isStorageConfigurationError, readStoredFile, saveStoredFile } from '../utils/storage.js';
 
@@ -16,6 +26,7 @@ const heicExtensions = new Set(['.heic', '.heif']);
 const heicMimeTypes = new Set(['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']);
 const pendingOtps = new Map();
 const otpFailureBlocks = new Map();
+const msg91OtpUrl = 'https://control.msg91.com/api/v5/otp';
 
 function profileImageModel() {
   return process.env.FAL_PROFILE_IMAGE_MODEL || process.env.FAL_TRYON_MODEL || 'openai/gpt-image-2/edit';
@@ -443,10 +454,143 @@ function sendOtpBlocked(res, blockedUntil) {
   return res.status(429).json({ message: 'Too many failed OTP attempts. Please try again later.' });
 }
 
+function exposeOtpForCurrentBuild() {
+  return parseBoolean(process.env.AUTH_OTP_EXPOSE);
+}
+
 function generateOtp() {
-  const fixed = String(process.env.AUTH_FIXED_OTP || '123456').trim();
+  const fixed = exposeOtpForCurrentBuild() ? String(process.env.AUTH_FIXED_OTP || '').trim() : '';
   if (/^\d{4,8}$/.test(fixed)) return fixed;
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function otpExpiryMinutes() {
+  return Math.max(1, Math.round(positiveEnvNumber('AUTH_OTP_EXPIRY_MINUTES', 10)));
+}
+
+function otpExpiryMs() {
+  return otpExpiryMinutes() * 60 * 1000;
+}
+
+function msg91Config() {
+  const authKey = String(process.env.MSG91_AUTH_KEY || '').trim();
+  const templateId = String(process.env.MSG91_TEMPLATE_ID || '').trim();
+  const senderId = String(process.env.MSG91_SENDER_ID || '').trim();
+  if (!authKey || !templateId) return null;
+  return { authKey, templateId, senderId };
+}
+
+function msg91Mobile(phone) {
+  return String(phone || '').replace(/\D/g, '');
+}
+
+function readableMsg91Error(data, fallback = 'MSG91 OTP send failed') {
+  if (!data) return fallback;
+  if (typeof data === 'string') return data || fallback;
+  if (typeof data === 'object') {
+    const nested = data.message || data.error || data.detail || data.description;
+    if (nested) return readableMsg91Error(nested, fallback);
+  }
+  return fallback;
+}
+
+async function sendMsg91Otp(phone, otp) {
+  const config = msg91Config();
+  if (!config) {
+    throw new Error('OTP service is not configured. Check MSG91_AUTH_KEY and MSG91_TEMPLATE_ID.');
+  }
+
+  const params = new URLSearchParams({
+    template_id: config.templateId,
+    mobile: msg91Mobile(phone),
+    authkey: config.authKey,
+    otp,
+    otp_expiry: String(otpExpiryMinutes()),
+    otp_length: String(otp.length)
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), positiveEnvNumber('MSG91_TIMEOUT_MS', 10000));
+
+  try {
+    const response = await fetch(`${msg91OtpUrl}?${params.toString()}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        authkey: config.authKey
+      },
+      body: JSON.stringify({}),
+      signal: controller.signal
+    });
+    const text = await response.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = text;
+    }
+
+    if (!response.ok || String(data?.type || '').toLowerCase() === 'error') {
+      throw new Error(readableMsg91Error(data, `MSG91 OTP send failed (${response.status})`));
+    }
+
+    return { provider: 'msg91', data };
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('MSG91 OTP send timed out');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function verifyMsg91Otp(phone, otp) {
+  const config = msg91Config();
+  if (!config) {
+    throw new Error('OTP service is not configured. Check MSG91_AUTH_KEY and MSG91_TEMPLATE_ID.');
+  }
+
+  const params = new URLSearchParams({
+    mobile: msg91Mobile(phone),
+    otp
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), positiveEnvNumber('MSG91_TIMEOUT_MS', 10000));
+
+  try {
+    const response = await fetch(`${msg91OtpUrl}/verify?${params.toString()}`, {
+      method: 'GET',
+      headers: { authkey: config.authKey },
+      signal: controller.signal
+    });
+    const text = await response.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = text;
+    }
+
+    const message = String(data?.message || '').toLowerCase();
+    const type = String(data?.type || '').toLowerCase();
+    const verified = type === 'success' || message.includes('verified success');
+    if (!response.ok || !verified) {
+      const error = new Error(readableMsg91Error(data, response.ok ? 'Invalid OTP' : `MSG91 OTP verify failed (${response.status})`));
+      error.invalidOtp = response.ok;
+      throw error;
+    }
+
+    return data;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('MSG91 OTP verify timed out');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function deliverOtp(phone, otp) {
+  if (msg91Config()) return sendMsg91Otp(phone, otp);
+  if (exposeOtpForCurrentBuild()) return { provider: 'local', type: 'success', devOnly: true };
+  throw new Error('OTP service is not configured. Check MSG91_AUTH_KEY and MSG91_TEMPLATE_ID.');
 }
 
 function phoneEmail(phone) {
@@ -454,8 +598,34 @@ function phoneEmail(phone) {
   return `phone-${digits}@phone.lookmefy.local`;
 }
 
-function exposeOtpForCurrentBuild() {
-  return String(process.env.AUTH_OTP_EXPOSE || '1') !== '0';
+function collectStoredFile(files, seen, file) {
+  if (!file?.path && !file?.url) return;
+  const key = [file.storage || '', file.path || '', file.url || ''].join('|');
+  if (seen.has(key)) return;
+  seen.add(key);
+  files.push(file);
+}
+
+function collectAccountStoredFiles(user, records = {}) {
+  const files = [];
+  const seen = new Set();
+  collectStoredFile(files, seen, user.avatarPhoto);
+  collectStoredFile(files, seen, user.bodyPhoto);
+  (records.tryOns || []).forEach((item) => {
+    collectStoredFile(files, seen, item.image);
+    collectStoredFile(files, seen, item.video);
+  });
+  (records.externalTryOns || []).forEach((item) => collectStoredFile(files, seen, item.image));
+  (records.customTryOns || []).forEach((item) => {
+    collectStoredFile(files, seen, item.garment);
+    collectStoredFile(files, seen, item.image);
+  });
+  (records.closetItems || []).forEach((item) => collectStoredFile(files, seen, item.image));
+  (records.closetOutfits || []).forEach((item) => {
+    collectStoredFile(files, seen, item.garment);
+    collectStoredFile(files, seen, item.image);
+  });
+  return files;
 }
 
 function usernameFromName(value = '') {
@@ -500,15 +670,26 @@ router.post('/otp/send', async (req, res) => {
   if (blockedUntil) return sendOtpBlocked(res, blockedUntil);
 
   const otp = generateOtp();
+  const expiresAt = Date.now() + otpExpiryMs();
+  let delivery;
+  try {
+    delivery = await deliverOtp(phone, otp);
+  } catch (error) {
+    console.error('[auth:otp] delivery failed', { phone, message: error.message });
+    return res.status(502).json({ message: 'Could not send OTP right now. Please try again in a moment.' });
+  }
+
   pendingOtps.set(phone, {
     otp,
-    expiresAt: Date.now() + 10 * 60 * 1000,
+    provider: delivery.provider || 'local',
+    expiresAt,
     attempts: 0
   });
 
   console.log('[auth:otp] generated', { phone, otp: exposeOtpForCurrentBuild() ? otp : '[hidden]' });
   res.json({
     message: 'OTP sent',
+    expiresInSeconds: Math.round((expiresAt - Date.now()) / 1000),
     devOtp: exposeOtpForCurrentBuild() ? otp : undefined
   });
 });
@@ -534,7 +715,19 @@ router.post('/otp/verify', async (req, res) => {
     if (blocked) return sendOtpBlocked(res, blocked);
     return res.status(429).json({ message: 'Too many OTP attempts. Please request a new one.' });
   }
-  if (pending.otp !== otp) {
+  if (pending.provider === 'msg91') {
+    try {
+      await verifyMsg91Otp(phone, otp);
+    } catch (error) {
+      if (!error.invalidOtp) {
+        console.error('[auth:otp] verification failed', { phone, message: error.message });
+        return res.status(502).json({ message: 'Could not verify OTP right now. Please try again in a moment.' });
+      }
+      const blocked = recordOtpFailure(phone);
+      if (blocked) return sendOtpBlocked(res, blocked);
+      return res.status(401).json({ message: 'Invalid OTP' });
+    }
+  } else if (pending.otp !== otp) {
     const blocked = recordOtpFailure(phone);
     if (blocked) return sendOtpBlocked(res, blocked);
     return res.status(401).json({ message: 'Invalid OTP' });
@@ -676,6 +869,78 @@ router.patch('/profile', requireUser, upload.single('bodyPhoto'), async (req, re
     if (isBodyPhotoPreparationError(error)) return res.status(400).json({ message: error.message });
     throw error;
   }
+});
+
+router.delete('/me', requireUser, async (req, res) => {
+  const userId = req.user._id;
+  const [
+    tryOns,
+    externalTryOns,
+    customTryOns,
+    closetItems,
+    closetOutfits
+  ] = await Promise.all([
+    TryOn.find({ user: userId }),
+    ExternalTryOn.find({ user: userId }),
+    CustomTryOn.find({ user: userId }),
+    ClosetItem.find({ user: userId }),
+    ClosetOutfit.find({ user: userId })
+  ]);
+
+  const storedFiles = collectAccountStoredFiles(req.user, {
+    tryOns,
+    externalTryOns,
+    customTryOns,
+    closetItems,
+    closetOutfits
+  });
+  const fileResults = await Promise.allSettled(storedFiles.map((file) => deleteStoredFile(file)));
+  const fileFailures = fileResults.filter((result) => result.status === 'rejected');
+  if (fileFailures.length) {
+    console.warn('[account-delete] stored file cleanup failed', {
+      userId: userId.toString(),
+      failedFiles: fileFailures.length
+    });
+  }
+
+  const [
+    tryOnResult,
+    externalTryOnResult,
+    customTryOnResult,
+    closetItemResult,
+    closetOutfitResult,
+    userEventResult,
+    userPreferenceResult,
+    creditEventResult,
+    tokenOrderResult,
+    jobResult
+  ] = await Promise.all([
+    TryOn.deleteMany({ user: userId }),
+    ExternalTryOn.deleteMany({ user: userId }),
+    CustomTryOn.deleteMany({ user: userId }),
+    ClosetItem.deleteMany({ user: userId }),
+    ClosetOutfit.deleteMany({ user: userId }),
+    UserEvent.deleteMany({ user: userId }),
+    UserPreference.deleteMany({ user: userId }),
+    CreditEvent.deleteMany({ user: userId }),
+    TokenOrder.deleteMany({ user: userId }),
+    Job.deleteMany({ user: userId })
+  ]);
+  await User.deleteOne({ _id: userId });
+  clearOtpFailures(req.user.phone);
+
+  res.json({
+    deleted: true,
+    deletedRecords: {
+      tryOns: tryOnResult.deletedCount + externalTryOnResult.deletedCount + customTryOnResult.deletedCount,
+      wardrobe: closetItemResult.deletedCount + closetOutfitResult.deletedCount,
+      events: userEventResult.deletedCount + creditEventResult.deletedCount,
+      preferences: userPreferenceResult.deletedCount,
+      orders: tokenOrderResult.deletedCount,
+      jobs: jobResult.deletedCount
+    },
+    fileDeleteFailures: fileFailures.length
+  });
 });
 
 router.post('/body-photo', requireUser, upload.single('bodyPhoto'), async (req, res) => {

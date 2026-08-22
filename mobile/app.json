@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "com.lookmefy.app",
-      "versionCode": 10,
+      "versionCode": 11,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#101820"

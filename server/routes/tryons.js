@@ -1695,6 +1695,90 @@ function tryOnImageProxyPath(scope, id) {
   return `/api/tryons/image/${encodeURIComponent(scope)}/${encodeURIComponent(String(id))}`;
 }
 
+function documentId(value) {
+  if (!value) return '';
+  if (value._id) return value._id.toString();
+  return value.toString();
+}
+
+function storedOrRemoteImageUrl(image) {
+  return storedFileToClientUrl(image) || image?.remoteUrl || image?.sourceUrl || image?.url || '';
+}
+
+function historyDate(record) {
+  return record?.updatedAt || record?.createdAt || new Date();
+}
+
+function productHistoryItem(tryOn) {
+  const product = tryOn.product && typeof tryOn.product === 'object' ? tryOn.product : null;
+  const productId = documentId(product || tryOn.product);
+  const productImageUrl = storedOrRemoteImageUrl(product?.image);
+  const productName = String(product?.name || 'Product try-on').trim();
+  const productBrand = String(product?.brand || '').trim();
+  return {
+    id: `product-${documentId(tryOn)}`,
+    tryOnId: documentId(tryOn),
+    type: 'product',
+    label: tryOn.video?.url || tryOn.video?.path ? 'Video Try-On' : 'AI Try-On',
+    title: productName,
+    subtitle: productBrand || 'Catalog product',
+    imageUrl: storedFileToClientUrl(tryOn.image),
+    videoUrl: storedFileToClientUrl(tryOn.video),
+    sourceImageUrl: productImageUrl,
+    productId,
+    product: product ? {
+      id: productId,
+      name: productName,
+      brand: productBrand,
+      category: product.category,
+      imageUrl: productImageUrl,
+      affiliateLink: product.affiliateLink,
+      sourceUrl: product.sourceUrl
+    } : null,
+    provider: tryOn.provider,
+    model: tryOn.model,
+    tokenCost: tryOn.tokenCost,
+    createdAt: historyDate(tryOn)
+  };
+}
+
+function customHistoryItem(tryOn) {
+  return {
+    id: `custom-${documentId(tryOn)}`,
+    tryOnId: documentId(tryOn),
+    type: 'custom',
+    label: 'Custom Try-On',
+    title: tryOn.garment?.filename || 'Uploaded garment',
+    subtitle: 'Custom upload',
+    imageUrl: storedFileToClientUrl(tryOn.image),
+    sourceImageUrl: storedFileToClientUrl(tryOn.garment),
+    provider: tryOn.provider,
+    model: tryOn.model,
+    tokenCost: tryOn.tokenCost,
+    createdAt: historyDate(tryOn)
+  };
+}
+
+function externalHistoryItem(tryOn) {
+  const productName = String(tryOn.productName || 'External product').trim();
+  return {
+    id: `external-${documentId(tryOn)}`,
+    tryOnId: documentId(tryOn),
+    type: 'external',
+    label: 'AI Try-On',
+    title: productName,
+    subtitle: tryOn.brand || 'External product',
+    imageUrl: storedFileToClientUrl(tryOn.image),
+    sourceImageUrl: tryOn.imageUrl || '',
+    sourceUrl: tryOn.sourceUrl,
+    affiliateLink: tryOn.affiliateLink,
+    provider: tryOn.provider,
+    model: tryOn.model,
+    tokenCost: tryOn.tokenCost,
+    createdAt: historyDate(tryOn)
+  };
+}
+
 function generatedImageModelForScope(scope) {
   if (scope === 'product') return TryOn;
   if (scope === 'external') return ExternalTryOn;
@@ -2243,6 +2327,55 @@ router.get('/', requireUser, async (req, res) => {
     .limit(limit)
     .lean();
   res.json({ tryOns: tryOns.map(tryOnToClient) });
+});
+
+router.get('/history', requireUser, async (req, res) => {
+  const limit = Math.min(60, Math.max(1, Number(req.query.limit) || 24));
+  const queryLimit = Math.min(80, Math.max(limit, 24));
+  const userFilter = { user: req.user._id };
+
+  const [
+    productTryOns,
+    customTryOns,
+    externalTryOns,
+    productCount,
+    customCount,
+    externalCount
+  ] = await Promise.all([
+    TryOn.find(userFilter)
+      .select('product provider model quality tokenCost image video createdAt updatedAt')
+      .populate('product', 'name brand category image affiliateLink sourceUrl')
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .limit(queryLimit)
+      .lean(),
+    CustomTryOn.find(userFilter)
+      .select('provider model quality tokenCost garment image createdAt updatedAt')
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .limit(queryLimit)
+      .lean(),
+    ExternalTryOn.find(userFilter)
+      .select('sourceUrl affiliateLink productName brand category imageUrl provider model quality tokenCost image createdAt updatedAt')
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .limit(queryLimit)
+      .lean(),
+    TryOn.countDocuments(userFilter),
+    CustomTryOn.countDocuments(userFilter),
+    ExternalTryOn.countDocuments(userFilter)
+  ]);
+
+  const items = [
+    ...productTryOns.map(productHistoryItem),
+    ...customTryOns.map(customHistoryItem),
+    ...externalTryOns.map(externalHistoryItem)
+  ]
+    .filter((item) => item.imageUrl || item.videoUrl)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+
+  res.json({
+    items,
+    total: productCount + customCount + externalCount
+  });
 });
 
 router.get('/credit-history', requireUser, async (req, res) => {

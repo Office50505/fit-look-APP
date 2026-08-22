@@ -6,7 +6,7 @@ This project now includes a React Native Expo client in `mobile/` that uses the 
 
 1. Copy `.env.example` to `.env` at the project root and fill in real values for `MONGODB_URI`, `JWT_SECRET`, and `FAL_KEY`.
 2. Copy `mobile/.env.example` to `mobile/.env`.
-3. The mobile app defaults to the AWS backend: `EXPO_PUBLIC_API_URL=http://15.206.207.210/api`.
+3. The mobile app defaults to the AWS backend: `EXPO_PUBLIC_API_URL=http://43.205.133.61/api`.
 4. For local development only, Android emulator can use `EXPO_PUBLIC_API_URL=http://10.0.2.2:5050/api`.
 5. For local development only, iOS simulator can use `EXPO_PUBLIC_API_URL=http://localhost:5050/api`.
 
