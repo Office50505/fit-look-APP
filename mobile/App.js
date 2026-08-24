@@ -4030,7 +4030,7 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
       }
       refreshUser?.().catch(() => {});
       latestCustom.reload?.();
-      setMessage('Custom try-on ready. It is now your profile picture.');
+      setMessage('Custom try-on ready.');
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -4092,7 +4092,7 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
         <View style={styles.customResultHead}>
           <View>
             <Text style={styles.customResultTitle}>Generated try-on</Text>
-            <Text style={styles.customResultSub}>{hasGenerated ? 'Saved as your profile picture' : 'Your result will appear here'}</Text>
+            <Text style={styles.customResultSub}>{hasGenerated ? 'Generated preview' : 'Your result will appear here'}</Text>
           </View>
           {hasGenerated ? (
             <TouchableOpacity style={styles.customResultOpen} onPress={() => setLightbox(generatedUri)}>
@@ -4153,7 +4153,7 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
         onPress={submit}
         style={styles.customGenerateButton}
       />
-      {message ? <Text style={[styles.formMessage, styles.customTryOnMessage, /ready|profile picture|generating|regenerating/i.test(message) ? null : styles.errorText]}>{message}</Text> : null}
+      {message ? <Text style={[styles.formMessage, styles.customTryOnMessage, /ready|generating|regenerating/i.test(message) ? null : styles.errorText]}>{message}</Text> : null}
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </ScrollView>
   );

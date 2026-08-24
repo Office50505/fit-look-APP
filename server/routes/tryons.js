@@ -1706,7 +1706,7 @@ function storedOrRemoteImageUrl(image) {
 }
 
 function generatedTryOnImageUrl(image) {
-  if (image?.storage === 'remote-pending' && !image.sourceUrl) return '';
+  if (image?.storage === 'remote-pending') return '';
   return storedFileToClientUrl(image);
 }
 
@@ -2426,7 +2426,10 @@ router.get('/custom/latest', requireUser, async (req, res) => {
     Expires: '0',
     'Surrogate-Control': 'no-store'
   });
-  const tryOns = await CustomTryOn.find({ user: req.user._id })
+  const tryOns = await CustomTryOn.find({
+    user: req.user._id,
+    'image.storage': { $ne: 'remote-pending' }
+  })
     .sort({ updatedAt: -1, createdAt: -1 })
     .limit(10);
   const latest = tryOns
