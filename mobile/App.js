@@ -4289,7 +4289,7 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
     try {
       const form = new FormData();
       form.append('garment', filePart(garment, 'garment.jpg'));
-      const data = await api('/tryons/custom', { method: 'POST', body: form });
+      const data = await api('/tryons/custom', { method: 'POST', body: form, timeoutMs: 180000, jobTimeoutMs: 240000 });
       const nextTryOn = data.tryOn;
       setResult(nextTryOn);
       if (data.user) {

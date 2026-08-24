@@ -200,7 +200,7 @@ function friendlyHttpError({ status, path, detail }) {
   if (status === 413) return 'That upload is too large. Choose a smaller image and try again.';
   if (status === 415) return 'That file type is not supported. Upload a JPG, PNG, or WebP image.';
   if (status === 422 && detailText) return detailText;
-  if (status === 429) return 'Too many requests. Wait a moment, then try again.';
+  if (status === 429) return detailText || 'Too many requests. Wait a moment, then try again.';
   if (status >= 500) {
     if (/FAL_KEY|OPENAI_API_KEY|BUNNY|REDIS|MONGODB|missing/i.test(cleanDetail)) {
       return `${feature} is not configured on the backend yet. Check the server .env and restart it.`;
