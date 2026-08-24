@@ -1846,6 +1846,7 @@ function persistGeneratedImageInBackground({ scope, id, userId, sourceUrl, filen
 async function persistGeneratedImage({ scope, id, userId, sourceUrl, filename, mimetype }) {
   const Model = generatedImageModelForScope(scope);
   if (!Model) throw new Error(`Unknown try-on image scope: ${scope}`);
+  const pendingPath = tryOnImageProxyPath(scope, id);
   const { bytes, mimetype: downloadedMimetype } = await generatedBytesFromUrl(sourceUrl);
   const image = await saveStoredFile({
     buffer: bytes,
@@ -1858,11 +1859,36 @@ async function persistGeneratedImage({ scope, id, userId, sourceUrl, filename, m
   let updated = null;
   for (let attempt = 0; attempt < 6; attempt += 1) {
     updated = await Model.findOneAndUpdate(
-      { _id: id, 'image.sourceUrl': sourceUrl },
+      {
+        _id: id,
+        $or: [
+          { 'image.sourceUrl': sourceUrl },
+          { 'image.storage': 'remote-pending', 'image.path': pendingPath }
+        ]
+      },
       { $set: { image } }
     );
     if (updated) break;
     await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (updated && scope === 'custom') {
+    await User.updateOne(
+      { _id: userId, 'avatarPhoto.path': pendingPath },
+      {
+        $set: {
+          avatarPhoto: {
+            filename: image.filename,
+            path: image.path,
+            url: image.url,
+            storage: image.storage,
+            mimetype: image.mimetype,
+            size: image.size,
+            source: 'custom-try-on',
+            uploadedAt: new Date()
+          }
+        }
+      }
+    );
   }
   if (!updated) {
     logger.warn('tryon_background_image_persist_update_missed', {
@@ -2407,7 +2433,8 @@ router.get('/image/:scope/:id', async (req, res) => {
     }
 
     const finalUrl = storedFileToClientUrl(image);
-    if (finalUrl) return res.redirect(302, finalUrl);
+    const requestPath = String(req.originalUrl || '').split('?')[0];
+    if (finalUrl && finalUrl !== requestPath) return res.redirect(302, finalUrl);
     return res.status(404).json({ message: 'Generated image is not available yet' });
   } catch (error) {
     logger.error('tryon_image_proxy_failed', {
