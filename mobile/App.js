@@ -4124,28 +4124,6 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
       </View>
 
       {hasGenerated ? <AiPreviewNote style={styles.customAiPreviewNote} /> : null}
-      <View style={styles.customModelPanel}>
-        <Text style={styles.customModelTitle}>What are you trying on?</Text>
-        <View style={styles.customModelOptions}>
-          {[
-            ['fitroom/tryon-v2', 'FitRoom try-on', 'Product and custom clothing transfer']
-          ].map(([value, label, help]) => {
-            const selected = value === 'fitroom/tryon-v2';
-            return (
-              <Pressable
-                key={value}
-                style={[styles.customModelOption, selected && styles.customModelOptionActive]}
-              >
-                <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={18} color={selected ? '#0f766e' : '#64748b'} />
-                <View style={styles.customModelText}>
-                  <Text style={[styles.customModelLabel, selected && styles.customModelLabelActive]}>{label}</Text>
-                  <Text style={styles.customModelHelp}>{help}</Text>
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
       <AppButton
         label={loading ? (hasGenerated ? 'Regenerating...' : 'Generating...') : hasGenerated ? 'Regenerate Custom Try-On' : 'Generate Custom Try-On'}
         icon="sparkles-outline"
@@ -11206,51 +11184,6 @@ const styles = StyleSheet.create({
     color: '#64748b',
     fontWeight: '700',
     textAlign: 'center'
-  },
-  customModelPanel: {
-    marginTop: 14,
-    gap: 10
-  },
-  customModelTitle: {
-    color: '#111827',
-    fontSize: 13,
-    fontWeight: '700'
-  },
-  customModelOptions: {
-    gap: 8
-  },
-  customModelOption: {
-    minHeight: 58,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff'
-  },
-  customModelOptionActive: {
-    borderColor: '#0f766e',
-    backgroundColor: '#ecfdf5'
-  },
-  customModelText: {
-    flex: 1
-  },
-  customModelLabel: {
-    color: '#111827',
-    fontSize: 13,
-    fontWeight: '700'
-  },
-  customModelLabelActive: {
-    color: '#0f766e'
-  },
-  customModelHelp: {
-    marginTop: 2,
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '700'
   },
   customGenerateButton: {
     marginTop: 16,

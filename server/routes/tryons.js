@@ -2081,6 +2081,13 @@ async function saveGeneratedCustomTryOn({ user, garmentFile, timer }) {
   });
   const filename = `tryon-custom-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
   const garment = await saveUploadFile(garmentFile, 'garment', user);
+  let bytes = generated.bytes;
+  let mimetype = generated.mimetype;
+  if (!bytes && generated.remoteUrl) {
+    const downloaded = await generatedBytesFromUrl(generated.remoteUrl, timer);
+    bytes = downloaded.bytes;
+    mimetype = downloaded.mimetype || mimetype;
+  }
   const tryOn = new CustomTryOn({
     user: user._id,
     provider: generated.provider || 'pruna',
@@ -2090,14 +2097,7 @@ async function saveGeneratedCustomTryOn({ user, garmentFile, timer }) {
     tokenCost: chargedTokenCost(user),
     garment
   });
-  tryOn.image = await generatedImageForResponse({
-    user,
-    generated,
-    filename,
-    scope: 'custom',
-    id: tryOn._id,
-    timer
-  });
+  tryOn.image = await saveUserCacheFile({ user, bytes, filename, mimetype });
   timer?.mark('custom try-on record ready', { path: tryOn.image.path, storage: tryOn.image.storage });
   return tryOn.save();
 }
