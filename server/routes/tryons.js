@@ -1876,25 +1876,6 @@ async function persistGeneratedImage({ scope, id, userId, sourceUrl, filename, m
     if (updated) break;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  if (updated && scope === 'custom') {
-    await User.updateOne(
-      { _id: userId, 'avatarPhoto.path': pendingPath },
-      {
-        $set: {
-          avatarPhoto: {
-            filename: image.filename,
-            path: image.path,
-            url: image.url,
-            storage: image.storage,
-            mimetype: image.mimetype,
-            size: image.size,
-            source: 'custom-try-on',
-            uploadedAt: new Date()
-          }
-        }
-      }
-    );
-  }
   if (!updated) {
     logger.warn('tryon_background_image_persist_update_missed', {
       scope,
@@ -2491,18 +2472,6 @@ router.post('/custom', requireUser, upload.single('garment'), async (req, res) =
       garmentFile,
       timer
     });
-    const generatedAvatarPhoto = {
-      filename: tryOn.image?.filename,
-      path: tryOn.image?.path,
-      url: tryOn.image?.url,
-      storage: tryOn.image?.storage,
-      mimetype: tryOn.image?.mimetype,
-      size: tryOn.image?.size,
-      source: 'custom-try-on',
-      uploadedAt: new Date()
-    };
-    req.user.avatarPhoto = generatedAvatarPhoto;
-    await req.user.save();
     await recordCreditEvent({
       user: req.user,
       action: 'Custom try-on',

@@ -275,6 +275,13 @@ function normalizeOtpInput(value = '') {
   return String(value || '').replace(/\D/g, '').slice(0, 8);
 }
 
+function passwordValidationMessage(value = '') {
+  const password = String(value || '');
+  if (password.length < 8) return 'Password must be at least 8 characters.';
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return 'Use at least one letter and one number in your password.';
+  return '';
+}
+
 function shopResultTitle(filters = {}, tryOnMode = false) {
   if (tryOnMode) return 'AI Try-On';
   if (filters.q) return filters.q;
@@ -330,13 +337,11 @@ function tryOnProfileBlockMessage(user) {
 function userAvatarUrl(user) {
   const avatarUrl = user?.avatarPhotoUrl || '';
   const bodyUrl = user?.bodyPhotoUrl || '';
-  if (user?.avatarPhotoSource === 'custom-try-on' && avatarUrl) return avatarUrl;
   if (user?.bodyPhotoSource === 'fal-full-body' && bodyUrl) return bodyUrl;
   return avatarUrl || bodyUrl || '';
 }
 
 function userAvatarResizeMode(user) {
-  if (user?.avatarPhotoSource === 'custom-try-on') return 'contain';
   if (user?.bodyPhotoSource === 'fal-full-body') return 'contain';
   return 'cover';
 }
@@ -2518,17 +2523,45 @@ const phoneAuthPerks = [
   { label: 'Wardrobe', icon: 'shirt-outline' }
 ];
 
+function AuthPasswordField({ value, onChangeText, placeholder, visible, onToggle, fieldHeight, autoComplete = 'password' }) {
+  return (
+    <View style={[styles.loginInputWrap, { minHeight: fieldHeight }]}>
+      <Ionicons name="lock-closed-outline" size={23} color="#555a5d" />
+      <TextInput
+        style={styles.loginInput}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#6f7687"
+        secureTextEntry={!visible}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete={autoComplete}
+        textContentType={autoComplete === 'new-password' ? 'newPassword' : 'password'}
+      />
+      <TouchableOpacity style={styles.passwordVisibilityButton} activeOpacity={0.72} onPress={onToggle}>
+        <Ionicons name={visible ? 'eye-off-outline' : 'eye-outline'} size={21} color="#5d5754" />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   const isSignup = mode === 'signup';
   const { width, height } = useWindowDimensions();
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [otpSent, setOtpSent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [signupStage, setSignupStage] = useState('otp');
-  const [verifiedToken, setVerifiedToken] = useState('');
-  const [verifiedUser, setVerifiedUser] = useState(null);
+  const [signupToken, setSignupToken] = useState('');
+  const [resetStage, setResetStage] = useState('idle');
+  const [resetToken, setResetToken] = useState('');
   const [detailName, setDetailName] = useState('');
   const [detailGender, setDetailGender] = useState('');
   const [detailPhoto, setDetailPhoto] = useState(null);
@@ -2537,49 +2570,33 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   const fieldHeight = clamp(height * 0.052, 54, 60);
   const authEditorialHeight = clamp(height * 0.17, 118, 158);
   const phoneValue = normalizePhoneInput(phone);
-  const completingSignup = signupStage === 'details';
+  const completingSignup = isSignup && signupStage === 'details';
+  const resetOtpStage = !isSignup && resetStage === 'otp';
+  const resetPasswordStage = !isSignup && resetStage === 'password';
+  const baseLoginStage = !isSignup && resetStage === 'idle';
 
-  const finishVerifiedOtp = async (data) => {
+  useEffect(() => {
+    setOtp('');
+    setOtpSent(false);
+    setPassword('');
+    setConfirmPassword('');
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+    setMessage('');
+    setSignupStage('otp');
+    setSignupToken('');
+    setResetStage('idle');
+    setResetToken('');
+  }, [mode]);
+
+  const finishAuthenticated = async (data) => {
     await saveToken(data.token);
-    if (data.isNewUser) {
-      setVerifiedToken(data.token);
-      setVerifiedUser(data.user);
-      setDetailName('');
-      setDetailGender('');
-      setDetailPhoto(null);
-      setSignupStage('details');
-      setMessage('');
-      return;
-    }
     setToken(data.token);
     setUser(data.user);
     onNavigate('home');
   };
 
-  const verifyOtpCode = async (otpCode, manageLoading = true) => {
-    const cleanOtp = normalizeOtpInput(otpCode);
-    if (phoneValue.length !== 10 || !cleanOtp) {
-      setMessage('Enter your mobile number and OTP.');
-      return false;
-    }
-    if (manageLoading) setLoading(true);
-    setMessage('Verifying OTP...');
-    try {
-      const data = await api('/auth/otp/verify', {
-        method: 'POST',
-        body: JSON.stringify({ phone: phoneValue, otp: cleanOtp })
-      });
-      await finishVerifiedOtp(data);
-      return true;
-    } catch (error) {
-      setMessage(error.message);
-      return false;
-    } finally {
-      if (manageLoading) setLoading(false);
-    }
-  };
-
-  const sendOtp = async () => {
+  const sendSignupOtp = async () => {
     if (phoneValue.length !== 10) {
       setMessage('Enter a valid 10 digit mobile number.');
       return;
@@ -2589,7 +2606,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     try {
       const data = await api('/auth/otp/send', {
         method: 'POST',
-        body: JSON.stringify({ phone: phoneValue })
+        body: JSON.stringify({ phone: phoneValue, purpose: 'signup' })
       });
       setOtp('');
       setOtpSent(true);
@@ -2601,15 +2618,156 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     }
   };
 
-  const verifyOtp = async () => {
-    await verifyOtpCode(otp);
+  const verifySignupOtp = async () => {
+    const cleanOtp = normalizeOtpInput(otp);
+    if (phoneValue.length !== 10 || !cleanOtp) {
+      setMessage('Enter your mobile number and OTP.');
+      return;
+    }
+    setLoading(true);
+    setMessage('Verifying OTP...');
+    try {
+      const data = await api('/auth/otp/verify', {
+        method: 'POST',
+        body: JSON.stringify({ phone: phoneValue, otp: cleanOtp, purpose: 'signup' })
+      });
+      setSignupToken(data.signupToken || '');
+      setDetailName('');
+      setDetailGender('');
+      setDetailPhoto(null);
+      setPassword('');
+      setConfirmPassword('');
+      setSignupStage('details');
+      setMessage('');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loginWithPassword = async () => {
+    if (phoneValue.length !== 10) {
+      setMessage('Enter a valid 10 digit mobile number.');
+      return;
+    }
+    if (!password) {
+      setMessage('Enter your password.');
+      return;
+    }
+    setLoading(true);
+    setMessage('Logging in...');
+    try {
+      const data = await api('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ phone: phoneValue, password })
+      });
+      await finishAuthenticated(data);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startPasswordReset = async () => {
+    if (phoneValue.length !== 10) {
+      setMessage('Enter your mobile number first.');
+      return;
+    }
+    setLoading(true);
+    setMessage('Sending reset OTP...');
+    try {
+      const data = await api('/auth/otp/send', {
+        method: 'POST',
+        body: JSON.stringify({ phone: phoneValue, purpose: 'password-reset' })
+      });
+      setOtp('');
+      setOtpSent(true);
+      setResetStage('otp');
+      setMessage(data.message ? `${data.message}. Enter the code from SMS.` : 'OTP sent. Enter the code from SMS.');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verifyPasswordResetOtp = async () => {
+    const cleanOtp = normalizeOtpInput(otp);
+    if (phoneValue.length !== 10 || !cleanOtp) {
+      setMessage('Enter your mobile number and OTP.');
+      return;
+    }
+    setLoading(true);
+    setMessage('Verifying OTP...');
+    try {
+      const data = await api('/auth/otp/verify', {
+        method: 'POST',
+        body: JSON.stringify({ phone: phoneValue, otp: cleanOtp, purpose: 'password-reset' })
+      });
+      setResetToken(data.resetToken || '');
+      setResetStage('password');
+      setOtp('');
+      setOtpSent(false);
+      setPassword('');
+      setConfirmPassword('');
+      setMessage('');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const completePasswordReset = async () => {
+    const passwordError = passwordValidationMessage(password);
+    if (passwordError) {
+      setMessage(passwordError);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setMessage('Passwords do not match.');
+      return;
+    }
+    setLoading(true);
+    setMessage('Saving password...');
+    try {
+      const data = await api('/auth/password/reset', {
+        method: 'POST',
+        body: JSON.stringify({ resetToken, password, confirmPassword })
+      });
+      await finishAuthenticated(data);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const changeSignupMobile = () => {
+    setOtpSent(false);
+    setOtp('');
+    setSignupToken('');
+    setMessage('');
+  };
+
+  const returnToLogin = () => {
+    setResetStage('idle');
+    setResetToken('');
+    setOtp('');
+    setOtpSent(false);
+    setPassword('');
+    setConfirmPassword('');
+    setMessage('');
   };
 
   const exitSignupDetails = async () => {
     await clearToken();
-    setVerifiedToken('');
-    setVerifiedUser(null);
+    setSignupToken('');
     setSignupStage('otp');
+    setPassword('');
+    setConfirmPassword('');
     setMessage('');
     onNavigate('home');
   };
@@ -2633,18 +2791,30 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       setMessage('Upload a profile photo.');
       return;
     }
+    const passwordError = passwordValidationMessage(password);
+    if (passwordError) {
+      setMessage(passwordError);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setMessage('Passwords do not match.');
+      return;
+    }
 
     setLoading(true);
     setMessage('Saving your profile...');
     try {
       const form = new FormData();
+      form.append('signupToken', signupToken);
       form.append('name', cleanName);
       form.append('genderPreference', detailGender);
+      form.append('password', password);
+      form.append('confirmPassword', confirmPassword);
       form.append('requireBodyPhoto', 'true');
       form.append('profilePhotoMode', 'ai-full-body');
       form.append('bodyPhoto', filePart(detailPhoto, 'body-photo.jpg'));
-      const data = await api('/auth/profile', { method: 'PATCH', body: form, timeoutMs: 60000 });
-      const nextUser = data.user || verifiedUser;
+      const data = await api('/auth/signup/complete', { method: 'POST', body: form, timeoutMs: 60000 });
+      const nextUser = data.user;
       if (nextUser) {
         try {
           await AsyncStorage.setItem(onboardingPendingStorageKey, onboardingSeenStorageKey(nextUser));
@@ -2652,13 +2822,10 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
           // Onboarding is optional; profile completion should keep moving.
         }
       }
-      setToken(verifiedToken || await getToken());
-      setUser(nextUser);
-      setVerifiedToken('');
-      setVerifiedUser(null);
+      await finishAuthenticated(data);
+      setSignupToken('');
       setSignupStage('otp');
       setMessage('');
-      onNavigate('home');
     } catch (error) {
       setMessage(isMissingRouteError(error.message) ? 'Profile setup is not active on the running backend. Restart the backend, then try again.' : error.message);
     } finally {
@@ -2666,8 +2833,35 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     }
   };
 
-  const submit = otpSent ? verifyOtp : sendOtp;
-  const actionLabel = otpSent ? 'Verify & Continue' : 'Continue';
+  const submit = isSignup
+    ? (otpSent ? verifySignupOtp : sendSignupOtp)
+    : resetOtpStage
+      ? verifyPasswordResetOtp
+      : resetPasswordStage
+        ? completePasswordReset
+        : loginWithPassword;
+  const actionLabel = isSignup
+    ? (otpSent ? 'Verify & Continue' : 'Continue')
+    : resetOtpStage
+      ? 'Verify OTP'
+      : resetPasswordStage
+        ? 'Save Password'
+        : 'Login';
+  const authTitle = isSignup
+    ? 'Create Account'
+    : resetOtpStage
+      ? 'Reset Password'
+      : resetPasswordStage
+        ? 'Set New Password'
+        : 'Welcome Back';
+  const authSubtitle = isSignup
+    ? 'Verify your mobile number once, then set a password for future logins.'
+    : resetOtpStage
+      ? 'Enter the OTP sent to your mobile number.'
+      : resetPasswordStage
+        ? 'Choose a password you will use with your mobile number.'
+        : 'Log in with your mobile number and password.';
+  const authIcon = isSignup ? 'phone-portrait-outline' : resetStage === 'idle' ? 'lock-closed-outline' : 'keypad-outline';
 
   if (completingSignup) {
     const genderOptions = [
@@ -2685,7 +2879,6 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
           {...screenScrollProps}
         >
           <View style={styles.phoneAuthTopRow}>
-            <BrandLogo compact style={styles.signupBrandLogo} />
             <TouchableOpacity style={styles.phoneAuthClose} activeOpacity={0.78} onPress={exitSignupDetails}>
               <Ionicons name="close" size={20} color="#2b2321" />
             </TouchableOpacity>
@@ -2696,7 +2889,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
               <Ionicons name="person-add-outline" size={26} color="#9b5658" />
             </View>
             <Text style={[styles.loginTitle, { fontSize: titleSize * 0.86, lineHeight: titleSize }]}>Complete your profile</Text>
-            <Text style={styles.phoneAuthSubtitle}>Add the basics Lookmefy needs for styling, wardrobe detection, and try-on previews.</Text>
+            <Text style={styles.phoneAuthSubtitle}>Add your details and set the password you will use for future mobile login.</Text>
 
             <View style={styles.signupDetailsFieldStack}>
               <View style={[styles.loginInputWrap, { minHeight: fieldHeight }]}>
@@ -2726,6 +2919,26 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
                   })}
                 </View>
               </View>
+
+              <AuthPasswordField
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Create password"
+                visible={showPassword}
+                onToggle={() => setShowPassword((value) => !value)}
+                fieldHeight={fieldHeight}
+                autoComplete="new-password"
+              />
+
+              <AuthPasswordField
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="Confirm password"
+                visible={showConfirmPassword}
+                onToggle={() => setShowConfirmPassword((value) => !value)}
+                fieldHeight={fieldHeight}
+                autoComplete="new-password"
+              />
 
               <TouchableOpacity style={styles.signupDetailsUploadBox} activeOpacity={0.84} onPress={pickDetailPhoto}>
                 {detailPhoto?.uri ? (
@@ -2778,7 +2991,6 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
         {...screenScrollProps}
       >
         <View style={styles.phoneAuthTopRow}>
-          <BrandLogo compact style={styles.signupBrandLogo} />
           <TouchableOpacity style={styles.phoneAuthClose} activeOpacity={0.78} onPress={() => onNavigate('home')}>
             <Ionicons name="close" size={20} color="#2b2321" />
           </TouchableOpacity>
@@ -2786,12 +2998,12 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
 
         <View style={styles.phoneAuthCard}>
           <View style={styles.phoneAuthIcon}>
-            <Ionicons name="phone-portrait-outline" size={26} color="#9b5658" />
+            <Ionicons name={authIcon} size={26} color="#9b5658" />
           </View>
           <Text style={[styles.loginTitle, { fontSize: titleSize, lineHeight: titleSize * 1.18 }]}>
-            {isSignup ? 'Create Account' : 'Welcome Back'}
+            {authTitle}
           </Text>
-          <Text style={styles.phoneAuthSubtitle}>Use your mobile number to continue to your profile, wishlist, and try-ons.</Text>
+          <Text style={styles.phoneAuthSubtitle}>{authSubtitle}</Text>
 
           <View style={styles.phoneAuthFieldStack}>
             <View style={[styles.loginInputWrap, { minHeight: fieldHeight }]}>
@@ -2805,10 +3017,22 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
                 keyboardType="phone-pad"
                 autoComplete="tel"
                 maxLength={10}
+                editable={!loading && !resetPasswordStage}
               />
             </View>
 
-            {otpSent ? (
+            {baseLoginStage ? (
+              <AuthPasswordField
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Password"
+                visible={showPassword}
+                onToggle={() => setShowPassword((value) => !value)}
+                fieldHeight={fieldHeight}
+              />
+            ) : null}
+
+            {(isSignup && otpSent) || resetOtpStage ? (
               <View style={styles.phoneAuthOtpBlock}>
                 <View style={[styles.loginInputWrap, { minHeight: fieldHeight }]}>
                   <Ionicons name="keypad-outline" size={23} color="#555a5d" />
@@ -2825,6 +3049,29 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
                 </View>
               </View>
             ) : null}
+
+            {resetPasswordStage ? (
+              <>
+                <AuthPasswordField
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="New password"
+                  visible={showPassword}
+                  onToggle={() => setShowPassword((value) => !value)}
+                  fieldHeight={fieldHeight}
+                  autoComplete="new-password"
+                />
+                <AuthPasswordField
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  placeholder="Confirm new password"
+                  visible={showConfirmPassword}
+                  onToggle={() => setShowConfirmPassword((value) => !value)}
+                  fieldHeight={fieldHeight}
+                  autoComplete="new-password"
+                />
+              </>
+            ) : null}
           </View>
 
           <TouchableOpacity style={[styles.loginSubmit, loading && styles.signupSubmitDisabled]} activeOpacity={0.88} disabled={loading} onPress={submit}>
@@ -2833,13 +3080,35 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
             {!loading ? <Ionicons name="arrow-forward" size={22} color="#ffffff" /> : null}
           </TouchableOpacity>
 
-          {otpSent ? (
-            <TouchableOpacity style={styles.phoneAuthTextButton} activeOpacity={0.75} onPress={() => { setOtpSent(false); setOtp(''); setMessage(''); }}>
+          {isSignup && otpSent ? (
+            <TouchableOpacity style={styles.phoneAuthTextButton} activeOpacity={0.75} onPress={changeSignupMobile}>
+              <Ionicons name="call-outline" size={17} color="#2b2321" />
               <Text style={styles.phoneAuthTextButtonLabel}>Change mobile number</Text>
             </TouchableOpacity>
           ) : null}
 
-          {message ? <Text style={[styles.formMessage, styles.signupMessage, /sent|Verifying|Sending|Preparing/i.test(message) ? styles.phoneAuthMessage : styles.errorText]}>{message}</Text> : null}
+          {baseLoginStage ? (
+            <TouchableOpacity style={styles.phoneAuthTextButton} activeOpacity={0.75} onPress={startPasswordReset}>
+              <Ionicons name="refresh-outline" size={17} color="#2b2321" />
+              <Text style={styles.phoneAuthTextButtonLabel}>Set or reset password</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {!isSignup && resetStage !== 'idle' ? (
+            <TouchableOpacity style={styles.phoneAuthTextButton} activeOpacity={0.75} onPress={returnToLogin}>
+              <Ionicons name="arrow-back" size={17} color="#2b2321" />
+              <Text style={styles.phoneAuthTextButtonLabel}>Back to login</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {message ? <Text style={[styles.formMessage, styles.signupMessage, /sent|Verifying|Sending|Preparing|Logging|Saving/i.test(message) ? styles.phoneAuthMessage : styles.errorText]}>{message}</Text> : null}
+
+          <View style={styles.authModeSwitch}>
+            <Text style={styles.authModeSwitchText}>{isSignup ? 'Already have an account?' : 'New to Lookmefy?'}</Text>
+            <TouchableOpacity activeOpacity={0.75} onPress={() => onNavigate(isSignup ? 'login' : 'signup')}>
+              <Text style={styles.authModeSwitchLink}>{isSignup ? 'Log in' : 'Create account'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.phoneAuthEditorial}>
@@ -4025,8 +4294,6 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
       setResult(nextTryOn);
       if (data.user) {
         setUser(data.user);
-      } else if (nextTryOn?.imageUrl) {
-        setUser((current) => current ? { ...current, avatarPhotoUrl: nextTryOn.imageUrl, avatarPhotoSource: 'custom-try-on' } : current);
       }
       refreshUser?.().catch(() => {});
       latestCustom.reload?.();
@@ -10509,7 +10776,7 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     marginBottom: 22
   },
   phoneAuthClose: {
@@ -10557,6 +10824,14 @@ const styles = StyleSheet.create({
   phoneAuthFieldStack: {
     marginTop: 30,
     gap: 12
+  },
+  passwordVisibilityButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f7f2f0'
   },
   signupDetailsCard: {
     width: '100%',
@@ -10772,17 +11047,49 @@ const styles = StyleSheet.create({
   },
   phoneAuthTextButton: {
     marginTop: 14,
-    alignItems: 'center'
+    minHeight: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2d7d2',
+    backgroundColor: '#fbf7f6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 16
   },
   phoneAuthTextButtonLabel: {
     ...typography.caption,
-    color: '#9b5658',
+    color: '#2b2321',
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800'
+  },
+  phoneAuthMessage: {
+    color: '#5d5754'
+  },
+  authModeSwitch: {
+    marginTop: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    flexWrap: 'wrap'
+  },
+  authModeSwitchText: {
+    ...typography.caption,
+    color: '#6d625e',
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '700'
   },
-  phoneAuthMessage: {
-    color: '#5d5754'
+  authModeSwitchLink: {
+    ...typography.caption,
+    color: '#2b2321',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '900',
+    textDecorationLine: 'underline'
   },
   phoneAuthBrowseButton: {
     width: '100%',

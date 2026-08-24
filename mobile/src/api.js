@@ -194,7 +194,7 @@ function friendlyHttpError({ status, path, detail }) {
   if (status === 400) return detailText || `${feature} needs a little more information. Check the details and try again.`;
   if (status === 401) return 'Your session expired. Please log in again.';
   if (status === 403) return `You do not have access to this ${feature} action.`;
-  if (status === 404) return `${feature} is not available on the running backend. Restart the backend with the latest code, then try again.`;
+  if (status === 404) return detailText || `${feature} is not available on the running backend. Restart the backend with the latest code, then try again.`;
   if (status === 408) return `${feature} took too long to respond. Try again in a moment.`;
   if (status === 409 && detailText) return detailText;
   if (status === 413) return 'That upload is too large. Choose a smaller image and try again.';

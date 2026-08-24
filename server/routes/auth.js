@@ -27,6 +27,7 @@ const heicMimeTypes = new Set(['image/heic', 'image/heif', 'image/heic-sequence'
 const pendingOtps = new Map();
 const otpFailureBlocks = new Map();
 const msg91OtpUrl = 'https://control.msg91.com/api/v5/otp';
+const otpPurposes = new Set(['signup', 'password-reset']);
 
 function profileImageModel() {
   return process.env.FAL_PROFILE_IMAGE_MODEL || process.env.FAL_TRYON_MODEL || 'openai/gpt-image-2/edit';
@@ -396,6 +397,20 @@ function sign(user) {
   return jwt.sign({ sub: user._id.toString() }, process.env.JWT_SECRET, { expiresIn: '14d' });
 }
 
+function signAuthActionToken({ phone, purpose }) {
+  return jwt.sign({ phone, purpose, type: 'auth-action' }, process.env.JWT_SECRET, { expiresIn: '20m' });
+}
+
+function verifyAuthActionToken(token, purpose) {
+  try {
+    const decoded = jwt.verify(String(token || ''), process.env.JWT_SECRET);
+    if (decoded?.type !== 'auth-action' || decoded?.purpose !== purpose || !decoded?.phone) return '';
+    return normalizePhone(decoded.phone);
+  } catch {
+    return '';
+  }
+}
+
 function disableResponseCache(res) {
   res.set({
     'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -405,39 +420,9 @@ function disableResponseCache(res) {
   });
 }
 
-function customTryOnAvatarId(photo) {
-  if (photo?.source !== 'custom-try-on') return '';
-  const match = String(photo.path || photo.url || '').match(/\/?api\/tryons\/image\/custom\/([^/?#]+)/i);
-  return match?.[1] || '';
-}
-
-async function reconcileCustomTryOnAvatar(user) {
-  const customAvatarId = customTryOnAvatarId(user.avatarPhoto);
-  if (!customAvatarId) return;
-  if (!/^[a-f\d]{24}$/i.test(customAvatarId)) return;
-  const tryOn = await CustomTryOn.findOne({ _id: customAvatarId, user: user._id }).select('image');
-  const image = tryOn?.image;
-  if (!image?.path && !image?.url) {
-    user.avatarPhoto = undefined;
-    await user.save();
-    return;
-  }
-  if (image.storage === 'remote-pending') {
-    if (image.sourceUrl) return;
-    user.avatarPhoto = undefined;
-    await user.save();
-    return;
-  }
-  user.avatarPhoto = {
-    filename: image.filename,
-    path: image.path,
-    url: image.url,
-    storage: image.storage,
-    mimetype: image.mimetype,
-    size: image.size,
-    source: 'custom-try-on',
-    uploadedAt: user.avatarPhoto?.uploadedAt || new Date()
-  };
+async function clearCustomTryOnAvatar(user) {
+  if (user.avatarPhoto?.source !== 'custom-try-on') return;
+  user.avatarPhoto = undefined;
   await user.save();
 }
 
@@ -459,6 +444,22 @@ function normalizePhone(value = '') {
   if (trimmed.startsWith('+')) return `+${digits}`;
   if (digits.length === 10) return `+91${digits}`;
   return `+${digits}`;
+}
+
+function normalizeOtpPurpose(value = '') {
+  const purpose = String(value || 'signup').trim().toLowerCase();
+  return otpPurposes.has(purpose) ? purpose : 'signup';
+}
+
+function otpKey(phone, purpose = 'signup') {
+  return `${normalizeOtpPurpose(purpose)}:${phone}`;
+}
+
+function validatePassword(password = '') {
+  const value = String(password || '');
+  if (value.length < 8) return 'Password must be at least 8 characters';
+  if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) return 'Use at least one letter and one number in your password';
+  return '';
 }
 
 function positiveEnvNumber(name, fallback) {
@@ -720,9 +721,18 @@ async function requireUser(req, res, next) {
 
 router.post('/otp/send', async (req, res) => {
   const phone = normalizePhone(req.body?.phone);
+  const purpose = normalizeOtpPurpose(req.body?.purpose);
   if (!phone) return res.status(400).json({ message: 'Enter a valid mobile number' });
   const blockedUntil = otpBlockedUntil(phone);
   if (blockedUntil) return sendOtpBlocked(res, blockedUntil);
+
+  const existing = await User.findOne({ phone }).select('_id passwordSetAt').lean();
+  if (purpose === 'signup' && existing) {
+    return res.status(409).json({ message: 'An account already exists for this mobile number. Log in with your password, or reset it with OTP.' });
+  }
+  if (purpose === 'password-reset' && !existing) {
+    return res.status(404).json({ message: 'No account found for this mobile number. Create an account first.' });
+  }
 
   const otp = generateOtp();
   const expiresAt = Date.now() + otpExpiryMs();
@@ -734,16 +744,16 @@ router.post('/otp/send', async (req, res) => {
     return res.status(502).json({ message: 'Could not send OTP right now. Please try again in a moment.' });
   }
 
-  pendingOtps.set(phone, {
+  pendingOtps.set(otpKey(phone, purpose), {
     otp,
     provider: delivery.provider || 'local',
     expiresAt,
     attempts: 0
   });
 
-  console.log('[auth:otp] generated', { phone, otp: exposeOtpForCurrentBuild() ? otp : '[hidden]' });
+  console.log('[auth:otp] generated', { phone, purpose, otp: exposeOtpForCurrentBuild() ? otp : '[hidden]' });
   res.json({
-    message: 'OTP sent',
+    message: purpose === 'password-reset' ? 'OTP sent to reset password' : 'OTP sent',
     expiresInSeconds: Math.round((expiresAt - Date.now()) / 1000),
     devOtp: exposeOtpForCurrentBuild() ? otp : undefined
   });
@@ -752,20 +762,22 @@ router.post('/otp/send', async (req, res) => {
 router.post('/otp/verify', async (req, res) => {
   const phone = normalizePhone(req.body?.phone);
   const otp = String(req.body?.otp || '').trim();
+  const purpose = normalizeOtpPurpose(req.body?.purpose);
   if (!phone || !otp) return res.status(400).json({ message: 'Mobile number and OTP are required' });
   const blockedUntil = otpBlockedUntil(phone);
   if (blockedUntil) return sendOtpBlocked(res, blockedUntil);
 
-  const pending = pendingOtps.get(phone);
+  const key = otpKey(phone, purpose);
+  const pending = pendingOtps.get(key);
   if (!pending || pending.expiresAt <= Date.now()) {
-    pendingOtps.delete(phone);
+    pendingOtps.delete(key);
     recordOtpFailure(phone);
     return res.status(400).json({ message: 'OTP expired. Please request a new one.' });
   }
 
   pending.attempts += 1;
   if (pending.attempts > 5) {
-    pendingOtps.delete(phone);
+    pendingOtps.delete(key);
     const blocked = recordOtpFailure(phone);
     if (blocked) return sendOtpBlocked(res, blocked);
     return res.status(429).json({ message: 'Too many OTP attempts. Please request a new one.' });
@@ -788,31 +800,108 @@ router.post('/otp/verify', async (req, res) => {
     return res.status(401).json({ message: 'Invalid OTP' });
   }
 
-  pendingOtps.delete(phone);
+  pendingOtps.delete(key);
   clearOtpFailures(phone);
-  let user = await User.findOne({ phone });
-  const isNewUser = !user;
-  if (!user) {
-    const digits = phone.replace(/\D/g, '');
-    const username = await uniqueUsername(`lookmefy_${digits.slice(-4) || Date.now()}`);
-    user = await User.create({
-      name: `Lookmefy ${digits.slice(-4) || 'User'}`,
-      email: phoneEmail(phone),
+
+  const user = await User.findOne({ phone }).select('_id passwordSetAt').lean();
+  if (purpose === 'signup') {
+    if (user) return res.status(409).json({ message: 'An account already exists for this mobile number. Log in with your password, or reset it with OTP.' });
+    return res.json({
+      signupToken: signAuthActionToken({ phone, purpose: 'signup' }),
       phone,
-      username,
-      genderPreference: 'other',
-      passwordHash: await bcrypt.hash(`${phone}:${Date.now()}:${Math.random()}`, 12),
-      bodyPhoto: {
-        status: 'uploaded',
-        source: 'phone-auth'
-      }
+      message: 'Mobile number verified. Set your password to finish signup.'
     });
   }
 
-  res.json({ token: sign(user), user: user.toClient(), isNewUser });
+  if (!user) return res.status(404).json({ message: 'No account found for this mobile number. Create an account first.' });
+  res.json({
+    resetToken: signAuthActionToken({ phone, purpose: 'password-reset' }),
+    phone,
+    message: 'Mobile number verified. Set a new password.'
+  });
+});
+
+router.post('/signup/complete', upload.single('bodyPhoto'), async (req, res) => {
+  const phone = verifyAuthActionToken(req.body?.signupToken, 'signup');
+  const name = String(req.body?.name || '').trim().replace(/\s+/g, ' ');
+  const genderPreference = normalizeGenderPreference(req.body?.genderPreference);
+  const password = String(req.body?.password || '');
+  const confirmPassword = String(req.body?.confirmPassword || '');
+  const username = await uniqueUsername(req.body?.username || name || `lookmefy_${phone.replace(/\D/g, '').slice(-4)}`);
+  const passwordError = validatePassword(password);
+
+  if (!phone) return res.status(401).json({ message: 'Mobile verification expired. Verify OTP again.' });
+  if (!name || name.length < 2) return res.status(400).json({ message: 'Enter your full name' });
+  if (!genderPreference) return res.status(400).json({ message: 'Choose your gender preference' });
+  if (passwordError) return res.status(400).json({ message: passwordError });
+  if (confirmPassword && confirmPassword !== password) return res.status(400).json({ message: 'Passwords do not match' });
+  if (!req.file) return res.status(400).json({ message: 'Upload a profile photo' });
+
+  const existing = await User.findOne({
+    $or: [
+      { phone },
+      { email: phoneEmail(phone) },
+      { username }
+    ]
+  });
+  if (existing?.phone === phone || existing?.email === phoneEmail(phone)) return res.status(409).json({ message: 'An account already exists for this mobile number' });
+  if (existing?.username === username) return res.status(409).json({ message: 'This username is already taken' });
+
+  try {
+    const generateFullBody = shouldGenerateFullBodyProfileForRequest(req);
+    const { avatarPhoto, bodyPhoto } = await profilePhotosFromUpload(req.file, { generateFullBody });
+    const passwordHash = await bcrypt.hash(password, 12);
+    const now = new Date();
+    const user = await User.create({
+      name,
+      email: phoneEmail(phone),
+      phone,
+      phoneVerifiedAt: now,
+      username,
+      genderPreference,
+      passwordHash,
+      passwordSetAt: now,
+      devMode: parseBoolean(req.body.devMode),
+      avatarPhoto,
+      bodyPhoto
+    });
+
+    generateFullBodyProfileInBackground(user._id, bodyPhoto, { enabled: generateFullBody });
+    res.status(201).json({ token: sign(user), user: user.toClient(), isNewUser: true });
+  } catch (error) {
+    if (isStorageConfigurationError(error)) return res.status(error.statusCode || 503).json({ message: error.message });
+    if (isBodyPhotoPreparationError(error)) return res.status(400).json({ message: error.message });
+    if (error.code === 11000 && error.keyPattern?.username) return res.status(409).json({ message: 'This username is already taken' });
+    if (error.code === 11000 && (error.keyPattern?.email || error.keyPattern?.phone)) return res.status(409).json({ message: 'An account already exists for this mobile number' });
+    throw error;
+  }
+});
+
+router.post('/password/reset', async (req, res) => {
+  const phone = verifyAuthActionToken(req.body?.resetToken, 'password-reset');
+  const password = String(req.body?.password || '');
+  const confirmPassword = String(req.body?.confirmPassword || '');
+  const passwordError = validatePassword(password);
+
+  if (!phone) return res.status(401).json({ message: 'Password reset expired. Verify OTP again.' });
+  if (passwordError) return res.status(400).json({ message: passwordError });
+  if (confirmPassword && confirmPassword !== password) return res.status(400).json({ message: 'Passwords do not match' });
+
+  const user = await User.findOne({ phone });
+  if (!user) return res.status(404).json({ message: 'No account found for this mobile number' });
+
+  const now = new Date();
+  user.passwordHash = await bcrypt.hash(password, 12);
+  user.passwordSetAt = now;
+  user.phoneVerifiedAt = user.phoneVerifiedAt || now;
+  await user.save();
+  res.json({ token: sign(user), user: user.toClient() });
 });
 
 router.post('/signup', upload.single('bodyPhoto'), async (req, res) => {
+  if (!parseBoolean(process.env.ALLOW_LEGACY_EMAIL_SIGNUP)) {
+    return res.status(410).json({ message: 'Use mobile OTP signup to create an account.' });
+  }
   const { name, email, password } = req.body;
   const username = normalizeUsername(req.body.username) || await uniqueUsername(name);
   const genderPreference = normalizeGenderPreference(req.body.genderPreference);
@@ -839,6 +928,7 @@ router.post('/signup', upload.single('bodyPhoto'), async (req, res) => {
       username,
       genderPreference,
       passwordHash,
+      passwordSetAt: new Date(),
       devMode: parseBoolean(req.body.devMode),
       avatarPhoto,
       bodyPhoto
@@ -867,24 +957,30 @@ router.get('/username-suggestions', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
+  const phone = normalizePhone(req.body?.phone || req.body?.mobile || req.body?.mobileNumber || '');
   const identifier = String(req.body.email || req.body.username || '').trim().toLowerCase();
   const { password } = req.body;
-  if (!identifier || !password) return res.status(400).json({ message: 'Email or username and password are required' });
-  const user = await User.findOne({
-    $or: [
-      { email: identifier },
-      { username: normalizeUsername(identifier) }
-    ]
-  });
-  if (!user) return res.status(401).json({ message: 'Invalid email/username or password' });
+  if ((!phone && !identifier) || !password) return res.status(400).json({ message: 'Mobile number and password are required' });
+  const user = phone
+    ? await User.findOne({ phone })
+    : await User.findOne({
+      $or: [
+        { email: identifier },
+        { username: normalizeUsername(identifier) }
+      ]
+    });
+  if (!user) return res.status(401).json({ message: 'Invalid mobile number or password' });
+  if (!user.passwordSetAt && user.phone) {
+    return res.status(409).json({ message: 'Set your password with OTP before logging in.' });
+  }
   const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) return res.status(401).json({ message: 'Invalid email/username or password' });
+  if (!ok) return res.status(401).json({ message: 'Invalid mobile number or password' });
   res.json({ token: sign(user), user: user.toClient() });
 });
 
 router.get('/me', requireUser, async (req, res) => {
   disableResponseCache(res);
-  await reconcileCustomTryOnAvatar(req.user);
+  await clearCustomTryOnAvatar(req.user);
   res.json({ user: req.user.toClient() });
 });
 

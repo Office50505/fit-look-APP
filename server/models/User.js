@@ -15,6 +15,7 @@ const userSchema = new mongoose.Schema(
     name: { type: String, trim: true, required: true },
     email: { type: String, trim: true, lowercase: true, unique: true, required: true },
     phone: { type: String, trim: true, unique: true, sparse: true },
+    phoneVerifiedAt: Date,
     username: {
       type: String,
       trim: true,
@@ -23,6 +24,7 @@ const userSchema = new mongoose.Schema(
       sparse: true
     },
     passwordHash: { type: String, required: true },
+    passwordSetAt: Date,
     genderPreference: {
       type: String,
       enum: ['male', 'female', 'other'],
@@ -72,17 +74,19 @@ userSchema.methods.toClient = function toClient() {
   const storedAvatarPhotoUrl = storedFileToClientUrl(this.avatarPhoto);
   const bodyPhotoIsFullBody = this.bodyPhoto?.source === 'fal-full-body';
   const avatarPhotoIsCustomTryOn = this.avatarPhoto?.source === 'custom-try-on';
-  const avatarPhotoUrl = avatarPhotoIsCustomTryOn
-    ? storedAvatarPhotoUrl || bodyPhotoUrl
-    : bodyPhotoIsFullBody
-      ? bodyPhotoUrl || storedAvatarPhotoUrl
-      : storedAvatarPhotoUrl || bodyPhotoUrl;
+  const uploadedAvatarPhotoUrl = avatarPhotoIsCustomTryOn ? '' : storedAvatarPhotoUrl;
+  const avatarPhotoUrl = bodyPhotoIsFullBody
+    ? bodyPhotoUrl || uploadedAvatarPhotoUrl
+    : uploadedAvatarPhotoUrl || bodyPhotoUrl;
+  const avatarPhotoSource = avatarPhotoIsCustomTryOn ? '' : this.avatarPhoto?.source || '';
 
   return {
     id: this._id.toString(),
     name: this.name,
     email: this.email,
     phone: this.phone || '',
+    phoneVerified: Boolean(this.phoneVerifiedAt),
+    hasPassword: Boolean(this.passwordSetAt),
     username: this.username,
     genderPreference: this.genderPreference || 'other',
     tokens: this.tokens,
@@ -96,7 +100,7 @@ userSchema.methods.toClient = function toClient() {
     devMode: Boolean(this.devMode),
     joinedAt: this.createdAt,
     avatarPhotoUrl,
-    avatarPhotoSource: this.avatarPhoto?.source || '',
+    avatarPhotoSource,
     bodyPhotoUrl,
     bodyPhotoStatus: this.bodyPhoto?.status || 'uploaded',
     bodyPhotoSource: this.bodyPhoto?.source || 'upload',
