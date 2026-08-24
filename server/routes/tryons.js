@@ -11,7 +11,7 @@ import User from '../models/User.js';
 import { requireUser } from './auth.js';
 import { inlineOrQueue, registerJobHandler } from '../utils/jobs.js';
 import { logger } from '../utils/logger.js';
-import { isStorageConfigurationError, readStoredFile, saveStoredFile, storedFileToClientUrl } from '../utils/storage.js';
+import { deleteStoredFile, isStorageConfigurationError, readStoredFile, saveStoredFile, storedFileToClientUrl } from '../utils/storage.js';
 import { inferTryOnModel, normalizeTryOnModel } from '../utils/tryOnModel.js';
 import { wearableCompatibility } from '../utils/wearable.js';
 import { genderCompatibility } from '../utils/genderPreference.js';
@@ -2049,7 +2049,20 @@ async function saveUploadFile(file, prefix, user) {
   });
 }
 
-async function saveGeneratedCustomTryOn({ user, garmentFile, timer }) {
+async function storedGarmentToMemoryFile(garment, timer) {
+  const stored = await readStoredFile(garment);
+  const buffer = stored.bytes;
+  const mimetype = stored.mimetype || garment?.mimetype || 'image/jpeg';
+  timer?.mark('stored garment prepared', { kb: Math.round(buffer.length / 1024), mimetype });
+  return {
+    buffer,
+    mimetype,
+    originalname: stored.filename || garment?.filename || `garment${extensionFor(mimetype)}`,
+    size: buffer.length
+  };
+}
+
+async function saveGeneratedCustomTryOn({ user, garmentFile, storedGarment, timer }) {
   const generated = await callPrunaTryOn({
     user,
     product: {
@@ -2061,7 +2074,7 @@ async function saveGeneratedCustomTryOn({ user, garmentFile, timer }) {
     custom: true
   });
   const filename = `tryon-custom-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
-  const garment = await saveUploadFile(garmentFile, 'garment', user);
+  const garment = storedGarment || await saveUploadFile(garmentFile, 'garment', user);
   let bytes = generated.bytes;
   let mimetype = generated.mimetype;
   if (!bytes && generated.remoteUrl) {
@@ -2116,6 +2129,57 @@ function httpError(statusCode, message) {
 
 function tryOnErrorStatus(error) {
   return isStorageConfigurationError(error) ? error.statusCode || 503 : error.statusCode || 400;
+}
+
+async function customTryOnService({ userId, body = {} }) {
+  const user = await User.findById(userId);
+  if (!user) throw httpError(401, 'User not found');
+
+  const timer = createTimer('custom', { userId: user._id.toString() });
+  const storedGarment = body?.garment;
+  let reserved = false;
+  let workingUser = user;
+  let tryOn = null;
+
+  try {
+    if (!storedGarment?.path && !storedGarment?.url) throw httpError(400, 'Upload a clothing image first');
+    ensureTryOnProfileReady(workingUser);
+    const garmentFile = await storedGarmentToMemoryFile(storedGarment, timer);
+    const chargedUser = await reserveToken(workingUser, timer);
+    if (!chargedUser) throw httpError(402, 'Not enough tokens for AI try-on');
+    reserved = true;
+    workingUser = chargedUser;
+
+    tryOn = await saveGeneratedCustomTryOn({
+      user: workingUser,
+      garmentFile,
+      storedGarment,
+      timer
+    });
+    await recordCreditEvent({
+      user: workingUser,
+      action: 'Custom try-on',
+      product: { name: storedGarment.filename || garmentFile.originalname || 'Uploaded garment' },
+      tokens: chargedTokenCost(workingUser),
+      balanceAfter: workingUser.tokens,
+      metadata: { tryOnId: tryOn._id.toString() }
+    });
+    timer.end({ tokensRemaining: workingUser.tokens });
+    return { statusCode: 201, body: { tryOn: tryOn.toClient(), user: workingUser.toClient() } };
+  } catch (error) {
+    if (reserved) workingUser = await refundToken(workingUser, timer);
+    if (!tryOn && storedGarment) {
+      await deleteStoredFile(storedGarment).catch((cleanupError) => {
+        logger.warn('custom_tryon_garment_cleanup_failed', {
+          userId: user._id.toString(),
+          error: readableError(cleanupError)
+        });
+      });
+    }
+    const message = readableError(error, 'Could not generate custom AI try-on');
+    timer.end({ error: message });
+    throw httpError(tryOnErrorStatus(error), message);
+  }
 }
 
 async function productTryOnService({ userId, productId, body = {} }) {
@@ -2452,40 +2516,35 @@ router.get('/image/:scope/:id', async (req, res) => {
 });
 
 router.post('/custom', requireUser, upload.single('garment'), async (req, res) => {
-  const timer = createTimer('custom', { userId: req.user._id.toString() });
-  let reserved = false;
+  const timer = createTimer('custom-upload', { userId: req.user._id.toString() });
+  let garment = null;
+  let timerEnded = false;
+  const endTimer = (extra = {}) => {
+    if (timerEnded) return;
+    timerEnded = true;
+    timer.end(extra);
+  };
 
   try {
     if (!req.file) return res.status(400).json({ message: 'Upload a clothing image first' });
     ensureTryOnProfileReady(req.user);
     const garmentFile = await normalizeMemoryImageFile(req.file, 'garment', timer);
-    const chargedUser = await reserveToken(req.user, timer);
-    if (!chargedUser) {
-      timer.end({ error: 'insufficient tokens' });
-      return res.status(402).json({ message: 'Not enough tokens for AI try-on' });
-    }
-    reserved = true;
-    req.user = chargedUser;
-
-    const tryOn = await saveGeneratedCustomTryOn({
-      user: req.user,
-      garmentFile,
-      timer
+    garment = await saveUploadFile(garmentFile, 'garment', req.user);
+    endTimer({ queued: true, garment: garment.path || garment.url || '' });
+    return inlineOrQueue({
+      req,
+      res,
+      type: 'tryon-custom',
+      key: `${req.user._id}:custom:${garment.path || garment.url || Date.now()}`,
+      payload: { body: { garment } },
+      maxAttempts: 1,
+      priority: 5,
+      runInline: async () => customTryOnService({ userId: req.user._id, body: { garment } })
     });
-    await recordCreditEvent({
-      user: req.user,
-      action: 'Custom try-on',
-      product: { name: garmentFile.originalname || 'Uploaded garment' },
-      tokens: chargedTokenCost(req.user),
-      balanceAfter: req.user.tokens,
-      metadata: { tryOnId: tryOn._id.toString() }
-    });
-    timer.end({ tokensRemaining: req.user.tokens });
-    res.status(201).json({ tryOn: tryOn.toClient(), user: req.user.toClient() });
   } catch (error) {
-    if (reserved) req.user = await refundToken(req.user, timer);
+    if (garment) await deleteStoredFile(garment).catch(() => {});
     const message = readableError(error, 'Could not generate custom AI try-on');
-    timer.end({ error: message });
+    endTimer({ error: message });
     res.status(isStorageConfigurationError(error) ? error.statusCode || 503 : 400).json({ message });
   }
 });
@@ -2557,6 +2616,9 @@ function registerTryOnJobHandlers() {
   ));
   registerJobHandler('tryon-external', async ({ payload, job }) => (
     (await externalTryOnService({ userId: job.user, body: payload.body })).body
+  ));
+  registerJobHandler('tryon-custom', async ({ payload, job }) => (
+    (await customTryOnService({ userId: job.user, body: payload.body })).body
   ));
   registerJobHandler('tryon-video', async ({ payload, job }) => (
     (await tryOnVideoService({ userId: job.user, productId: payload.productId, body: payload.body })).body

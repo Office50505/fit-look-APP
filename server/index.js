@@ -102,6 +102,13 @@ const otpVerifyLimiter = createRateLimiter({
   keyGenerator: rateLimitKeys.phonePrincipal,
   message: 'Too many OTP verification attempts. Please request a fresh OTP later.'
 });
+const authPasswordLimiter = createRateLimiter({
+  name: 'auth-password-v2',
+  windowMs: 10 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_AUTH_PASSWORD_MAX || 30),
+  keyGenerator: rateLimitKeys.phonePrincipal,
+  message: 'Too many password attempts for this number. Please try again later.'
+});
 const aiSearchLimiter = createRateLimiter({
   name: 'ai-studio-search',
   windowMs: 60 * 60 * 1000,
@@ -202,6 +209,9 @@ const paymentLimiter = createRateLimiter({
 app.use('/api', globalApiLimiter);
 app.use('/api/auth/otp/send', otpIpLimiter, otpPhoneLimiter);
 app.use('/api/auth/otp/verify', otpVerifyLimiter);
+app.use('/api/auth/login', authPasswordLimiter);
+app.use('/api/auth/password/reset', authPasswordLimiter);
+app.use('/api/auth/signup/complete', profileUploadLimiter);
 app.use('/api/auth/profile', profileUploadLimiter);
 app.use('/api/auth/body-photo', profileUploadLimiter);
 app.use('/api/recommendations/studio-chat', aiSearchIpLimiter, aiSearchLimiter, aiSearchConcurrency);
