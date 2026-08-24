@@ -96,6 +96,15 @@ const FORM_TIMEOUT_MS = 60000;
 const JOB_TIMEOUT_MS = 180000;
 const JOB_POLL_INTERVAL_MS = 1400;
 
+function shouldBypassCache(path, explicitNoCache) {
+  return Boolean(explicitNoCache) || /^\/auth\/me(?:\?|$)/i.test(String(path || ''));
+}
+
+function cacheBustedPath(path) {
+  const separator = String(path || '').includes('?') ? '&' : '?';
+  return `${path}${separator}_=${Date.now()}`;
+}
+
 export class ApiError extends Error {
   constructor(message, details = {}) {
     super(message);
@@ -253,12 +262,18 @@ async function pollJob(baseUrl, jobId, headers, timeoutMs) {
 }
 
 export async function api(path, options = {}) {
-  const { timeoutMs, pollJob: shouldPollJob = true, jobTimeoutMs, ...fetchOptions } = options;
+  const { timeoutMs, pollJob: shouldPollJob = true, jobTimeoutMs, noCache = false, ...fetchOptions } = options;
   const token = await getToken();
   const isForm = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
   const headers = isForm ? {} : { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (isDevelopmentRuntime && /^\/tryons(?:\/|$)/i.test(path)) headers['x-fitlook-sync'] = '1';
+  const bypassCache = shouldBypassCache(path, noCache);
+  const requestPath = bypassCache ? cacheBustedPath(path) : path;
+  if (bypassCache) {
+    headers['Cache-Control'] = 'no-cache';
+    headers.Pragma = 'no-cache';
+  }
   const requestTimeout = Number(timeoutMs || (isForm ? FORM_TIMEOUT_MS : DEFAULT_TIMEOUT_MS));
 
   const method = String(fetchOptions.method || 'GET').toUpperCase();
@@ -273,11 +288,13 @@ export async function api(path, options = {}) {
       ? setTimeout(() => controller.abort(), requestTimeout)
       : null;
     try {
-      const response = await fetch(`${baseUrl}${path}`, {
+      const requestOptions = {
         ...fetchOptions,
         headers: { ...headers, ...fetchOptions.headers },
         signal: controller?.signal || fetchOptions.signal
-      });
+      };
+      if (bypassCache) requestOptions.cache = 'no-store';
+      const response = await fetch(`${baseUrl}${requestPath}`, requestOptions);
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         const detail = readableError(data, '');

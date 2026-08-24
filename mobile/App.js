@@ -328,9 +328,17 @@ function tryOnProfileBlockMessage(user) {
 }
 
 function userAvatarUrl(user) {
-  if (user?.avatarPhotoUrl) return user.avatarPhotoUrl;
-  if (user?.bodyPhotoSource === 'fal-full-body') return '';
-  return user?.bodyPhotoUrl || '';
+  const avatarUrl = user?.avatarPhotoUrl || '';
+  const bodyUrl = user?.bodyPhotoUrl || '';
+  if (user?.avatarPhotoSource === 'custom-try-on' && avatarUrl) return avatarUrl;
+  if (user?.bodyPhotoSource === 'fal-full-body' && bodyUrl) return bodyUrl;
+  return avatarUrl || bodyUrl || '';
+}
+
+function userAvatarResizeMode(user) {
+  if (user?.avatarPhotoSource === 'custom-try-on') return 'contain';
+  if (user?.bodyPhotoSource === 'fal-full-body') return 'contain';
+  return 'cover';
 }
 
 function userInitials(user) {
@@ -830,6 +838,7 @@ function BrandLogo({ compact = false, light = false, style, textStyle, symbolSty
 
 function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
   const avatarUri = userAvatarUrl(user);
+  const avatarResizeMode = userAvatarResizeMode(user);
   return (
     <View style={styles.header}>
       <View style={styles.headerLeft}>
@@ -849,7 +858,7 @@ function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
       <View style={styles.headerActions}>
         {user ? (
           <TouchableOpacity style={styles.iconButton} onPress={() => onNavigate('profile')}>
-            {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.headerAvatar} imageStyle={styles.avatarFaceImage} resizeMode="cover" fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.headerAvatar} textStyle={styles.headerAvatarInitials} />}
+            {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.headerAvatar} imageStyle={avatarResizeMode === 'cover' ? styles.avatarFaceImage : null} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.headerAvatar} textStyle={styles.headerAvatarInitials} />}
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity style={styles.iconButton} onPress={() => onNavigate('tokens')}>
@@ -874,10 +883,12 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
   const openRight = () => rightRoute && onNavigate(rightRoute);
   const showWishlistAction = showWishlist && !showAvatar;
   const showSearchAction = showSearch && !showAvatar;
+  const showProfileAction = Boolean(user) && !showAvatar;
   const brandLeft = brandAlign === 'left';
   const searchTourTarget = useTourTarget(tourTargetKeys.search, registerTourTarget);
   const avatarTourTarget = useTourTarget(tourTargetKeys.avatar, registerTourTarget);
   const avatarUri = userAvatarUrl(user);
+  const avatarResizeMode = userAvatarResizeMode(user);
   return (
     <View style={[styles.appHeader, compact && styles.appHeaderCompact]}>
       {!brandLeft ? (
@@ -905,9 +916,14 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
         ) : null}
         <TouchableOpacity ref={avatarTourTarget.ref} onLayout={avatarTourTarget.onLayout} accessibilityRole="button" accessibilityLabel={rightRoute === 'orders' ? 'Open orders' : 'Open bag'} style={styles.appHeaderAction} onPress={openRight}>
           {showAvatar ? (
-            avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={styles.avatarFaceImage} resizeMode="cover" fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />
+            avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={avatarResizeMode === 'cover' ? styles.avatarFaceImage : null} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />
           ) : <Ionicons name={rightIcon} size={20} color="#171412" />}
         </TouchableOpacity>
+        {showProfileAction ? (
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open profile" style={styles.appHeaderAction} onPress={() => onNavigate('profile')}>
+            {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={avatarResizeMode === 'cover' ? styles.avatarFaceImage : null} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />}
+          </TouchableOpacity>
+        ) : null}
       </View>
     </View>
   );
@@ -915,9 +931,7 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
 
 function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
   const routeName = route?.name || 'home';
-  const activeRoute = routeName === 'generation-history' || routeName === 'orders'
-    ? 'profile'
-    : routeName === 'product' || routeName === 'wishlist' || routeName === 'search'
+  const activeRoute = routeName === 'product' || routeName === 'wishlist' || routeName === 'search'
       ? 'shop'
       : routeName === 'stylebot'
         ? 'tryon'
@@ -927,7 +941,7 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
     ['shop', 'grid-outline', 'Categories'],
     ['closet', 'shirt-outline', 'Wardrobe'],
     ['tryon', 'sparkles-outline', 'AI Studio'],
-    ['profile', 'person-outline', 'Profile']
+    ['custom', 'color-wand-outline', 'Custom']
   ];
   return (
     <View style={styles.bottomNav}>
@@ -1111,9 +1125,9 @@ function CreditHistorySkeleton({ rows = 3 }) {
   ));
 }
 
-function AiPreviewNote() {
+function AiPreviewNote({ style }) {
   return (
-    <View style={styles.aiPreviewNote}>
+    <View style={[styles.aiPreviewNote, style]}>
       <Ionicons name="information-circle-outline" size={16} color="#8c4d50" />
       <Text style={styles.aiPreviewNoteText}>{aiPreviewDisclaimer}</Text>
     </View>
@@ -1412,8 +1426,8 @@ const homeProductFeedPageSize = 24;
 const shopProductGridLimit = 50;
 const searchQuickSuggestions = ['short kurti', 'saree', 'kurti', 'tshirt', 'earring', 'top for women', 'slipper', 'watch', 'top', 'kurti set', 'shoes', 'eyewear'];
 
-function ShopTopBar({ onNavigate }) {
-  return <AppHeader onNavigate={onNavigate} compact />;
+function ShopTopBar({ onNavigate, user }) {
+  return <AppHeader onNavigate={onNavigate} user={user} compact />;
 }
 
 function CategoryBubble({ item, size = 'large', active = false }) {
@@ -1433,13 +1447,13 @@ function CategoryBubble({ item, size = 'large', active = false }) {
   );
 }
 
-function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate }) {
+function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate, user }) {
   const content = categoryPageContent[selectedCategory] || categoryPageContent.popular;
   const openTile = (item) => onNavigate('shop', item.params || { sort: 'newest' });
 
   return (
     <View style={styles.categoryScreen}>
-      <ShopTopBar onNavigate={onNavigate} />
+      <ShopTopBar onNavigate={onNavigate} user={user} />
       <View style={styles.categoryBrowser}>
         <ScrollView style={styles.categoryRail} contentContainerStyle={styles.categoryRailContent} showsVerticalScrollIndicator={false}>
           {categoryRailItems.map((item) => {
@@ -1513,8 +1527,8 @@ function CurationProductCard({ product, onPress, onAddToWishlist, isWishlisted, 
   );
 }
 
-function ProductTopBar({ onNavigate }) {
-  return <AppHeader onNavigate={onNavigate} compact />;
+function ProductTopBar({ onNavigate, user }) {
+  return <AppHeader onNavigate={onNavigate} user={user} compact />;
 }
 
 function ProductActionButton({ label, icon, active, disabled, onPress }) {
@@ -1636,7 +1650,7 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
 
   return (
     <View style={styles.homeScreen}>
-      <AppHeader onNavigate={onNavigate} compact />
+      <AppHeader onNavigate={onNavigate} user={user} compact />
       <ScrollView ref={homeScrollRef} style={styles.homeScroll} contentContainerStyle={styles.homeContent} {...screenScrollProps}>
       <View style={styles.homeHero}>
         <ScrollView
@@ -2143,13 +2157,14 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
         selectedCategory={selectedCategory}
         onSelectCategory={setSelectedCategory}
         onNavigate={onNavigate}
+        user={user}
       />
     );
   }
 
   return (
     <View style={styles.shopScreen}>
-      <ShopTopBar onNavigate={onNavigate} />
+      <ShopTopBar onNavigate={onNavigate} user={user} />
       <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
       <View style={styles.searchPanel}>
         <View style={styles.searchRow}>
@@ -2313,7 +2328,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
   if (state.loading || state.error || !state.product) {
     return (
       <View style={styles.productDetailScreen}>
-        <ProductTopBar onNavigate={onNavigate} />
+        <ProductTopBar onNavigate={onNavigate} user={user} />
         <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
           <StatusPanel loading={state.loading} error={state.error} empty={!state.loading && !state.product} text="This item may have been removed from the catalog." />
         </ScrollView>
@@ -2351,7 +2366,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
 
   return (
     <View style={styles.productDetailScreen}>
-      <ProductTopBar onNavigate={onNavigate} />
+      <ProductTopBar onNavigate={onNavigate} user={user} />
       <ScrollView contentContainerStyle={styles.productDetailContent} {...screenScrollProps}>
       <View style={[styles.productHeroMedia, { height: mediaHeight, width: mediaWidth }]}>
         <ScrollView {...horizontalScrollProps} pagingEnabled contentContainerStyle={styles.productMediaTrack}>
@@ -3958,14 +3973,37 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
   );
 }
 
-function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
+function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refreshUser }) {
   const [garment, setGarment] = useState(null);
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [lightbox, setLightbox] = useState(null);
+  const latestCustom = useApiState('/tryons/custom/latest', token, Boolean(user), { tryOn: null });
 
   if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
+
+  const avatarUri = userAvatarUrl(user);
+  const bodyProfileUri = user.bodyPhotoUrl ? imageUrl(user.bodyPhotoUrl) : '';
+  const avatarProfileUri = avatarUri ? imageUrl(avatarUri) : '';
+  const profilePreviewUri = bodyProfileUri || avatarProfileUri;
+  const profilePreviewIsFullBody = Boolean(bodyProfileUri && user.bodyPhotoSource === 'fal-full-body');
+  const generatedUri = result?.imageUrl ? imageUrl(result.imageUrl) : '';
+  const hasGenerated = Boolean(generatedUri);
+  const latestCustomTryOn = latestCustom.data?.tryOn;
+
+  useEffect(() => {
+    if (garment || result || loading || !latestCustomTryOn?.imageUrl) return;
+    setResult(latestCustomTryOn);
+  }, [garment, latestCustomTryOn, loading, result]);
+
+  const chooseGarment = async () => {
+    const selected = await pickImage();
+    if (!selected) return;
+    setGarment(selected);
+    setResult(null);
+    setMessage('');
+  };
 
   const submit = async () => {
     if (!garment) {
@@ -3978,15 +4016,21 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
       return;
     }
     setLoading(true);
-    setMessage('Generating custom try-on...');
-    setResult(null);
+    setMessage(hasGenerated ? 'Regenerating custom try-on...' : 'Generating custom try-on...');
     try {
       const form = new FormData();
       form.append('garment', filePart(garment, 'garment.jpg'));
       const data = await api('/tryons/custom', { method: 'POST', body: form });
-      setResult(data.tryOn);
-      if (data.user) setUser(data.user);
-      setMessage('Custom try-on ready.');
+      const nextTryOn = data.tryOn;
+      setResult(nextTryOn);
+      if (data.user) {
+        setUser(data.user);
+      } else if (nextTryOn?.imageUrl) {
+        setUser((current) => current ? { ...current, avatarPhotoUrl: nextTryOn.imageUrl, avatarPhotoSource: 'custom-try-on' } : current);
+      }
+      refreshUser?.().catch(() => {});
+      latestCustom.reload?.();
+      setMessage('Custom try-on ready. It is now your profile picture.');
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -3995,21 +4039,91 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
-      <View style={styles.toolHero}>
-        <Text style={styles.kicker}>Custom Try-On</Text>
+    <ScrollView style={styles.customTryOnScreen} contentContainerStyle={styles.customTryOnContent} {...screenScrollProps}>
+      <View style={styles.customHeroPanel}>
+        <View style={styles.customHeroMetaRow}>
+          <Text style={styles.kicker}>Custom Try-On</Text>
+          <View style={styles.customTokenPill}>
+            <Ionicons name="sparkles" size={12} color="#9b5658" />
+            <Text style={styles.customTokenText}>1 token</Text>
+          </View>
+        </View>
         <Text style={styles.screenTitle}>Try on any clothing photo.</Text>
-        <Text style={styles.description}>Upload a garment image and Lookmefy will generate it on your saved profile photo with FitRoom. Each generated image costs 1 token.</Text>
+        <Text style={styles.description}>Upload a garment image and Lookmefy will generate it on your saved profile photo with FitRoom.</Text>
       </View>
-      <View style={styles.tryOnPair}>
-        <TouchableOpacity style={styles.previewBox} onPress={async () => setGarment(await pickImage())}>
-          {garment?.uri ? <Image source={{ uri: garment.uri }} style={styles.previewImage} /> : <Text style={styles.previewPlaceholder}>Upload garment</Text>}
+
+      <View style={styles.customUploadRow}>
+        <Pressable style={styles.customProfileCard} onPress={() => profilePreviewUri && setLightbox(profilePreviewUri)}>
+          {profilePreviewUri ? (
+            <ResilientImage source={{ uri: profilePreviewUri }} style={styles.customProfileImage} resizeMode={profilePreviewIsFullBody ? 'contain' : 'cover'} fallbackIcon="person-outline" />
+          ) : (
+            <View style={styles.customProfileEmpty}>
+              <Ionicons name="person-outline" size={24} color="#8d8682" />
+              <Text style={styles.customProfileEmptyText}>Add profile photo</Text>
+            </View>
+          )}
+          <View style={styles.customProfileCaption}>
+            <Text style={styles.customProfileLabel}>{profilePreviewIsFullBody ? 'Full-body profile' : 'Profile photo'}</Text>
+            <Text style={styles.customProfileSub} numberOfLines={1}>{user.bodyPhotoStatus === 'generating' ? 'Preparing' : 'Saved'}</Text>
+          </View>
+        </Pressable>
+        <TouchableOpacity style={[styles.customGarmentDrop, garment?.uri && styles.customGarmentDropReady]} activeOpacity={0.86} onPress={chooseGarment}>
+          {garment?.uri ? (
+            <>
+              <Image source={{ uri: garment.uri }} style={styles.customGarmentImage} resizeMode="cover" />
+              <View style={styles.customGarmentOverlay}>
+                <Ionicons name="camera-outline" size={16} color="#ffffff" />
+                <Text style={styles.customGarmentOverlayText}>Change garment</Text>
+              </View>
+            </>
+          ) : (
+            <View style={styles.customGarmentCopy}>
+              <View style={styles.customGarmentIcon}>
+                <Ionicons name="cloud-upload-outline" size={26} color="#9b5658" />
+              </View>
+              <Text style={styles.customGarmentTitle}>Upload garment</Text>
+              <Text style={styles.customGarmentHelp}>Use a clear product or clothing photo.</Text>
+            </View>
+          )}
         </TouchableOpacity>
-        <Pressable style={styles.previewBox} onPress={() => result?.imageUrl && setLightbox(imageUrl(result.imageUrl))}>
-          {loading ? <TryOnLoading text="Generating" large /> : result?.imageUrl ? <Image source={{ uri: imageUrl(result.imageUrl) }} style={styles.previewImage} /> : <Text style={styles.previewPlaceholder}>Generated try-on</Text>}
+      </View>
+
+      <View style={styles.customResultCard}>
+        <View style={styles.customResultHead}>
+          <View>
+            <Text style={styles.customResultTitle}>Generated try-on</Text>
+            <Text style={styles.customResultSub}>{hasGenerated ? 'Saved as your profile picture' : 'Your result will appear here'}</Text>
+          </View>
+          {hasGenerated ? (
+            <TouchableOpacity style={styles.customResultOpen} onPress={() => setLightbox(generatedUri)}>
+              <Ionicons name="expand-outline" size={16} color="#111111" />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        <Pressable style={styles.customResultFrame} onPress={() => hasGenerated && setLightbox(generatedUri)}>
+          {hasGenerated ? (
+            <ResilientImage
+              source={{ uri: generatedUri }}
+              style={styles.customResultImage}
+              resizeMode="cover"
+              fallbackIcon="alert-circle-outline"
+              fallbackText="Result unavailable. Generate again."
+            />
+          ) : null}
+          {loading ? (
+            <View style={[styles.customResultState, hasGenerated && styles.customResultStateOverlay]}>
+              <TryOnLoading text={hasGenerated ? 'Regenerating' : 'Generating'} large />
+            </View>
+          ) : !hasGenerated ? (
+            <View style={styles.customResultState}>
+              <Ionicons name="sparkles-outline" size={27} color="#8d8682" />
+              <Text style={styles.previewPlaceholder}>Generated try-on</Text>
+            </View>
+          ) : null}
         </Pressable>
       </View>
-      {result?.imageUrl ? <AiPreviewNote /> : null}
+
+      {hasGenerated ? <AiPreviewNote style={styles.customAiPreviewNote} /> : null}
       <View style={styles.customModelPanel}>
         <Text style={styles.customModelTitle}>What are you trying on?</Text>
         <View style={styles.customModelOptions}>
@@ -4033,13 +4147,13 @@ function CustomTryOnScreen({ user, setUser, setToken, onNavigate }) {
         </View>
       </View>
       <AppButton
-        label={loading ? 'Generating...' : 'Generate Custom Try-On'}
+        label={loading ? (hasGenerated ? 'Regenerating...' : 'Generating...') : hasGenerated ? 'Regenerate Custom Try-On' : 'Generate Custom Try-On'}
         icon="sparkles-outline"
         disabled={loading}
         onPress={submit}
         style={styles.customGenerateButton}
       />
-      {message ? <Text style={[styles.formMessage, result?.imageUrl ? null : styles.errorText]}>{message}</Text> : null}
+      {message ? <Text style={[styles.formMessage, styles.customTryOnMessage, /ready|profile picture|generating|regenerating/i.test(message) ? null : styles.errorText]}>{message}</Text> : null}
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </ScrollView>
   );
@@ -4218,7 +4332,7 @@ function StyleBotScreen({
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.aiStudioScreen}>
-      <ProductTopBar onNavigate={onNavigate} />
+      <ProductTopBar onNavigate={onNavigate} user={user} />
       <ScrollView ref={scrollRef} contentContainerStyle={styles.aiStudioContent} {...screenScrollProps}>
         <View style={styles.aiConversationHeader}>
           <View style={styles.aiConversationIcon}>
@@ -4366,7 +4480,7 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
 
   return (
     <ScrollView style={styles.creditsScreen} contentContainerStyle={styles.creditsContent} {...screenScrollProps}>
-      <AppHeader onNavigate={onNavigate} compact />
+      <AppHeader onNavigate={onNavigate} user={user} compact />
 
       <View style={styles.creditsIntro}>
         <Text style={styles.creditsIntroTitle}>Atmospheric Intelligence Credits</Text>
@@ -4459,11 +4573,11 @@ function formatFileSize(value) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function WishlistScreen({ onNavigate, token, wishlistProducts = [] }) {
+function WishlistScreen({ onNavigate, token, wishlistProducts = [], user }) {
   const recommended = useProducts({ sort: 'newest', limit: 6 }, token);
   return (
     <ScrollView style={styles.wishlistScreen} contentContainerStyle={styles.wishlistContent} {...screenScrollProps}>
-      <AppHeader onNavigate={onNavigate} compact />
+      <AppHeader onNavigate={onNavigate} user={user} compact />
 
       <View style={styles.wishlistBody}>
         <Text style={styles.wishlistTitle}>My Wishlist <Text style={styles.wishlistCount}>({wishlistProducts.length})</Text></Text>
@@ -4567,13 +4681,13 @@ function WishlistProductCard({ product, onPress }) {
   );
 }
 
-function OrdersScreen({ onNavigate, token }) {
+function OrdersScreen({ onNavigate, token, user }) {
   const popular = useProducts({ limit: 4, sort: 'newest' }, token);
   const popularProducts = popular.products.slice(0, 4);
 
   return (
     <ScrollView style={styles.ordersScreen} contentContainerStyle={styles.ordersContent} {...screenScrollProps}>
-      <AppHeader onNavigate={onNavigate} compact />
+      <AppHeader onNavigate={onNavigate} user={user} compact />
       <View style={styles.ordersBody}>
         <Text style={styles.wishlistTitle}>My Orders</Text>
         <EmptyStateCard
@@ -4715,7 +4829,7 @@ function GenerationHistoryScreen({ user, setUser, setToken, token, onNavigate })
 
   return (
     <View style={styles.generationHistoryScreen}>
-      <AppHeader onNavigate={onNavigate} compact />
+      <AppHeader onNavigate={onNavigate} user={user} compact />
       <FlatList
         data={items}
         keyExtractor={(item) => item.id}
@@ -4786,6 +4900,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
   const avatarUri = userAvatarUrl(user);
   const previewUri = photo?.uri || (avatarUri ? imageUrl(avatarUri) : '');
   const photoSource = previewUri ? { uri: previewUri } : null;
+  const profilePhotoResizeMode = photo?.uri ? 'cover' : userAvatarResizeMode(user);
+  const profilePhotoImageStyle = profilePhotoResizeMode === 'cover' ? styles.profileFaceImage : null;
   const username = user.username || (user.email ? user.email.split('@')[0] : '');
   const displayName = user.name || username || 'Lookmefy member';
   const displayEmail = /@phone\.(?:fitlook|lookmefy)\.local$/i.test(user.email || '') ? '' : user.email;
@@ -4794,10 +4910,31 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
   const creditTotal = monthlyAllowance > 0 ? Math.max(monthlyAllowance, remainingCredits) : null;
   const creditProgress = `${creditTotal ? calculateCreditPercentage(remainingCredits, creditTotal) : 100}%`;
   const creditEvents = creditHistory.data?.events || [];
-  const portraitItems = [
-    photo?.uri ? { uri: photo.uri } : null,
-    user.bodyPhotoUrl ? { uri: imageUrl(user.bodyPhotoUrl) } : null
-  ].filter(Boolean);
+  const avatarPortraitUri = user.avatarPhotoUrl ? imageUrl(user.avatarPhotoUrl) : '';
+  const bodyPortraitUri = user.bodyPhotoUrl ? imageUrl(user.bodyPhotoUrl) : '';
+  const portraitSeen = new Set();
+  const portraitCards = [
+    photo?.uri ? { uri: photo.uri, label: 'New photo', resizeMode: 'cover' } : null,
+    bodyPortraitUri ? {
+      uri: bodyPortraitUri,
+      label: user.bodyPhotoSource === 'fal-full-body' ? 'Full-body' : user.bodyPhotoStatus === 'generating' ? 'Preparing' : 'Saved',
+      resizeMode: user.bodyPhotoSource === 'fal-full-body' ? 'contain' : 'cover'
+    } : null,
+    avatarPortraitUri ? { uri: avatarPortraitUri, label: 'Profile', resizeMode: 'cover' } : null
+  ].filter((item) => {
+    if (!item?.uri || portraitSeen.has(item.uri)) return false;
+    portraitSeen.add(item.uri);
+    return true;
+  });
+  const featuredPortrait = portraitCards[0] || null;
+  const portraitPhotoCount = portraitCards.length;
+
+  const chooseProfilePhoto = async () => {
+    const selected = await pickImage();
+    if (!selected) return;
+    setPhoto(selected);
+    setMessage('');
+  };
 
   const updatePhoto = async () => {
     if (!photo) {
@@ -4897,11 +5034,11 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
 
   return (
     <ScrollView ref={profileScrollRef} style={styles.profileScreen} contentContainerStyle={styles.profileContent} {...screenScrollProps}>
-      <AppHeader onNavigate={onNavigate} compact />
+      <AppHeader onNavigate={onNavigate} user={user} compact />
 
       <View style={styles.profileHero}>
-        <TouchableOpacity ref={profileAvatarTourTarget.ref} onLayout={profileAvatarTourTarget.onLayout} style={styles.profilePhotoWrap} onPress={async () => setPhoto(await pickImage())}>
-          {photoSource ? <ResilientImage source={photoSource} style={styles.profilePhoto} imageStyle={styles.profileFaceImage} resizeMode="cover" fallbackIcon="person-outline" /> : (
+        <TouchableOpacity ref={profileAvatarTourTarget.ref} onLayout={profileAvatarTourTarget.onLayout} style={styles.profilePhotoWrap} onPress={chooseProfilePhoto}>
+          {photoSource ? <ResilientImage source={photoSource} style={styles.profilePhoto} imageStyle={profilePhotoImageStyle} resizeMode={profilePhotoResizeMode} fallbackIcon="person-outline" /> : (
             <InitialsAvatar user={user} style={[styles.profilePhoto, styles.profileAvatarFallback]} textStyle={styles.profileAvatarInitials} />
           )}
           <View style={styles.profilePhotoAction}>
@@ -4969,20 +5106,33 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
       <View style={styles.profileSection}>
         <View style={styles.profileSectionHead}>
           <Text style={styles.profileSectionTitle}>Try-On Portraits</Text>
-          <Text style={styles.profilePhotoCount}>{portraitItems.length} Photo{portraitItems.length === 1 ? '' : 's'}</Text>
+          <Text style={styles.profilePhotoCount}>{portraitPhotoCount} Photo{portraitPhotoCount === 1 ? '' : 's'}</Text>
         </View>
-        <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.profilePortraitTrack}>
-          <TouchableOpacity style={styles.profileUploadPortrait} onPress={async () => setPhoto(await pickImage())}>
-            <Ionicons name="camera-outline" size={24} color="#7d7a79" />
+        <View style={styles.profilePortraitPanel}>
+          <Pressable style={styles.profilePortraitFeatured} onPress={() => featuredPortrait?.uri && setLightbox(featuredPortrait.uri)}>
+            {featuredPortrait?.uri ? (
+              <>
+                <ResilientImage source={{ uri: featuredPortrait.uri }} style={styles.profilePortraitFeaturedImage} resizeMode={featuredPortrait.resizeMode} fallbackIcon="person-outline" />
+                <View style={styles.profilePortraitBadge}>
+                  <Text style={styles.profilePortraitBadgeText} numberOfLines={1}>{featuredPortrait.label}</Text>
+                </View>
+              </>
+            ) : (
+              <View style={styles.profilePortraitEmpty}>
+                <Ionicons name="person-outline" size={24} color="#8d8682" />
+                <Text style={styles.profilePortraitEmptyText}>No photo yet</Text>
+              </View>
+            )}
+          </Pressable>
+          <TouchableOpacity style={styles.profileUploadPortraitLarge} onPress={chooseProfilePhoto}>
+            <View style={styles.profileUploadPortraitIcon}>
+              <Ionicons name="camera-outline" size={24} color="#7d7a79" />
+            </View>
             <Text style={styles.profileUploadPortraitText}>Upload New Photo</Text>
+            <Text style={styles.profileUploadPortraitHelp}>Use a clear full-body or portrait photo.</Text>
           </TouchableOpacity>
-          {portraitItems.slice(0, 3).map((source, index) => (
-            <Pressable key={index} style={styles.profilePortraitCard} onPress={() => source.uri && setLightbox(source.uri)}>
-              <ResilientImage source={source} style={styles.profilePortraitImage} resizeMode="cover" fallbackIcon="person-outline" />
-            </Pressable>
-          ))}
-        </ScrollView>
-        {!portraitItems.length ? <Text style={styles.profileInlineMessage}>Upload a portrait to start trying on outfits.</Text> : null}
+        </View>
+        {!portraitPhotoCount ? <Text style={styles.profileInlineMessage}>Upload a portrait to start trying on outfits.</Text> : null}
         {photo ? (
           <TouchableOpacity style={[styles.profileSavePhotoButton, loading && styles.disabledButton]} disabled={loading} onPress={updatePhoto}>
             <Text style={styles.profileSavePhotoText}>{loading ? 'Saving Photo...' : 'Save New Portrait'}</Text>
@@ -5578,6 +5728,15 @@ export default function App() {
     });
   }, [requestAuth, user]);
 
+  const refreshUser = useCallback(async (options = {}) => {
+    const data = await api('/auth/me', { timeoutMs: options.timeoutMs || 5000, noCache: true });
+    if (data?.user) {
+      setUser(data.user);
+      return data.user;
+    }
+    return null;
+  }, []);
+
   useEffect(() => {
     let alive = true;
     getToken()
@@ -5585,9 +5744,9 @@ export default function App() {
         if (!alive) return;
         setToken(storedToken);
         if (!storedToken) return;
-        const data = await api('/auth/me', { timeoutMs: 3500 });
+        const data = await api('/auth/me', { timeoutMs: 3500, noCache: true });
         if (!alive) return;
-        setUser(data.user);
+        if (data?.user) setUser(data.user);
         setRouteStack((current) => (current.length === 1 && current[0]?.name === 'auth' ? [normalizeRoute('home')] : current));
       })
       .catch(() => {})
@@ -5605,14 +5764,11 @@ export default function App() {
   useEffect(() => {
     if (user?.bodyPhotoStatus !== 'generating') return undefined;
     const timer = setInterval(() => {
-      api('/auth/me')
-        .then((data) => {
-          if (data.user) setUser(data.user);
-        })
+      refreshUser()
         .catch(() => {});
     }, 7000);
     return () => clearInterval(timer);
-  }, [user?.bodyPhotoStatus]);
+  }, [refreshUser, user?.bodyPhotoStatus]);
 
   useEffect(() => {
     const nextOwnerKey = user ? String(user.id || user._id || user.phone || user.username || 'user') : '';
@@ -5722,7 +5878,7 @@ export default function App() {
       case 'closet':
         return <ClosetScreen initial={routeParams} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
       case 'custom':
-        return <CustomTryOnScreen user={user} setUser={setUser} setToken={setToken} onNavigate={guardedNavigate} />;
+        return <CustomTryOnScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} refreshUser={refreshUser} />;
       case 'stylebot':
         return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
       case 'tokens':
@@ -5732,9 +5888,9 @@ export default function App() {
       case 'generation-history':
         return user ? <GenerationHistoryScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'wishlist':
-        return user ? <WishlistScreen onNavigate={guardedNavigate} token={token} wishlistProducts={wishlistProducts} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <WishlistScreen onNavigate={guardedNavigate} token={token} wishlistProducts={wishlistProducts} user={user} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'orders':
-        return user ? <OrdersScreen onNavigate={guardedNavigate} token={token} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <OrdersScreen onNavigate={guardedNavigate} token={token} user={user} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'product':
         return routeParams.id ? <ProductScreen id={routeParams.id} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onRequireAuth={requestAuth} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onRequireAuth={requestAuth} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'signup':
@@ -5748,7 +5904,7 @@ export default function App() {
       default:
         return <InfoScreen page="missing" user={user} onNavigate={navigate} />;
     }
-  }, [currentRoute.name, routeParamsKey, user, token, navigate, guardedNavigate, requestAuth, addToWishlist, wishlistIds, wishlistProducts, registerTourTarget, tourFocusRequest, aiStudioMessages, aiStudioTryOns, aiStudioTryOnErrors]);
+  }, [currentRoute.name, routeParamsKey, user, token, navigate, guardedNavigate, requestAuth, addToWishlist, wishlistIds, wishlistProducts, registerTourTarget, tourFocusRequest, aiStudioMessages, aiStudioTryOns, aiStudioTryOnErrors, refreshUser]);
 
   if (!ready || (!fontsLoaded && !fontLoadError)) {
     return (
@@ -5782,7 +5938,7 @@ export default function App() {
   return (
     <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe]}>
       <StatusBar style={welcomeRoute ? 'light' : 'dark'} />
-      {authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : <AppHeader onNavigate={guardedNavigate} compact />}
+      {authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : <AppHeader onNavigate={guardedNavigate} user={user} compact />}
       <View style={styles.content}>
         <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
           {screen}
@@ -5914,14 +6070,14 @@ const styles = StyleSheet.create({
     zIndex: 10
   },
   appHeaderAction: {
-    width: 42,
+    width: 40,
     height: 42,
     borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center'
   },
   appHeaderSide: {
-    width: 126,
+    width: 168,
     minHeight: 42,
     flexDirection: 'row',
     alignItems: 'center'
@@ -5994,9 +6150,9 @@ const styles = StyleSheet.create({
     color: '#ffffff'
   },
   appHeaderAvatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17
+    width: 32,
+    height: 32,
+    borderRadius: 16
   },
   appHeaderAvatarInitials: {
     fontSize: 12,
@@ -10768,6 +10924,249 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     gap: 10
   },
+  customTryOnScreen: {
+    flex: 1,
+    backgroundColor: '#fbf7f6'
+  },
+  customTryOnContent: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 18
+  },
+  customHeroPanel: {
+    padding: 18,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fffdfb',
+    shadowColor: '#2a211d',
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
+    gap: 10
+  },
+  customHeroMetaRow: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  customTokenPill: {
+    minHeight: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fbf7f6',
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5
+  },
+  customTokenText: {
+    ...typography.caption,
+    color: '#5d5754',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '800'
+  },
+  customUploadRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    gap: 12
+  },
+  customProfileCard: {
+    width: 116,
+    height: 232,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fffdfb',
+    overflow: 'hidden'
+  },
+  customProfileImage: {
+    width: '100%',
+    height: '100%'
+  },
+  customProfileEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    backgroundColor: '#f2ece9'
+  },
+  customProfileEmptyText: {
+    ...typography.caption,
+    marginTop: 8,
+    color: '#77716f',
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700'
+  },
+  customProfileCaption: {
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    bottom: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 253, 251, 0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 7
+  },
+  customProfileLabel: {
+    ...typography.caption,
+    color: '#2b2321',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '800'
+  },
+  customProfileSub: {
+    ...typography.caption,
+    marginTop: 2,
+    color: '#77716f',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase'
+  },
+  customGarmentDrop: {
+    flex: 1,
+    minWidth: 0,
+    height: 232,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#cdbbb5',
+    backgroundColor: '#fffdfb',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  customGarmentDropReady: {
+    borderStyle: 'solid',
+    borderColor: '#9b5658'
+  },
+  customGarmentCopy: {
+    alignItems: 'center',
+    paddingHorizontal: 18
+  },
+  customGarmentIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#fff5f3',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  customGarmentTitle: {
+    ...typography.productTitle,
+    marginTop: 13,
+    color: '#2b2321',
+    textAlign: 'center',
+    fontWeight: '800'
+  },
+  customGarmentHelp: {
+    ...typography.caption,
+    marginTop: 6,
+    color: '#6d625e',
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600'
+  },
+  customGarmentImage: {
+    width: '100%',
+    height: '100%'
+  },
+  customGarmentOverlay: {
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    bottom: 10,
+    minHeight: 38,
+    borderRadius: 8,
+    backgroundColor: 'rgba(17, 17, 17, 0.74)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7
+  },
+  customGarmentOverlayText: {
+    ...typography.caption,
+    color: '#ffffff',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800'
+  },
+  customResultCard: {
+    marginTop: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fffdfb',
+    overflow: 'hidden'
+  },
+  customResultHead: {
+    minHeight: 62,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  customResultTitle: {
+    ...typography.productTitle,
+    color: '#2b2321',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '800'
+  },
+  customResultSub: {
+    ...typography.caption,
+    marginTop: 2,
+    color: '#77716f',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600'
+  },
+  customResultOpen: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#f5efec',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  customResultFrame: {
+    minHeight: 368,
+    backgroundColor: '#f2ece9',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  customResultImage: {
+    width: '100%',
+    height: 368
+  },
+  customResultState: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 20
+  },
+  customResultStateOverlay: {
+    backgroundColor: 'rgba(251, 247, 246, 0.72)'
+  },
+  customTryOnMessage: {
+    marginTop: 12,
+    textAlign: 'center'
+  },
+  customAiPreviewNote: {
+    marginHorizontal: 0
+  },
   tryOnPair: {
     paddingHorizontal: 16,
     flexDirection: 'row',
@@ -10810,7 +11209,6 @@ const styles = StyleSheet.create({
   },
   customModelPanel: {
     marginTop: 14,
-    marginHorizontal: 16,
     gap: 10
   },
   customModelTitle: {
@@ -10855,7 +11253,8 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   customGenerateButton: {
-    marginTop: 16
+    marginTop: 16,
+    width: '100%'
   },
   debugText: {
     marginHorizontal: 16,
@@ -12030,39 +12429,96 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700'
   },
-  profilePortraitTrack: {
-    paddingTop: 18,
-    gap: 12,
-    paddingRight: 24
+  profilePortraitPanel: {
+    marginTop: 18,
+    flexDirection: 'row',
+    gap: 12
   },
-  profileUploadPortrait: {
-    width: 96,
-    height: 124,
+  profilePortraitFeatured: {
+    width: 122,
+    height: 172,
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#eee8e3'
+  },
+  profilePortraitFeaturedImage: {
+    width: '100%',
+    height: '100%'
+  },
+  profilePortraitBadge: {
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    bottom: 8,
     borderRadius: 8,
+    backgroundColor: 'rgba(255, 253, 251, 0.9)',
+    paddingHorizontal: 8,
+    paddingVertical: 6
+  },
+  profilePortraitBadgeText: {
+    ...typography.caption,
+    color: '#2b2321',
+    textAlign: 'center',
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '800',
+    textTransform: 'uppercase'
+  },
+  profilePortraitEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    backgroundColor: '#f2ece9'
+  },
+  profilePortraitEmptyText: {
+    ...typography.caption,
+    marginTop: 8,
+    color: '#77716f',
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700'
+  },
+  profileUploadPortraitLarge: {
+    flex: 1,
+    minWidth: 0,
+    height: 172,
+    borderRadius: 10,
     borderWidth: 1.5,
     borderStyle: 'dashed',
     borderColor: '#c6c4c2',
+    backgroundColor: '#fffdfb',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 7
+    gap: 8,
+    paddingHorizontal: 16
+  },
+  profileUploadPortraitIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#f5efec',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   profileUploadPortraitText: {
     ...typography.caption,
     color: '#77716f',
     textAlign: 'center',
-    fontSize: 10,
-    fontWeight: '700'
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800'
   },
-  profilePortraitCard: {
-    width: 96,
-    height: 124,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#eee8e3'
-  },
-  profilePortraitImage: {
-    width: '100%',
-    height: '100%'
+  profileUploadPortraitHelp: {
+    ...typography.caption,
+    color: '#8d8682',
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600'
   },
   profileSavePhotoButton: {
     marginTop: 14,

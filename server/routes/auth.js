@@ -396,6 +396,51 @@ function sign(user) {
   return jwt.sign({ sub: user._id.toString() }, process.env.JWT_SECRET, { expiresIn: '14d' });
 }
 
+function disableResponseCache(res) {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Surrogate-Control': 'no-store'
+  });
+}
+
+function customTryOnAvatarId(photo) {
+  if (photo?.source !== 'custom-try-on') return '';
+  const match = String(photo.path || photo.url || '').match(/\/?api\/tryons\/image\/custom\/([^/?#]+)/i);
+  return match?.[1] || '';
+}
+
+async function reconcileCustomTryOnAvatar(user) {
+  const customAvatarId = customTryOnAvatarId(user.avatarPhoto);
+  if (!customAvatarId) return;
+  if (!/^[a-f\d]{24}$/i.test(customAvatarId)) return;
+  const tryOn = await CustomTryOn.findOne({ _id: customAvatarId, user: user._id }).select('image');
+  const image = tryOn?.image;
+  if (!image?.path && !image?.url) {
+    user.avatarPhoto = undefined;
+    await user.save();
+    return;
+  }
+  if (image.storage === 'remote-pending') {
+    if (image.sourceUrl) return;
+    user.avatarPhoto = undefined;
+    await user.save();
+    return;
+  }
+  user.avatarPhoto = {
+    filename: image.filename,
+    path: image.path,
+    url: image.url,
+    storage: image.storage,
+    mimetype: image.mimetype,
+    size: image.size,
+    source: 'custom-try-on',
+    uploadedAt: user.avatarPhoto?.uploadedAt || new Date()
+  };
+  await user.save();
+}
+
 function normalizeUsername(value = '') {
   return String(value)
     .trim()
@@ -837,7 +882,9 @@ router.post('/login', async (req, res) => {
   res.json({ token: sign(user), user: user.toClient() });
 });
 
-router.get('/me', requireUser, (req, res) => {
+router.get('/me', requireUser, async (req, res) => {
+  disableResponseCache(res);
+  await reconcileCustomTryOnAvatar(req.user);
   res.json({ user: req.user.toClient() });
 });
 

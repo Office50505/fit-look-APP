@@ -96,6 +96,7 @@ userSchema.methods.toClient = function toClient() {
     devMode: Boolean(this.devMode),
     joinedAt: this.createdAt,
     avatarPhotoUrl,
+    avatarPhotoSource: this.avatarPhoto?.source || '',
     bodyPhotoUrl,
     bodyPhotoStatus: this.bodyPhoto?.status || 'uploaded',
     bodyPhotoSource: this.bodyPhoto?.source || 'upload',

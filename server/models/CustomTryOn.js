@@ -33,10 +33,15 @@ const customTryOnSchema = new mongoose.Schema(
 
 customTryOnSchema.index({ user: 1, createdAt: -1 });
 
+function customTryOnImageUrl(image) {
+  if (image?.storage === 'remote-pending' && !image.sourceUrl) return '';
+  return storedFileToClientUrl(image);
+}
+
 customTryOnSchema.methods.toClient = function toClient() {
   return {
     id: this._id.toString(),
-    imageUrl: storedFileToClientUrl(this.image),
+    imageUrl: customTryOnImageUrl(this.image),
     garmentUrl: storedFileToClientUrl(this.garment),
     provider: this.provider,
     model: this.model,

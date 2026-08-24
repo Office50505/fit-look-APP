@@ -1705,6 +1705,11 @@ function storedOrRemoteImageUrl(image) {
   return storedFileToClientUrl(image) || image?.remoteUrl || image?.sourceUrl || image?.url || '';
 }
 
+function generatedTryOnImageUrl(image) {
+  if (image?.storage === 'remote-pending' && !image.sourceUrl) return '';
+  return storedFileToClientUrl(image);
+}
+
 function historyDate(record) {
   return record?.updatedAt || record?.createdAt || new Date();
 }
@@ -1722,7 +1727,7 @@ function productHistoryItem(tryOn) {
     label: tryOn.video?.url || tryOn.video?.path ? 'Video Try-On' : 'AI Try-On',
     title: productName,
     subtitle: productBrand || 'Catalog product',
-    imageUrl: storedFileToClientUrl(tryOn.image),
+    imageUrl: generatedTryOnImageUrl(tryOn.image),
     videoUrl: storedFileToClientUrl(tryOn.video),
     sourceImageUrl: productImageUrl,
     productId,
@@ -1750,7 +1755,7 @@ function customHistoryItem(tryOn) {
     label: 'Custom Try-On',
     title: tryOn.garment?.filename || 'Uploaded garment',
     subtitle: 'Custom upload',
-    imageUrl: storedFileToClientUrl(tryOn.image),
+    imageUrl: generatedTryOnImageUrl(tryOn.image),
     sourceImageUrl: storedFileToClientUrl(tryOn.garment),
     provider: tryOn.provider,
     model: tryOn.model,
@@ -1768,7 +1773,7 @@ function externalHistoryItem(tryOn) {
     label: 'AI Try-On',
     title: productName,
     subtitle: tryOn.brand || 'External product',
-    imageUrl: storedFileToClientUrl(tryOn.image),
+    imageUrl: generatedTryOnImageUrl(tryOn.image),
     sourceImageUrl: tryOn.imageUrl || '',
     sourceUrl: tryOn.sourceUrl,
     affiliateLink: tryOn.affiliateLink,
@@ -2412,6 +2417,22 @@ router.get('/credit-history', requireUser, async (req, res) => {
     .limit(limit)
     .lean();
   res.json({ events: events.map(creditEventToClient) });
+});
+
+router.get('/custom/latest', requireUser, async (req, res) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Surrogate-Control': 'no-store'
+  });
+  const tryOns = await CustomTryOn.find({ user: req.user._id })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(10);
+  const latest = tryOns
+    .map((tryOn) => tryOn.toClient())
+    .find((tryOn) => Boolean(tryOn.imageUrl));
+  res.json({ tryOn: latest || null });
 });
 
 router.get('/image/:scope/:id', async (req, res) => {
