@@ -69,8 +69,14 @@ userSchema.index({ 'subscription.status': 1, 'subscription.currentPeriodEnd': 1 
 
 userSchema.methods.toClient = function toClient() {
   const bodyPhotoUrl = storedFileToClientUrl(this.bodyPhoto);
-  const avatarPhotoUrl = storedFileToClientUrl(this.avatarPhoto)
-    || (this.bodyPhoto?.source === 'fal-full-body' ? '' : bodyPhotoUrl);
+  const storedAvatarPhotoUrl = storedFileToClientUrl(this.avatarPhoto);
+  const bodyPhotoIsFullBody = this.bodyPhoto?.source === 'fal-full-body';
+  const avatarPhotoIsCustomTryOn = this.avatarPhoto?.source === 'custom-try-on';
+  const avatarPhotoUrl = avatarPhotoIsCustomTryOn
+    ? storedAvatarPhotoUrl || bodyPhotoUrl
+    : bodyPhotoIsFullBody
+      ? bodyPhotoUrl || storedAvatarPhotoUrl
+      : storedAvatarPhotoUrl || bodyPhotoUrl;
 
   return {
     id: this._id.toString(),

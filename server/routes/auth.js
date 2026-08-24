@@ -357,10 +357,20 @@ async function generateFullBodyProfileInBackground(userId, sourceBodyPhoto, { en
         source: 'fal-full-body',
         generatedAt: new Date()
       };
+      const generatedAvatarPhoto = {
+        filename: stored.filename,
+        path: stored.path,
+        url: stored.url,
+        storage: stored.storage,
+        mimetype: stored.mimetype,
+        size: stored.size,
+        source: 'fal-full-body',
+        uploadedAt: new Date()
+      };
 
       const updated = await User.findOneAndUpdate(
         { _id: userId, 'bodyPhoto.path': sourceBodyPhoto.path },
-        { $set: { bodyPhoto: generatedBodyPhoto } },
+        { $set: { bodyPhoto: generatedBodyPhoto, avatarPhoto: generatedAvatarPhoto } },
         { new: true }
       );
 

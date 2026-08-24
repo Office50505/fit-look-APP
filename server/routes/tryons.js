@@ -2440,6 +2440,18 @@ router.post('/custom', requireUser, upload.single('garment'), async (req, res) =
       garmentFile,
       timer
     });
+    const generatedAvatarPhoto = {
+      filename: tryOn.image?.filename,
+      path: tryOn.image?.path,
+      url: tryOn.image?.url,
+      storage: tryOn.image?.storage,
+      mimetype: tryOn.image?.mimetype,
+      size: tryOn.image?.size,
+      source: 'custom-try-on',
+      uploadedAt: new Date()
+    };
+    req.user.avatarPhoto = generatedAvatarPhoto;
+    await req.user.save();
     await recordCreditEvent({
       user: req.user,
       action: 'Custom try-on',
