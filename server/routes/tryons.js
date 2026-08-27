@@ -2007,6 +2007,35 @@ async function saveGeneratedExternalTryOn({ user, product, timer }) {
   return tryOn.save();
 }
 
+async function replaceGeneratedExternalTryOn({ user, product, timer }) {
+  const generated = await callPrunaTryOn({ user, product, timer });
+  const filename = `tryon-external-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
+  const tryOn = await ExternalTryOn.findOne({ user: user._id, sourceUrl: product.sourceUrl }) || new ExternalTryOn({
+    user: user._id,
+    sourceUrl: product.sourceUrl
+  });
+  tryOn.affiliateLink = product.affiliateLink;
+  tryOn.productName = product.name;
+  tryOn.brand = product.brand;
+  tryOn.category = product.category;
+  tryOn.imageUrl = product.imageUrl;
+  tryOn.provider = generated.provider || 'pruna';
+  tryOn.model = generated.model;
+  tryOn.quality = generated.quality;
+  tryOn.prompt = generated.prompt;
+  tryOn.tokenCost = chargedTokenCost(user);
+  tryOn.image = await generatedImageForResponse({
+    user,
+    generated,
+    filename,
+    scope: 'external',
+    id: tryOn._id,
+    timer
+  });
+  timer?.mark('external try-on replacement ready', { path: tryOn.image.path, storage: tryOn.image.storage });
+  return tryOn.save();
+}
+
 async function normalizeMemoryImageFile(file, label, timer) {
   if (!file?.buffer) return file;
   const normalized = await normalizeAvifImage({
@@ -2259,16 +2288,18 @@ async function externalTryOnService({ userId, body = {} }) {
   const genderMatch = genderCompatibility(product, user.genderPreference);
   if (!genderMatch.compatible) throw httpError(400, genderMatch.reason);
 
+  const forceGenerate = Boolean(body?.force || body?.refresh);
   const timer = createTimer('external', {
     userId: user._id.toString(),
-    sourceUrl: product.sourceUrl
+    sourceUrl: product.sourceUrl,
+    forceGenerate
   });
   let reserved = false;
   let workingUser = user;
 
   try {
     const existing = await ExternalTryOn.findOne({ user: workingUser._id, sourceUrl: product.sourceUrl });
-    if (existing) {
+    if (existing && !forceGenerate) {
       timer.end({ reused: true });
       return { statusCode: 200, body: { tryOn: existing.toClient(), user: workingUser.toClient(), reused: true } };
     }
@@ -2279,10 +2310,12 @@ async function externalTryOnService({ userId, body = {} }) {
     reserved = true;
     workingUser = chargedUser;
 
-    const tryOn = await saveGeneratedExternalTryOn({ user: workingUser, product, timer });
+    const tryOn = forceGenerate
+      ? await replaceGeneratedExternalTryOn({ user: workingUser, product, timer })
+      : await saveGeneratedExternalTryOn({ user: workingUser, product, timer });
     await recordCreditEvent({
       user: workingUser,
-      action: 'External try-on',
+      action: forceGenerate ? 'Regenerated external try-on' : 'External try-on',
       product,
       tokens: chargedTokenCost(workingUser),
       balanceAfter: workingUser.tokens,
@@ -2544,8 +2577,8 @@ router.post('/external', requireUser, async (req, res) => {
       req,
       res,
       type: 'tryon-external',
-      key: `${req.user._id}:${String(req.body?.product?.sourceUrl || req.body?.product?.affiliateLink || '').trim()}`,
-      payload: { body: { product: req.body?.product } },
+      key: `${req.user._id}:${String(req.body?.product?.sourceUrl || req.body?.product?.affiliateLink || '').trim()}:${Boolean(req.body?.force || req.body?.refresh) ? 'force' : 'cached'}`,
+      payload: { body: { product: req.body?.product, force: req.body?.force, refresh: req.body?.refresh } },
       maxAttempts: 1,
       priority: 5,
       runInline: async () => externalTryOnService({ userId: req.user._id, body: req.body })

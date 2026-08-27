@@ -2352,11 +2352,14 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
     setTryOnLoading(true);
     setTryOnError('');
     try {
+      const regenerate = Boolean(tryOn?.imageUrl);
       const data = await api(`/tryons/${state.product.id}`, {
         method: 'POST',
+        body: regenerate ? JSON.stringify({ force: true }) : undefined,
         timeoutMs: 180000
       });
       setTryOn(data.tryOn);
+      if (regenerate && data.reused) setTryOnError('Existing try-on was reused. Restart the backend with the latest code, then try again.');
       if (data.user) setUser(data.user);
     } catch (error) {
       setTryOnError(error.message);
@@ -2379,11 +2382,14 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
     setTryOnVideoLoading(true);
     setTryOnVideoError('');
     try {
+      const regenerate = Boolean(tryOn?.videoUrl);
       const data = await api(`/tryons/${state.product.id}/video`, {
         method: 'POST',
+        body: regenerate ? JSON.stringify({ force: true }) : undefined,
         timeoutMs: 180000
       });
       setTryOn(data.tryOn);
+      if (regenerate && data.reused) setTryOnVideoError('Existing video was reused. Restart the backend with the latest code, then try again.');
       if (data.user) setUser(data.user);
     } catch (error) {
       setTryOnVideoError(error.message);
@@ -2518,13 +2524,13 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
         <View style={styles.productActionRow}>
           <ProductActionButton label="Shop" icon="bag-handle-outline" active onPress={openShop} />
           <ProductActionButton
-            label={tryOnLoading ? 'Trying...' : 'Try On'}
+            label={tryOnLoading ? 'Trying...' : tryOn?.imageUrl ? 'Again' : 'Try On'}
             icon="sparkles-outline"
             disabled={tryOnLoading}
             onPress={generate}
           />
           <ProductActionButton
-            label={tryOnVideoLoading ? 'Video...' : 'Video'}
+            label={tryOnVideoLoading ? 'Video...' : tryOn?.videoUrl ? 'New Video' : 'Video'}
             icon="play-circle-outline"
             disabled={tryOnLoading || tryOnVideoLoading || !tryOn?.imageUrl}
             onPress={generateVideo}
@@ -4610,12 +4616,16 @@ function StyleBotScreen({
     setChatTryOnErrors((current) => ({ ...current, [key]: '' }));
     try {
       const isExternalProduct = Boolean(product.external || product.sourceUrl || product.affiliateLink);
+      const regenerate = Boolean(chatTryOns[key]?.imageUrl);
       const data = await api(isExternalProduct ? '/tryons/external' : `/tryons/${product.id}`, {
         method: 'POST',
         timeoutMs: 180000,
-        body: JSON.stringify(isExternalProduct ? { product } : {})
+        body: JSON.stringify(isExternalProduct ? { product, force: regenerate } : { force: regenerate })
       });
       setChatTryOns((current) => ({ ...current, [key]: data.tryOn }));
+      if (regenerate && data.reused) {
+        setChatTryOnErrors((current) => ({ ...current, [key]: 'Existing try-on was reused. Restart the backend with the latest code, then try again.' }));
+      }
       if (data.user) setUser(data.user);
     } catch (error) {
       setChatTryOnErrors((current) => ({ ...current, [key]: error.message || 'Could not generate try-on.' }));
