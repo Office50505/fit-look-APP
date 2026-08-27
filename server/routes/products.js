@@ -431,7 +431,8 @@ function hostBrand(url) {
 const categoryRules = [
   ['ethnic wear', /\b(sarees?|saris?|lehenga(?:s)?|dupatta(?:s)?|kurta(?:s)?|kurtis?|salwar(?:s)?|churidar(?:s)?|anarkali|palazzo(?:s)?|ethnic|traditional|sharara(?:s)?)\b/i, 28],
   ['eyewear', /\b(sun\s*glasses|sunglasses|eye\s*glasses|eyeglasses|glasses|spectacles?|optical\s*frames?|frames?|lenses?|goggles?|aviator|wayfarer)\b/i, 30],
-  ['innerwear', /\b(underwear|briefs?|boxers?|trunks?|vests?|innerwear|lingerie|bras?|bralettes?|sports?\s+bras?|pant(?:y|ies)|camisoles?|shapewear|bikinis?|swimsuits?|swimwear|monokinis?|tankinis?)\b/i, 30],
+  ['costumes', /\b(halloween|costumes?|cosplay|fancy\s*dress)\b/i, 30],
+  ['innerwear', /\b(underwear|undergarments?|undegarments?|briefs?|boxers?|trunks?|vests?|innerwear|lingerie|bras?|bralettes?|sports?\s+bras?|pant(?:y|ies)|camisoles?|shapewear|bikinis?|swimsuits?|swimwear|monokinis?|tankinis?)\b/i, 30],
   ['sleepwear', /\b(night(?:y|ie|wear|gown|suit|dress)|sleepwear|pajamas?|pyjamas?|loungewear|robe)\b/i, 26],
   ['dresses', /\b(dresses?|gowns?|bodycon|maxi|midi|mini\s*dress|a-line\s*dress|wrap\s*dress|party\s*dress)\b/i, 24],
   ['skirts', /\b(skirts?|skorts?)\b/i, 24],
@@ -811,13 +812,16 @@ function imageFromAmazonRegion(region = '', baseUrl = '') {
 function titleFromAmazonRegion(region = '') {
   const h2 = region.match(/<h2[\s\S]*?<\/h2>/i)?.[0] || '';
   const aria = firstAttr(h2, ['aria-label', 'title']);
-  const span = h2.match(/<span[^>]*>([\s\S]*?)<\/span>/i)?.[1];
-  const title =
+  const spanTitles = [...h2.matchAll(/<span[^>]*>([\s\S]*?)<\/span>/gi)]
+    .map((match) => stripTags(match[1]))
+    .filter((text) => text && text.length > 2);
+  const title = [
     aria ||
-    span ||
-    region.match(/<span[^>]+class=["'][^"']*a-size-base-plus[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ||
-    region.match(/<span[^>]+class=["'][^"']*a-size-medium[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] ||
-    '';
+    '',
+    ...spanTitles,
+    stripTags(region.match(/<span[^>]+class=["'][^"']*a-size-base-plus[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] || ''),
+    stripTags(region.match(/<span[^>]+class=["'][^"']*a-size-medium[^"']*["'][^>]*>([\s\S]*?)<\/span>/i)?.[1] || '')
+  ].filter(Boolean).sort((a, b) => b.length - a.length)[0] || '';
   return normalizeProductTitle(stripTags(title));
 }
 
@@ -918,6 +922,7 @@ function amazonSearchBaseUrl() {
 
 function normalizeProductTitle(value = '') {
   return decodeHtml(value)
+    .replace(/^sponsored\s+ad\s*[-:]\s*/i, '')
     .replace(/^amazon\.[a-z.]+\s*:\s*/i, '')
     .replace(/\s*:\s*(?:clothing|shoes|fashion|electronics|home\s*&?\s*kitchen).*$/i, '')
     .replace(/\s+[|–-]\s+(?:amazon\.[a-z.]+|buy online|online shopping).*$/i, '')
@@ -1057,10 +1062,28 @@ function queryIntentCompatibility(product = {}, query = '') {
   const text = textForIntent(product);
   const braIntent = /\b(bras?|bralettes?|sports?\s+bras?)\b/i.test(prompt);
   const swimIntent = /\b(bikinis?|swimsuits?|swimwear|monokinis?|one\s*piece\s+swimsuits?)\b/i.test(prompt);
+  const kurtaIntent = /\b(kurtas?|kurtis?)\b/i.test(prompt);
+  const ethnicIntent = /\b(ethnic|sarees?|saris?|lehengas?|salwars?|anarkali|churidar|sharara)\b/i.test(prompt);
+  const shoeIntent = /\b(shoes?|sneakers?|loafers?|heels?|sandals?|boots?|footwear)\b/i.test(prompt);
 
   if (braIntent && !/\b(bras?|bralettes?|sports?\s+bras?|lingerie)\b/i.test(text)) return false;
   if (swimIntent && !/\b(bikinis?|swimsuits?|swimwear|monokinis?|tankinis?|one\s*piece)\b/i.test(text)) return false;
+  if (kurtaIntent && !/\b(kurtas?|kurtis?)\b/i.test(text)) return false;
+  if (ethnicIntent && !/\b(kurtas?|kurtis?|ethnic|sarees?|saris?|lehengas?|salwars?|anarkali|churidar|sharara)\b/i.test(text)) return false;
+  if (shoeIntent && !/\b(shoes?|sneakers?|loafers?|heels?|sandals?|boots?|footwear)\b/i.test(text)) return false;
   return true;
+}
+
+function hasUsableProductTitle(product = {}, query = '') {
+  const name = normalizeProductTitle(product.name || '');
+  if (!name) return false;
+  if (normalizeProductTitle(query).toLowerCase() === name.toLowerCase()) return false;
+  if (cleanBrand(name).toLowerCase() === cleanBrand(product.brand || '').toLowerCase()) return false;
+  const tokens = name.toLowerCase().match(/[a-z0-9]+/g) || [];
+  const productSignal = /\b(dresses?|shirts?|tops?|tees?|sweaters?|hoodies?|jackets?|jeans|pants?|trousers?|skirts?|shoes?|sneakers?|sandals?|heels?|boots?|footwear|bags?|watches?|bras?|lingerie|underwear|bikinis?|swimsuits?|costumes?|caps?|hats?|kurtas?|kurtis?|sarees?|saris?|lehengas?|salwars?)\b/i;
+  if (!productSignal.test(name)) return false;
+  if (tokens.length >= 3) return true;
+  return productSignal.test(name);
 }
 
 function requireAdmin(req, res, next) {
@@ -1138,13 +1161,15 @@ router.get('/', async (req, res) => {
   res.json(payload);
 });
 
-export async function searchAmazonProductsForQuery({ query: rawQuery, limit: rawLimit = 2, user, genderPreference: rawGenderPreference } = {}) {
+export async function searchAmazonProductsForQuery({ query: rawQuery, limit: rawLimit = 2, user, genderPreference: rawGenderPreference, fast = false, timeoutMs: rawTimeoutMs } = {}) {
   const query = String(rawQuery || '').trim();
-  const limit = Math.min(Math.max(Number(rawLimit) || 2, 1), 4);
+  const limit = Math.min(Math.max(Number(rawLimit) || 2, 1), 12);
+  const fastMode = Boolean(fast);
+  const timeoutMs = Math.max(1000, Number(rawTimeoutMs) || Number(process.env.AMAZON_SEARCH_TIMEOUT_MS) || 15000);
   const genderPreference = genderPreferenceForQuery(query, rawGenderPreference || user?.genderPreference);
   if (!query) throw new Error('Tell AI Studio what you want first');
   const baseUrl = amazonSearchBaseUrl();
-  const cacheKey = JSON.stringify({ baseUrl, query: query.toLowerCase(), genderPreference, limit });
+  const cacheKey = JSON.stringify({ baseUrl, query: query.toLowerCase(), genderPreference, limit, fastMode });
   const cached = await amazonSearchCache.get(cacheKey);
   if (cached) return cached;
 
@@ -1153,14 +1178,25 @@ export async function searchAmazonProductsForQuery({ query: rawQuery, limit: raw
 
   const searchQuery = genderedSearchQuery(query, genderPreference);
   const searchUrl = `${baseUrl}/s?k=${encodeURIComponent(searchQuery)}`;
-  const response = await fetch(searchUrl, {
-    redirect: 'follow',
-    headers: {
-      accept: 'text/html,application/xhtml+xml',
-      'accept-language': 'en-US,en;q=0.9',
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-    }
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(searchUrl, {
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        accept: 'text/html,application/xhtml+xml',
+        'accept-language': 'en-US,en;q=0.9',
+        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+      }
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('Amazon search timed out');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) throw new Error('Amazon search did not respond');
 
   const html = await response.text();
@@ -1169,10 +1205,11 @@ export async function searchAmazonProductsForQuery({ query: rawQuery, limit: raw
   const exposesProductMarkup = /\bdata-asin=["'][A-Z0-9]{10}["']|\/(?:dp|gp\/product)\/[A-Z0-9]{10}|class=["'][^"']*s-image/i.test(html);
   if (!exposesProductMarkup) throw new Error('Amazon did not expose product result HTML for this search');
 
-  const searchResults = extractAmazonSearchResults(html, response.url || searchUrl).slice(0, Math.max(limit * 3, 8));
+  const searchResults = extractAmazonSearchResults(html, response.url || searchUrl).slice(0, fastMode ? Math.max(limit * 2, 6) : Math.max(limit * 3, 8));
   if (searchResults.length === 0) throw new Error('No usable Amazon product cards were found for that search');
 
   const settled = await Promise.allSettled(searchResults.map(async (searchResult) => {
+    if (fastMode) return draftToExternalProduct(draftFromAmazonSearchResult(searchResult, query), query);
     try {
       const draft = await buildProductDraft(withAmazonAssociateTag(searchResult.link));
       return draftToExternalProduct({
@@ -1189,6 +1226,7 @@ export async function searchAmazonProductsForQuery({ query: rawQuery, limit: raw
   for (const result of settled) {
     if (result.status !== 'fulfilled') continue;
     if (products.some((product) => product.sourceUrl === result.value.sourceUrl)) continue;
+    if (!hasUsableProductTitle(result.value, query)) continue;
     if (!queryIntentCompatibility(result.value, query)) continue;
     if (!wearableCompatibility(result.value, { query }).compatible) continue;
     if (!genderCompatibility(result.value, genderPreference).compatible) continue;
