@@ -186,17 +186,30 @@ function wanImageToImageModel() {
   return process.env.FAL_WAN_IMAGE_TO_IMAGE_MODEL || 'wan/v2.6/image-to-image';
 }
 
-function pixverseImageToVideoModel() {
-  return process.env.FAL_TRYON_VIDEO_MODEL || 'fal-ai/pixverse/v6/image-to-video';
+function prunaVideoModel() {
+  return process.env.PRUNA_VIDEO_MODEL || process.env.PRUNA_TRYON_VIDEO_MODEL || 'p-video';
 }
 
-function pixverseImageToVideoResolution() {
-  return process.env.FAL_TRYON_VIDEO_RESOLUTION || '540p';
+function prunaVideoResolution() {
+  return process.env.PRUNA_VIDEO_RESOLUTION || process.env.PRUNA_TRYON_VIDEO_RESOLUTION || '720p';
 }
 
-function pixverseImageToVideoDuration() {
-  const value = Number(process.env.FAL_TRYON_VIDEO_DURATION || 5);
+function prunaVideoDuration() {
+  const value = Number(process.env.PRUNA_VIDEO_DURATION || process.env.PRUNA_TRYON_VIDEO_DURATION || 5);
   return Number.isFinite(value) && value > 0 ? value : 5;
+}
+
+function prunaVideoFps() {
+  const value = Number(process.env.PRUNA_VIDEO_FPS || process.env.PRUNA_TRYON_VIDEO_FPS || 24);
+  return Number.isFinite(value) && value > 0 ? value : 24;
+}
+
+function prunaVideoDraft() {
+  return /^(1|true|yes)$/i.test(String(process.env.PRUNA_VIDEO_DRAFT || process.env.PRUNA_TRYON_VIDEO_DRAFT || '').trim());
+}
+
+function prunaVideoAspectRatio() {
+  return String(process.env.PRUNA_VIDEO_ASPECT_RATIO || process.env.PRUNA_TRYON_VIDEO_ASPECT_RATIO || '').trim();
 }
 
 function prunaBaseUrl() {
@@ -704,7 +717,7 @@ function prunaDownloadTimeoutMs() {
 function prunaAbsoluteUrl(value = '') {
   const raw = String(value || '').trim();
   if (!raw) return '';
-  if (/^(?:https?:|data:image\/)/i.test(raw)) return raw;
+  if (/^(?:https?:|data:(?:image|video)\/)/i.test(raw)) return raw;
   if (/^file-[a-z0-9_-]+$/i.test(raw)) return prunaApiUrl(`/files/${raw}`);
   if (raw.startsWith('/')) {
     const origin = new URL(prunaBaseUrl()).origin;
@@ -788,6 +801,49 @@ function firstPrunaImageUrl(value, depth = 0) {
   return '';
 }
 
+function prunaGeneratedVideoUrl(value = '') {
+  const url = prunaAbsoluteUrl(value);
+  if (!url) return '';
+  if (/^data:video\//i.test(url)) return url;
+  try {
+    const parsed = new URL(url);
+    if (/\/predictions\/(?:status|cancel)\//i.test(parsed.pathname)) return '';
+    if (/\/predictions\/delivery\//i.test(parsed.pathname)) return url;
+    if (/\.(?:mp4|mov|webm|m4v)(?:$|\?)/i.test(parsed.pathname + parsed.search)) return url;
+    if (/^https?:$/i.test(parsed.protocol) && /(?:video|generation|output|delivery)/i.test(parsed.pathname + parsed.search)) return url;
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+function firstPrunaVideoUrl(value, depth = 0) {
+  if (!value || depth > 8) return '';
+  if (typeof value === 'string') return prunaGeneratedVideoUrl(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstPrunaVideoUrl(item, depth + 1);
+      if (found) return found;
+    }
+    return '';
+  }
+  if (typeof value !== 'object') return '';
+  for (const key of ['generation_url', 'generationUrl', 'output_url', 'outputUrl', 'video_url', 'videoUrl', 'url']) {
+    const found = firstPrunaVideoUrl(value[key], depth + 1);
+    if (found) return found;
+  }
+  for (const key of ['videos', 'video', 'output', 'outputs', 'result', 'results', 'data', 'urls']) {
+    const found = firstPrunaVideoUrl(value[key], depth + 1);
+    if (found) return found;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (/^(input|image|image_url|person|person_image|garment|garment_images|glass|status_url|cancel_url|response_url)$/i.test(key)) continue;
+    const found = firstPrunaVideoUrl(child, depth + 1);
+    if (found) return found;
+  }
+  return '';
+}
+
 function prunaPredictionId(value = {}) {
   return String(value.id || value.prediction_id || value.predictionId || value.request_id || value.requestId || '').trim();
 }
@@ -798,7 +854,7 @@ function prunaPredictionStatus(value = {}) {
 
 function isPrunaSucceeded(value = {}) {
   const status = prunaPredictionStatus(value);
-  return ['succeeded', 'success', 'completed', 'complete', 'done'].includes(status) || Boolean(firstPrunaImageUrl(value));
+  return ['succeeded', 'success', 'completed', 'complete', 'done'].includes(status) || Boolean(firstPrunaImageUrl(value) || firstPrunaVideoUrl(value));
 }
 
 function isPrunaFailed(value = {}) {
@@ -1183,32 +1239,6 @@ function firstGeneratedImageUrl(value, depth = 0) {
   return '';
 }
 
-function firstGeneratedVideoUrl(value, depth = 0) {
-  if (!value || depth > 8) return '';
-  if (typeof value === 'string') return /^https?:\/\//i.test(value) || /^data:video\//i.test(value) ? value : '';
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = firstGeneratedVideoUrl(item, depth + 1);
-      if (found) return found;
-    }
-    return '';
-  }
-  if (typeof value !== 'object') return '';
-  for (const key of ['url', 'video_url', 'videoUrl']) {
-    const found = firstGeneratedVideoUrl(value[key], depth + 1);
-    if (found) return found;
-  }
-  for (const key of ['video', 'videos', 'output', 'result', 'data']) {
-    const found = firstGeneratedVideoUrl(value[key], depth + 1);
-    if (found) return found;
-  }
-  for (const child of Object.values(value)) {
-    const found = firstGeneratedVideoUrl(child, depth + 1);
-    if (found) return found;
-  }
-  return '';
-}
-
 function shortUrlForLog(url = '') {
   try {
     const parsed = new URL(url);
@@ -1280,17 +1310,65 @@ async function generatedVideoBytesFromUrl(url, timer) {
     };
   }
 
-  const response = await fetch(url, {
-    headers: {
-      accept: 'video/mp4,video/quicktime,video/*,*/*;q=0.8',
-      'user-agent': 'Mozilla/5.0 Lookmefy generated video fetcher'
-    }
-  });
-  if (!response.ok) throw new Error(`Could not download generated try-on video from ${shortUrlForLog(url)}`);
+  const downloadHeaders = {
+    accept: 'video/mp4,video/quicktime,video/*,*/*;q=0.8',
+    'user-agent': 'Mozilla/5.0 Lookmefy generated video fetcher'
+  };
+  try {
+    const requestedUrl = new URL(url);
+    const prunaUrl = new URL(prunaBaseUrl());
+    if (requestedUrl.origin === prunaUrl.origin) Object.assign(downloadHeaders, prunaHeaders());
+  } catch {
+    // Let fetch surface malformed URL errors below.
+  }
+  const response = await fetchWithTimeout(url, {
+    headers: downloadHeaders
+  }, prunaDownloadTimeoutMs(), 'Generated try-on video download');
+  if (!response.ok) {
+    throw new Error(`Could not download generated try-on video from ${shortUrlForLog(url)} (${response.status})`);
+  }
   const bytes = Buffer.from(await response.arrayBuffer());
   return {
     bytes,
     mimetype: videoMimeTypeFromResponse(response, bytes)
+  };
+}
+
+async function videoFirstFrameFile(image, label, timer) {
+  if (!image?.path && !image?.sourceUrl) throw new Error(`${label} image is missing`);
+  const stored = image.sourceUrl
+    ? await generatedBytesFromUrl(image.sourceUrl, timer)
+    : await readStoredFile(image);
+  const normalized = await normalizeAvifImage({
+    bytes: stored.bytes,
+    mimetype: stored.mimetype || image.mimetype || 'image/jpeg',
+    filename: image.filename,
+    label,
+    timer
+  });
+  const maxWidth = Number(process.env.VIDEO_FRAME_MAX_WIDTH || process.env.FAL_VIDEO_FRAME_MAX_WIDTH || 1024);
+  const maxHeight = Number(process.env.VIDEO_FRAME_MAX_HEIGHT || process.env.FAL_VIDEO_FRAME_MAX_HEIGHT || 1536);
+  const output = await sharp(normalized.bytes)
+    .rotate()
+    .resize({
+      width: maxWidth,
+      height: maxHeight,
+      fit: 'inside',
+      withoutEnlargement: true
+    })
+    .jpeg({ quality: 92 })
+    .toBuffer();
+  const metadata = await sharp(output).metadata();
+  timer?.mark(`${label} video first frame prepared`, {
+    inputKb: Math.round(normalized.bytes.length / 1024),
+    outputKb: Math.round(output.length / 1024),
+    width: metadata.width,
+    height: metadata.height
+  });
+  return {
+    bytes: output,
+    mimetype: 'image/jpeg',
+    filename: 'tryon-video-frame.jpg'
   };
 }
 
@@ -1302,7 +1380,7 @@ function modelGenderForVideo(user, product) {
   return 'neutral';
 }
 
-function pixverseTryOnVideoPrompt(product, user) {
+function tryOnVideoPrompt(product, user) {
   const gender = modelGenderForVideo(user, product);
   const expression = gender === 'male'
     ? 'calm masculine expression'
@@ -1310,7 +1388,7 @@ function pixverseTryOnVideoPrompt(product, user) {
       ? 'calm elegant expression'
       : 'calm natural expression';
   return [
-  'Animate the exact input photograph with minimal visual change.',
+    'Animate the exact input photograph with minimal visual change.',
 
     'Maintain the original image exposure, brightness, white balance, background brightness, garment colors, skin tone, and overall illumination throughout the entire video.',
 
@@ -1334,63 +1412,17 @@ function pixverseTryOnVideoPrompt(product, user) {
   ].join(' ');
 }
 
-function pixverseTryOnVideoNegativePrompt() {
-  return [
-   'identity change',
-    'different face',
-    'face distortion',
-    'face swap',
-    'beautified face',
-    'expression change',
-    'hairstyle change',
-    'body shape change',
-    'skin tone change',
-    'outfit change',
-    'garment color change',
-    'fabric change',
-    'background change',
-    'background replacement',
-    'underexposure',
-    'brightness shift',
-    'dramatic relighting',
-    'high contrast',
-    'vignette',
-    'spotlight',
-    'zoom',
-    'camera movement',
-    'camera orbit',
-    'camera push-in',
-    'reframing',
-    'cropped head',
-    'cropped hair',
-    'cropped hands',
-    'cropped legs',
-    'cropped feet',
-    'extra limbs',
-    'missing limbs',
-    'distorted anatomy',
-    'warping',
-    'melting',
-    'ghosting',
-    'flicker',
-    'blur',
-    'scene change',
-    'duplicate person',
-    'multiple people'
-    ].join(', ');
-}
-
-function safeFalResultForLog(value, depth = 0) {
+function safeProviderResultForLog(value, depth = 0) {
   if (depth > 4) return '[truncated]';
   if (typeof value === 'string') return redactLargeData(value).slice(0, 240);
-  if (Array.isArray(value)) return value.slice(0, 8).map((item) => safeFalResultForLog(item, depth + 1));
+  if (Array.isArray(value)) return value.slice(0, 8).map((item) => safeProviderResultForLog(item, depth + 1));
   if (!value || typeof value !== 'object') return value;
   const safe = {};
   for (const [key, child] of Object.entries(value)) {
     if (/url/i.test(key) && typeof child === 'string') {
       safe[key] = child.slice(0, 96);
     } else {
-      safe[key] = safeFalResultForLog(child, depth + 1);
+      safe[key] = safeProviderResultForLog(child, depth + 1);
     }
   }
   return safe;
@@ -1414,91 +1446,48 @@ function readableVideoError(value, fallback = 'Could not generate video try-on')
   return readableError(value, fallback);
 }
 
-async function videoFirstFrameDataUri(image, label, timer) {
-  if (!image?.path && !image?.sourceUrl) throw new Error(`${label} image is missing`);
-  const stored = image.sourceUrl
-    ? await generatedBytesFromUrl(image.sourceUrl, timer)
-    : await readStoredFile(image);
-  const normalized = await normalizeAvifImage({
-    bytes: stored.bytes,
-    mimetype: stored.mimetype || image.mimetype || 'image/jpeg',
-    filename: image.filename,
-    label,
-    timer
-  });
-  const maxWidth = Number(process.env.FAL_VIDEO_FRAME_MAX_WIDTH || 1024);
-  const maxHeight = Number(process.env.FAL_VIDEO_FRAME_MAX_HEIGHT || 1536);
-  const output = await sharp(normalized.bytes)
-    .rotate()
-    .resize({
-      width: maxWidth,
-      height: maxHeight,
-      fit: 'inside',
-      withoutEnlargement: true
-    })
-    .jpeg({ quality: 92 })
-    .toBuffer();
-  const metadata = await sharp(output).metadata();
-  timer?.mark(`${label} video first frame prepared`, {
-    inputKb: Math.round(normalized.bytes.length / 1024),
-    outputKb: Math.round(output.length / 1024),
-    width: metadata.width,
-    height: metadata.height
-  });
-  return `data:image/jpeg;base64,${output.toString('base64')}`;
-}
-
-async function runVideoAttempt({ endpoint, payload, prompt, label, providerName, timer }) {
-  const pixverseTimer = {
-    ...timer,
-    maxAttempts: Number(process.env.FAL_VIDEO_POLL_ATTEMPTS || 180),
-    pollMs: Number(process.env.FAL_VIDEO_POLL_MS || 2000)
+async function callPrunaTryOnVideo({ tryOn, product, user, timer }) {
+  const frameFile = await videoFirstFrameFile(tryOn.image, 'try-on image', timer);
+  const imageUrl = await uploadPrunaFile(frameFile, 'try-on video frame', timer);
+  const prompt = tryOnVideoPrompt(product, user);
+  const input = {
+    image: imageUrl,
+    prompt,
+    duration: prunaVideoDuration(),
+    resolution: prunaVideoResolution(),
+    fps: prunaVideoFps(),
+    draft: prunaVideoDraft()
   };
+  const aspectRatio = prunaVideoAspectRatio();
+  if (aspectRatio) input.aspect_ratio = aspectRatio;
 
-  timer?.mark(`${label} submit attempt`, { model: endpoint, resolution: payload.resolution, duration: payload.duration });
-  const submission = await falJson(`https://queue.fal.run/${endpoint}`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
+  const model = prunaVideoModel();
+  timer?.mark('pruna video submit start', {
+    model,
+    resolution: input.resolution,
+    duration: input.duration,
+    fps: input.fps
   });
-  timer?.mark(`${label} submitted`, { requestId: submission.request_id });
-  const result = await waitForFalResult(submission, pixverseTimer);
-  const generatedUrl = firstGeneratedVideoUrl(result);
+  const result = await callPrunaPrediction({
+    model,
+    input,
+    timer,
+    label: 'pruna p-video'
+  });
+  const generatedUrl = firstPrunaVideoUrl(result);
   if (!generatedUrl) {
-    timer?.mark(`${label} returned no video`, { result: safeFalResultForLog(result) });
-    throw new Error(`${providerName || 'Video provider'} returned no video. Response keys: ${Object.keys(result || {}).join(', ')}`);
+    timer?.mark('pruna video returned no video', { result: safeProviderResultForLog(result) });
+    throw new Error(`Pruna returned no video. Response keys: ${Object.keys(result || {}).join(', ')}`);
   }
   const { bytes, mimetype } = await generatedVideoBytesFromUrl(generatedUrl, timer);
-  timer?.mark(`${label} downloaded`, { outputKb: Math.round(bytes.length / 1024), mimetype });
+  timer?.mark('pruna video downloaded', { outputKb: Math.round(bytes.length / 1024), mimetype });
   return {
     bytes,
     mimetype,
     prompt,
-    model: endpoint,
-    quality: `${payload.resolution} ${payload.duration}s`
+    model: `pruna/${model}`,
+    quality: `${input.resolution} ${input.duration}s ${input.fps}fps`
   };
-}
-
-async function callPixverseTryOnVideo({ tryOn, product, user, timer }) {
-  const imageUrl = await videoFirstFrameDataUri(tryOn.image, 'try-on image', timer);
-  const prompt = pixverseTryOnVideoPrompt(product, user);
-  const payload = {
-    prompt,
-    image_url: imageUrl,
-    resolution: pixverseImageToVideoResolution(),
-    duration: pixverseImageToVideoDuration(),
-    negative_prompt: pixverseTryOnVideoNegativePrompt(),
-    generate_audio_switch: false,
-    generate_multi_clip_switch: false,
-    thinking_type: 'disabled'
-  };
-  return runVideoAttempt({
-    endpoint: pixverseImageToVideoModel(),
-    payload,
-    prompt,
-    label: 'pixverse image-to-video',
-    providerName: 'PixVerse',
-    timer
-  });
 }
 
 async function callPrunaGlassesTryOn({ user, product, garmentFile, timer, intent }) {
@@ -2159,7 +2148,7 @@ async function customTryOnService({ userId, body = {} }) {
     await recordCreditEvent({
       user: workingUser,
       action: 'Custom try-on',
-      product: { name: storedGarment.filename || garmentFile.originalname || 'Uploaded garment' },
+      product: { name: 'Custom upload' },
       tokens: chargedTokenCost(workingUser),
       balanceAfter: workingUser.tokens,
       metadata: { tryOnId: tryOn._id.toString() }
@@ -2351,7 +2340,7 @@ async function tryOnVideoService({ userId, productId, body = {} }) {
     reserved = true;
     workingUser = chargedUser;
 
-    const generated = await callPixverseTryOnVideo({ tryOn: existing, product, user: workingUser, timer });
+    const generated = await callPrunaTryOnVideo({ tryOn: existing, product, user: workingUser, timer });
     const filename = `tryon-video-${Date.now()}-${Math.round(Math.random() * 1e9)}${extensionFor(generated.mimetype)}`;
     const video = await saveUserCacheFile({ user: workingUser, bytes: generated.bytes, filename, mimetype: generated.mimetype });
     const updated = await TryOn.findOneAndUpdate(

@@ -61,6 +61,12 @@ const userSchema = new mongoose.Schema(
       source: { type: String, trim: true },
       generatedAt: Date,
       error: String
+    },
+    avatarCrop: {
+      scale: { type: Number, min: 0.5, max: 5 },
+      translateX: { type: Number, min: -200, max: 200 },
+      translateY: { type: Number, min: -200, max: 200 },
+      updatedAt: Date
     }
   },
   { timestamps: true }
@@ -104,7 +110,13 @@ userSchema.methods.toClient = function toClient() {
     bodyPhotoUrl,
     bodyPhotoStatus: this.bodyPhoto?.status || 'uploaded',
     bodyPhotoSource: this.bodyPhoto?.source || 'upload',
-    bodyPhotoGeneratedAt: this.bodyPhoto?.generatedAt || null
+    bodyPhotoGeneratedAt: this.bodyPhoto?.generatedAt || null,
+    avatarCrop: this.avatarCrop ? {
+      scale: Number(this.avatarCrop.scale) || 1,
+      translateX: Number(this.avatarCrop.translateX) || 0,
+      translateY: Number(this.avatarCrop.translateY) || 0,
+      updatedAt: this.avatarCrop.updatedAt || null
+    } : null
   };
 };
 

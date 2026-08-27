@@ -167,7 +167,7 @@ function readableError(value, fallback = 'Request failed') {
 
 function featureNameForPath(path = '') {
   if (/\/auth\/otp/i.test(path)) return 'OTP';
-  if (/\/auth\/(?:profile|body-photo|me)/i.test(path)) return 'profile';
+  if (/\/auth\/(?:profile|body-photo|avatar-crop|me)/i.test(path)) return 'profile';
   if (/\/recommendations\/(?:studio-chat|stylist-chat)/i.test(path)) return 'AI Studio';
   if (/\/products\/amazon-search/i.test(path)) return 'AI product search';
   if (/\/tryons/i.test(path)) return 'AI try-on';

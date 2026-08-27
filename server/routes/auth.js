@@ -371,7 +371,7 @@ async function generateFullBodyProfileInBackground(userId, sourceBodyPhoto, { en
 
       const updated = await User.findOneAndUpdate(
         { _id: userId, 'bodyPhoto.path': sourceBodyPhoto.path },
-        { $set: { bodyPhoto: generatedBodyPhoto, avatarPhoto: generatedAvatarPhoto } },
+        { $set: { bodyPhoto: generatedBodyPhoto, avatarPhoto: generatedAvatarPhoto }, $unset: { avatarCrop: '' } },
         { new: true }
       );
 
@@ -435,6 +435,22 @@ function normalizeUsername(value = '') {
 
 function parseBoolean(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function normalizeAvatarCropInput(value = {}) {
+  const source = value?.avatarCrop && typeof value.avatarCrop === 'object' ? value.avatarCrop : value;
+  return {
+    scale: clampNumber(source.scale, 0.8, 5, 1),
+    translateX: clampNumber(source.translateX ?? source.x, -160, 160, 0),
+    translateY: clampNumber(source.translateY ?? source.y, -160, 160, 0),
+    updatedAt: new Date()
+  };
 }
 
 function normalizePhone(value = '') {
@@ -1010,6 +1026,7 @@ router.patch('/profile', requireUser, upload.single('bodyPhoto'), async (req, re
       const { avatarPhoto, bodyPhoto } = await profilePhotosFromUpload(req.file, { generateFullBody, user: req.user });
       req.user.avatarPhoto = avatarPhoto;
       req.user.bodyPhoto = bodyPhoto;
+      req.user.avatarCrop = undefined;
       await req.user.save();
       generateFullBodyProfileInBackground(req.user._id, bodyPhoto, { enabled: generateFullBody });
     } else {
@@ -1022,6 +1039,12 @@ router.patch('/profile', requireUser, upload.single('bodyPhoto'), async (req, re
     if (isBodyPhotoPreparationError(error)) return res.status(400).json({ message: error.message });
     throw error;
   }
+});
+
+router.patch('/avatar-crop', requireUser, async (req, res) => {
+  req.user.avatarCrop = normalizeAvatarCropInput(req.body?.avatarCrop || req.body);
+  await req.user.save();
+  res.json({ user: req.user.toClient() });
 });
 
 router.delete('/me', requireUser, async (req, res) => {
@@ -1103,6 +1126,7 @@ router.post('/body-photo', requireUser, upload.single('bodyPhoto'), async (req, 
     const { avatarPhoto, bodyPhoto } = await profilePhotosFromUpload(req.file, { generateFullBody, user: req.user });
     req.user.avatarPhoto = avatarPhoto;
     req.user.bodyPhoto = bodyPhoto;
+    req.user.avatarCrop = undefined;
     await req.user.save();
     generateFullBodyProfileInBackground(req.user._id, bodyPhoto, { enabled: generateFullBody });
     res.json({ user: req.user.toClient() });

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Lookmefy",
     "slug": "lookmefy",
-    "version": "1.0",
+    "version": "0.1.6",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": [
@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "com.lookmefy.app",
-      "versionCode": 11,
+      "versionCode": 12,
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "backgroundColor": "#101820"

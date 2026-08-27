@@ -342,8 +342,62 @@ function userAvatarUrl(user) {
 }
 
 function userAvatarResizeMode(user) {
-  if (user?.bodyPhotoSource === 'fal-full-body') return 'contain';
+  if (isGeneratedFullBodyAvatar(user)) return 'stretch';
   return 'cover';
+}
+
+function isGeneratedFullBodyAvatar(user) {
+  return user?.bodyPhotoSource === 'fal-full-body' && Boolean(user?.bodyPhotoUrl);
+}
+
+function clampAvatarNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function defaultAvatarCrop(user) {
+  return isGeneratedFullBodyAvatar(user)
+    ? { scale: 2.35, translateX: 0, translateY: 0 }
+    : { scale: 1.04, translateX: 0, translateY: 0 };
+}
+
+function avatarCropForUser(user, override) {
+  const defaults = defaultAvatarCrop(user);
+  const source = override || user?.avatarCrop || {};
+  const minScale = isGeneratedFullBodyAvatar(user) ? 1.4 : 1;
+  return {
+    scale: clampAvatarNumber(source.scale, minScale, 5, defaults.scale),
+    translateX: clampAvatarNumber(source.translateX ?? source.x, -160, 160, defaults.translateX),
+    translateY: clampAvatarNumber(source.translateY ?? source.y, -160, 160, defaults.translateY)
+  };
+}
+
+function avatarImageStyleForUser(user, size, override) {
+  const crop = avatarCropForUser(user, override);
+  if (isGeneratedFullBodyAvatar(user)) {
+    const width = size * crop.scale;
+    const height = width * 1.5;
+    const faceCenterY = height * 0.13;
+    return {
+      position: 'absolute',
+      width,
+      height,
+      left: ((size - width) / 2) + crop.translateX,
+      top: (size / 2) - faceCenterY + crop.translateY
+    };
+  }
+  return {
+    transform: [
+      { scale: crop.scale },
+      { translateX: crop.translateX },
+      { translateY: crop.translateY }
+    ]
+  };
+}
+
+function avatarImageBaseStyleForUser(user) {
+  return isGeneratedFullBodyAvatar(user) ? styles.avatarPositionedImage : null;
 }
 
 function userInitials(user) {
@@ -472,7 +526,7 @@ function sourceSignature(source) {
   return source.uri || JSON.stringify(source);
 }
 
-const ResilientImage = memo(function ResilientImage({ source, fallbackSource, style, imageStyle, resizeMode = 'cover', alt, fallbackIcon = 'image-outline', fallbackText }) {
+const ResilientImage = memo(function ResilientImage({ source, fallbackSource, style, imageStyle, imageBaseStyle, resizeMode = 'cover', alt, fallbackIcon = 'image-outline', fallbackText }) {
   const [sourceIndex, setSourceIndex] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -508,12 +562,12 @@ const ResilientImage = memo(function ResilientImage({ source, fallbackSource, st
 
   return (
     <View style={[style, styles.resilientImageFrame]}>
-      {hasFallbackLayer ? <Image source={fallbackSource} style={[styles.resilientImage, imageStyle]} resizeMode={resizeMode} /> : null}
+      {hasFallbackLayer ? <Image source={fallbackSource} style={[imageBaseStyle || styles.resilientImage, imageStyle]} resizeMode={resizeMode} /> : null}
       {!loaded && !hasFallbackLayer ? <View style={styles.resilientImageSkeleton} /> : null}
       <Image
         accessibilityLabel={alt}
         source={activeSource}
-        style={[styles.resilientImage, imageStyle]}
+        style={[imageBaseStyle || styles.resilientImage, imageStyle]}
         resizeMode={resizeMode}
         fadeDuration={160}
         onLoad={() => setLoaded(true)}
@@ -844,6 +898,8 @@ function BrandLogo({ compact = false, light = false, style, textStyle, symbolSty
 function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
   const avatarUri = userAvatarUrl(user);
   const avatarResizeMode = userAvatarResizeMode(user);
+  const avatarImageStyle = avatarImageStyleForUser(user, 34);
+  const avatarImageBaseStyle = avatarImageBaseStyleForUser(user);
   return (
     <View style={styles.header}>
       <View style={styles.headerLeft}>
@@ -863,7 +919,7 @@ function Header({ user, canGoBack, onBack, onNavigate, onLogout }) {
       <View style={styles.headerActions}>
         {user ? (
           <TouchableOpacity style={styles.iconButton} onPress={() => onNavigate('profile')}>
-            {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.headerAvatar} imageStyle={avatarResizeMode === 'cover' ? styles.avatarFaceImage : null} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.headerAvatar} textStyle={styles.headerAvatarInitials} />}
+            {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.headerAvatar} imageStyle={avatarImageStyle} imageBaseStyle={avatarImageBaseStyle} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.headerAvatar} textStyle={styles.headerAvatarInitials} />}
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity style={styles.iconButton} onPress={() => onNavigate('tokens')}>
@@ -894,6 +950,8 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
   const avatarTourTarget = useTourTarget(tourTargetKeys.avatar, registerTourTarget);
   const avatarUri = userAvatarUrl(user);
   const avatarResizeMode = userAvatarResizeMode(user);
+  const avatarImageStyle = avatarImageStyleForUser(user, 32);
+  const avatarImageBaseStyle = avatarImageBaseStyleForUser(user);
   return (
     <View style={[styles.appHeader, compact && styles.appHeaderCompact]}>
       {!brandLeft ? (
@@ -921,12 +979,12 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
         ) : null}
         <TouchableOpacity ref={avatarTourTarget.ref} onLayout={avatarTourTarget.onLayout} accessibilityRole="button" accessibilityLabel={rightRoute === 'orders' ? 'Open orders' : 'Open bag'} style={styles.appHeaderAction} onPress={openRight}>
           {showAvatar ? (
-            avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={avatarResizeMode === 'cover' ? styles.avatarFaceImage : null} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />
+            avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={avatarImageStyle} imageBaseStyle={avatarImageBaseStyle} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />
           ) : <Ionicons name={rightIcon} size={20} color="#171412" />}
         </TouchableOpacity>
         {showProfileAction ? (
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open profile" style={styles.appHeaderAction} onPress={() => onNavigate('profile')}>
-            {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={avatarResizeMode === 'cover' ? styles.avatarFaceImage : null} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />}
+            {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={avatarImageStyle} imageBaseStyle={avatarImageBaseStyle} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />}
           </TouchableOpacity>
         ) : null}
       </View>
@@ -1128,6 +1186,16 @@ function CreditHistorySkeleton({ rows = 3 }) {
       <SkeletonBlock style={[styles.profileCreditSkeletonCell, styles.profileCreditTokenColumn]} />
     </View>
   ));
+}
+
+const profileCreditPreviewLimit = 4;
+
+function creditHistoryProductLabel(event = {}) {
+  const title = String(event.productTitle || '').trim();
+  const isCustomTryOn = /custom/i.test(String(event.action || ''));
+  if (!title || title === 'Product') return isCustomTryOn ? 'Custom upload' : 'Product';
+  if (isCustomTryOn && /^[^/\s]+\.(?:jpe?g|png|webp|avif)$/i.test(title)) return 'Custom upload';
+  return title;
 }
 
 function AiPreviewNote({ style }) {
@@ -1511,7 +1579,7 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
   );
 }
 
-function CurationProductCard({ product, onPress, onAddToWishlist, isWishlisted, user }) {
+function CurationProductCard({ product, onPress, onAddToWishlist, isWishlisted }) {
   const price = Number(product.price);
   return (
     <TouchableOpacity style={styles.homeProductCard} onPress={onPress}>
@@ -1519,11 +1587,6 @@ function CurationProductCard({ product, onPress, onAddToWishlist, isWishlisted, 
         <ProductImage product={product} style={styles.homeProductImage} alt={product.title || product.name} />
         {product.isNew ? <Text style={styles.homeNewBadge}>NEW</Text> : null}
         {onAddToWishlist ? <WishlistDoneButton saved={isWishlisted} compact onPress={() => onAddToWishlist(product)} /> : null}
-        {user ? (
-          <View style={styles.homeTryBadge}>
-            <Ionicons name="sparkles" size={12} color="#111111" />
-          </View>
-        ) : null}
       </View>
       <Text style={styles.homeProductEyebrow} numberOfLines={1}>{product.displayLabel || titleCase(product.category || 'Catalog')}</Text>
       <Text style={styles.homeProductTitle} numberOfLines={2}>{product.title || product.name}</Text>
@@ -1727,7 +1790,6 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
               onPress={() => onNavigate('product', { id: product.id })}
               onAddToWishlist={onAddToWishlist}
               isWishlisted={wishlistIds?.has(product.id)}
-              user={user}
             />
           );
         })}
@@ -4579,17 +4641,6 @@ function StyleBotScreen({
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.aiStudioScreen}>
       <ProductTopBar onNavigate={onNavigate} user={user} />
       <ScrollView ref={scrollRef} contentContainerStyle={styles.aiStudioContent} {...screenScrollProps}>
-        <View style={styles.aiConversationHeader}>
-          <View style={styles.aiConversationIcon}>
-            <Ionicons name="sparkles-outline" size={21} color="#9b5658" />
-          </View>
-          <View style={styles.aiConversationCopy}>
-            <Text style={styles.aiStudioEyebrow}>AI STUDIO</Text>
-            <Text style={styles.aiConversationTitle}>What are we finding today?</Text>
-            <Text style={styles.aiConversationSubtitle}>Search clothing, footwear, ethnic wear, watches, bags, and accessories by budget, colour, occasion, fabric, or vibe.</Text>
-          </View>
-        </View>
-
         <View style={styles.aiChatThread}>
           {messages.map((message) => {
             const userBubble = message.role === 'user';
@@ -4656,9 +4707,6 @@ function StyleBotScreen({
       </ScrollView>
 
       <View ref={composerTourTarget.ref} onLayout={composerTourTarget.onLayout} style={styles.aiComposer}>
-        <TouchableOpacity style={styles.aiImageButton} onPress={() => onNavigate('custom')}>
-          <Ionicons name="image-outline" size={22} color="#55514f" />
-        </TouchableOpacity>
         <TextInput style={styles.aiComposerInput} value={query} onChangeText={setQuery} placeholder="Search shirts, shoes, jackets..." placeholderTextColor="#8d8682" returnKeyType="send" onSubmitEditing={() => submit()} />
         <TouchableOpacity style={[styles.aiSendButton, (!query.trim() || busy) && styles.disabledButton]} disabled={!query.trim() || busy} onPress={() => submit()}>
           <Ionicons name={busy ? 'hourglass-outline' : 'send'} size={22} color="#ffffff" />
@@ -5134,6 +5182,21 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
   const [editGender, setEditGender] = useState('');
   const [editMessage, setEditMessage] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
+  const [passwordSheetVisible, setPasswordSheetVisible] = useState(false);
+  const [passwordStage, setPasswordStage] = useState('idle');
+  const [passwordOtp, setPasswordOtp] = useState('');
+  const [passwordResetToken, setPasswordResetToken] = useState('');
+  const [profilePassword, setProfilePassword] = useState('');
+  const [profileConfirmPassword, setProfileConfirmPassword] = useState('');
+  const [showProfilePassword, setShowProfilePassword] = useState(false);
+  const [showProfileConfirmPassword, setShowProfileConfirmPassword] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState('');
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [creditHistoryExpanded, setCreditHistoryExpanded] = useState(false);
+  const [avatarAdjustVisible, setAvatarAdjustVisible] = useState(false);
+  const [avatarCropDraft, setAvatarCropDraft] = useState(null);
+  const [avatarAdjustMessage, setAvatarAdjustMessage] = useState('');
+  const [avatarCropSaving, setAvatarCropSaving] = useState(false);
   const [accountDeleting, setAccountDeleting] = useState(false);
   const profileScrollRef = useRef(null);
   const profileAvatarTourTarget = useTourTarget('profile-avatar', registerTourTarget, { request: tourFocusRequest, scrollRef: profileScrollRef, scrollOffset: 94 });
@@ -5145,16 +5208,29 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
   const avatarUri = userAvatarUrl(user);
   const previewUri = photo?.uri || (avatarUri ? imageUrl(avatarUri) : '');
   const photoSource = previewUri ? { uri: previewUri } : null;
+  const avatarAdjustmentUser = photo?.uri ? { ...user, bodyPhotoSource: 'upload', bodyPhotoUrl: '', avatarCrop: null } : user;
   const profilePhotoResizeMode = photo?.uri ? 'cover' : userAvatarResizeMode(user);
-  const profilePhotoImageStyle = profilePhotoResizeMode === 'cover' ? styles.profileFaceImage : null;
+  const profilePhotoImageStyle = photo?.uri ? styles.profileFaceImage : avatarImageStyleForUser(user, 76);
+  const profilePhotoImageBaseStyle = photo?.uri ? null : avatarImageBaseStyleForUser(user);
+  const avatarAdjustCrop = avatarCropDraft || avatarCropForUser(avatarAdjustmentUser);
+  const avatarAdjustPreviewSize = 132;
+  const avatarAdjustPreviewResizeMode = userAvatarResizeMode(avatarAdjustmentUser);
+  const avatarAdjustPreviewImageStyle = avatarImageStyleForUser(avatarAdjustmentUser, avatarAdjustPreviewSize, avatarAdjustCrop);
+  const avatarAdjustPreviewImageBaseStyle = avatarImageBaseStyleForUser(avatarAdjustmentUser);
+  const avatarAdjustMoveStep = isGeneratedFullBodyAvatar(avatarAdjustmentUser) ? 8 : 5;
+  const avatarAdjustZoomStep = isGeneratedFullBodyAvatar(avatarAdjustmentUser) ? 0.16 : 0.08;
   const username = user.username || (user.email ? user.email.split('@')[0] : '');
   const displayName = user.name || username || 'Lookmefy member';
   const displayEmail = /@phone\.(?:fitlook|lookmefy)\.local$/i.test(user.email || '') ? '' : user.email;
+  const accountPhone = normalizePhoneInput(user.phone || '');
+  const accountPhoneLabel = accountPhone.length === 10 ? `mobile ending ${accountPhone.slice(-4)}` : 'your saved mobile number';
   const remainingCredits = Math.max(0, Number(user.tokens) || 0);
   const monthlyAllowance = Number(user.subscription?.tokensPerMonth) || 0;
   const creditTotal = monthlyAllowance > 0 ? Math.max(monthlyAllowance, remainingCredits) : null;
   const creditProgress = `${creditTotal ? calculateCreditPercentage(remainingCredits, creditTotal) : 100}%`;
   const creditEvents = creditHistory.data?.events || [];
+  const visibleCreditEvents = creditHistoryExpanded ? creditEvents : creditEvents.slice(0, profileCreditPreviewLimit);
+  const hiddenCreditEvents = Math.max(0, creditEvents.length - visibleCreditEvents.length);
   const avatarPortraitUri = user.avatarPhotoUrl ? imageUrl(user.avatarPhotoUrl) : '';
   const bodyPortraitUri = user.bodyPhotoUrl ? imageUrl(user.bodyPhotoUrl) : '';
   const portraitSeen = new Set();
@@ -5179,6 +5255,64 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
     if (!selected) return;
     setPhoto(selected);
     setMessage('');
+    setAvatarAdjustVisible(false);
+    setAvatarCropDraft(null);
+  };
+
+  const openAvatarAdjuster = () => {
+    if (!photoSource) {
+      chooseProfilePhoto();
+      return;
+    }
+    setAvatarCropDraft(avatarCropForUser(avatarAdjustmentUser));
+    setAvatarAdjustMessage('');
+    setMessage('');
+    setAvatarAdjustVisible(true);
+  };
+
+  const updateAvatarCropDraft = (delta = {}) => {
+    setAvatarCropDraft((current) => {
+      const base = current || avatarCropForUser(avatarAdjustmentUser);
+      return avatarCropForUser(avatarAdjustmentUser, {
+        scale: base.scale + (delta.scale || 0),
+        translateX: base.translateX + (delta.translateX || 0),
+        translateY: base.translateY + (delta.translateY || 0)
+      });
+    });
+  };
+
+  const resetAvatarCropDraft = () => {
+    setAvatarCropDraft(defaultAvatarCrop(avatarAdjustmentUser));
+    setAvatarAdjustMessage('');
+  };
+
+  const saveAvatarCrop = async () => {
+    if (photo?.uri) {
+      setAvatarAdjustMessage('Save the new portrait before saving its position.');
+      return;
+    }
+    const crop = avatarCropForUser(user, avatarCropDraft || avatarCropForUser(user));
+    setAvatarCropSaving(true);
+    setAvatarAdjustMessage('Saving position...');
+    try {
+      const data = await api('/auth/avatar-crop', {
+        method: 'PATCH',
+        body: JSON.stringify({ avatarCrop: crop })
+      });
+      if (data.user) setUser(data.user);
+      setAvatarAdjustVisible(false);
+      setAvatarCropDraft(null);
+      setMessage('Profile photo position saved.');
+    } catch (error) {
+      setAvatarAdjustMessage(error.message);
+    } finally {
+      setAvatarCropSaving(false);
+    }
+  };
+
+  const replaceProfilePhotoFromAdjuster = async () => {
+    if (avatarCropSaving) return;
+    await chooseProfilePhoto();
   };
 
   const updatePhoto = async () => {
@@ -5244,6 +5378,121 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
     }
   };
 
+  const resetPasswordSheet = () => {
+    setPasswordStage('idle');
+    setPasswordOtp('');
+    setPasswordResetToken('');
+    setProfilePassword('');
+    setProfileConfirmPassword('');
+    setShowProfilePassword(false);
+    setShowProfileConfirmPassword(false);
+    setPasswordMessage('');
+  };
+
+  const openPasswordSheet = () => {
+    if (accountPhone.length !== 10) {
+      setMessage('Add a valid mobile number before changing your password.');
+      return;
+    }
+    resetPasswordSheet();
+    setMessage('');
+    setPasswordSheetVisible(true);
+  };
+
+  const closePasswordSheet = () => {
+    if (passwordLoading) return;
+    setPasswordSheetVisible(false);
+    resetPasswordSheet();
+  };
+
+  const sendProfilePasswordOtp = async () => {
+    if (accountPhone.length !== 10) {
+      setPasswordMessage('Your account needs a valid 10 digit mobile number.');
+      return;
+    }
+    setPasswordLoading(true);
+    setPasswordMessage('Sending OTP...');
+    try {
+      const data = await api('/auth/otp/send', {
+        method: 'POST',
+        body: JSON.stringify({ phone: accountPhone, purpose: 'password-reset' })
+      });
+      setPasswordOtp('');
+      setPasswordResetToken('');
+      setPasswordStage('otp');
+      setPasswordMessage(data.message ? `${data.message}. Enter the code from SMS.` : 'OTP sent. Enter the code from SMS.');
+    } catch (error) {
+      setPasswordMessage(error.message);
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  const verifyProfilePasswordOtp = async () => {
+    const cleanOtp = normalizeOtpInput(passwordOtp);
+    if (!cleanOtp) {
+      setPasswordMessage('Enter the OTP sent to your mobile.');
+      return;
+    }
+    setPasswordLoading(true);
+    setPasswordMessage('Verifying OTP...');
+    try {
+      const data = await api('/auth/otp/verify', {
+        method: 'POST',
+        body: JSON.stringify({ phone: accountPhone, otp: cleanOtp, purpose: 'password-reset' })
+      });
+      setPasswordResetToken(data.resetToken || '');
+      setPasswordOtp('');
+      setProfilePassword('');
+      setProfileConfirmPassword('');
+      setPasswordStage('password');
+      setPasswordMessage('');
+    } catch (error) {
+      setPasswordMessage(error.message);
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  const completeProfilePasswordReset = async () => {
+    const passwordError = passwordValidationMessage(profilePassword);
+    if (passwordError) {
+      setPasswordMessage(passwordError);
+      return;
+    }
+    if (profilePassword !== profileConfirmPassword) {
+      setPasswordMessage('Passwords do not match.');
+      return;
+    }
+    if (!passwordResetToken) {
+      setPasswordMessage('Verify the OTP before setting a new password.');
+      setPasswordStage('otp');
+      return;
+    }
+    setPasswordLoading(true);
+    setPasswordMessage('Saving password...');
+    try {
+      const data = await api('/auth/password/reset', {
+        method: 'POST',
+        body: JSON.stringify({
+          resetToken: passwordResetToken,
+          password: profilePassword,
+          confirmPassword: profileConfirmPassword
+        })
+      });
+      await saveToken(data.token);
+      setToken(data.token);
+      if (data.user) setUser(data.user);
+      setPasswordSheetVisible(false);
+      resetPasswordSheet();
+      setMessage('Password updated.');
+    } catch (error) {
+      setPasswordMessage(error.message);
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
   const deleteAccount = async () => {
     setAccountDeleting(true);
     setMessage('Deleting account...');
@@ -5282,8 +5531,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
       <AppHeader onNavigate={onNavigate} user={user} compact />
 
       <View style={styles.profileHero}>
-        <TouchableOpacity ref={profileAvatarTourTarget.ref} onLayout={profileAvatarTourTarget.onLayout} style={styles.profilePhotoWrap} onPress={chooseProfilePhoto}>
-          {photoSource ? <ResilientImage source={photoSource} style={styles.profilePhoto} imageStyle={profilePhotoImageStyle} resizeMode={profilePhotoResizeMode} fallbackIcon="person-outline" /> : (
+        <TouchableOpacity ref={profileAvatarTourTarget.ref} onLayout={profileAvatarTourTarget.onLayout} style={styles.profilePhotoWrap} onPress={openAvatarAdjuster}>
+          {photoSource ? <ResilientImage source={photoSource} style={styles.profilePhoto} imageStyle={profilePhotoImageStyle} imageBaseStyle={profilePhotoImageBaseStyle} resizeMode={profilePhotoResizeMode} fallbackIcon="person-outline" /> : (
             <InitialsAvatar user={user} style={[styles.profilePhoto, styles.profileAvatarFallback]} textStyle={styles.profileAvatarInitials} />
           )}
           <View style={styles.profilePhotoAction}>
@@ -5319,6 +5568,11 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
           <View style={styles.profileCreditHistoryHead}>
             <Text style={styles.profileCreditHistoryTitle}>Credit History</Text>
             {creditHistory.loading ? <SkeletonBlock style={styles.profileCreditHeadSkeleton} /> : null}
+            {!creditHistory.loading && !creditHistory.error && creditEvents.length > profileCreditPreviewLimit ? (
+              <TouchableOpacity style={styles.profileCreditHistoryAction} activeOpacity={0.78} onPress={() => setCreditHistoryExpanded((current) => !current)}>
+                <Text style={styles.profileCreditHistoryActionText}>{creditHistoryExpanded ? 'Show less' : `View all ${creditEvents.length}`}</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
           <View style={styles.profileCreditHistoryHeaderRow}>
             <Text style={[styles.profileCreditColumnLabel, styles.profileCreditActionColumn]}>Action</Text>
@@ -5328,14 +5582,17 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
           </View>
           {creditHistory.error ? <Text style={[styles.profileCreditEmptyText, styles.errorText]}>{creditHistory.error}</Text> : null}
           {creditHistory.loading ? <CreditHistorySkeleton /> : null}
-          {!creditHistory.loading && !creditHistory.error && creditEvents.length ? creditEvents.map((event) => (
+          {!creditHistory.loading && !creditHistory.error && visibleCreditEvents.length ? visibleCreditEvents.map((event) => (
             <View key={event.id} style={styles.profileCreditHistoryRow}>
               <Text style={[styles.profileCreditCell, styles.profileCreditActionColumn]} numberOfLines={1}>{event.action || 'Try-on'}</Text>
-              <Text style={[styles.profileCreditCell, styles.profileCreditProductColumn]} numberOfLines={1}>{event.productTitle || 'Product'}</Text>
+              <Text style={[styles.profileCreditCell, styles.profileCreditProductColumn]} numberOfLines={1}>{creditHistoryProductLabel(event)}</Text>
               <Text style={[styles.profileCreditCell, styles.profileCreditDateColumn]} numberOfLines={1}>{formatDate(event.createdAt)}</Text>
               <Text style={[styles.profileCreditCell, styles.profileCreditTokenColumn, styles.profileCreditTokenText]} numberOfLines={1}>{Number(event.tokens) > 0 ? `-${event.tokens}` : event.tokens}</Text>
             </View>
           )) : null}
+          {!creditHistory.loading && !creditHistory.error && !creditHistoryExpanded && hiddenCreditEvents ? (
+            <Text style={styles.profileCreditEmptyText}>{hiddenCreditEvents} older item{hiddenCreditEvents === 1 ? '' : 's'} hidden.</Text>
+          ) : null}
           {!creditHistory.loading && !creditHistory.error && !creditEvents.length ? <Text style={styles.profileCreditEmptyText}>No credit activity yet.</Text> : null}
         </View>
       </View>
@@ -5431,7 +5688,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
           { label: 'Username', value: username ? `@${username}` : 'Not added' },
           { label: 'Mobile Number', value: user.phone || 'Not added' },
           { label: 'Email Address', value: displayEmail || 'Not added' },
-          { label: 'Change Password', value: 'Contact support', onPress: () => openSupportEmail('Lookmefy account access request') }
+          { label: 'Change Password', value: 'OTP verification', onPress: openPasswordSheet }
         ]}
       />
 
@@ -5454,6 +5711,81 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
       <TouchableOpacity style={[styles.profileDeleteButton, accountDeleting && styles.disabledButton]} disabled={accountDeleting} onPress={confirmDeleteAccount}>
         {accountDeleting ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileDeleteText}>Delete Account</Text>}
       </TouchableOpacity>
+      <Modal visible={avatarAdjustVisible} transparent animationType="fade" onRequestClose={() => !avatarCropSaving && setAvatarAdjustVisible(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
+          <Pressable style={styles.profileEditBackdrop} onPress={() => !avatarCropSaving && setAvatarAdjustVisible(false)} />
+          <View style={styles.profileEditSheet}>
+            <View style={styles.profileEditHandle} />
+            <View style={styles.profileEditHead}>
+              <View>
+                <Text style={styles.profileEditSheetTitle}>Adjust Profile Photo</Text>
+                <Text style={styles.profileEditSheetSub}>Move and zoom the image inside your profile circle.</Text>
+              </View>
+              <TouchableOpacity style={styles.profileEditClose} disabled={avatarCropSaving} onPress={() => setAvatarAdjustVisible(false)}>
+                <Ionicons name="close" size={21} color="#2b2321" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.avatarAdjustPreviewWrap}>
+              <View style={styles.avatarAdjustPreviewFrame}>
+                {photoSource ? (
+                  <ResilientImage
+                    source={photoSource}
+                    style={styles.avatarAdjustPreviewImage}
+                    imageStyle={avatarAdjustPreviewImageStyle}
+                    imageBaseStyle={avatarAdjustPreviewImageBaseStyle}
+                    resizeMode={avatarAdjustPreviewResizeMode}
+                    fallbackIcon="person-outline"
+                  />
+                ) : (
+                  <InitialsAvatar user={user} style={styles.avatarAdjustPreviewImage} textStyle={styles.profileAvatarInitials} />
+                )}
+              </View>
+            </View>
+
+            <View style={styles.avatarAdjustControls}>
+              <View style={styles.avatarAdjustRow}>
+                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ translateY: -avatarAdjustMoveStep })}>
+                  <Ionicons name="chevron-up" size={20} color="#2b2321" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.avatarAdjustRow}>
+                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ translateX: -avatarAdjustMoveStep })}>
+                  <Ionicons name="chevron-back" size={20} color="#2b2321" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ scale: -avatarAdjustZoomStep })}>
+                  <Ionicons name="remove" size={20} color="#2b2321" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ scale: avatarAdjustZoomStep })}>
+                  <Ionicons name="add" size={20} color="#2b2321" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ translateX: avatarAdjustMoveStep })}>
+                  <Ionicons name="chevron-forward" size={20} color="#2b2321" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.avatarAdjustRow}>
+                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ translateY: avatarAdjustMoveStep })}>
+                  <Ionicons name="chevron-down" size={20} color="#2b2321" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={resetAvatarCropDraft}>
+                  <Ionicons name="refresh" size={18} color="#2b2321" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {avatarAdjustMessage ? <Text style={[styles.profileEditMessage, /saving|saved/i.test(avatarAdjustMessage) ? null : styles.errorText]}>{avatarAdjustMessage}</Text> : null}
+
+            <View style={styles.profileEditActions}>
+              <TouchableOpacity style={styles.profileEditCancelButton} disabled={avatarCropSaving} onPress={replaceProfilePhotoFromAdjuster}>
+                <Text style={styles.profileEditCancelText}>Replace Photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.profileEditSaveButton, avatarCropSaving && styles.disabledButton]} disabled={avatarCropSaving} onPress={saveAvatarCrop}>
+                {avatarCropSaving ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileEditSaveText}>Save Position</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
       <Modal visible={editVisible} transparent animationType="fade" onRequestClose={() => setEditVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
           <Pressable style={styles.profileEditBackdrop} onPress={() => setEditVisible(false)} />
@@ -5502,6 +5834,101 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
                 {profileSaving ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileEditSaveText}>Save</Text>}
               </TouchableOpacity>
             </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+      <Modal visible={passwordSheetVisible} transparent animationType="fade" onRequestClose={closePasswordSheet}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
+          <Pressable style={styles.profileEditBackdrop} onPress={closePasswordSheet} />
+          <View style={styles.profileEditSheet}>
+            <View style={styles.profileEditHandle} />
+            <View style={styles.profileEditHead}>
+              <View>
+                <Text style={styles.profileEditSheetTitle}>Change Password</Text>
+                <Text style={styles.profileEditSheetSub}>
+                  {passwordStage === 'password'
+                    ? 'Set a new password for your Lookmefy account.'
+                    : passwordStage === 'otp'
+                      ? `Enter the OTP sent to ${accountPhoneLabel}.`
+                      : `Send a reset OTP to ${accountPhoneLabel}.`}
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.profileEditClose} disabled={passwordLoading} onPress={closePasswordSheet}>
+                <Ionicons name="close" size={21} color="#2b2321" />
+              </TouchableOpacity>
+            </View>
+
+            {passwordStage === 'idle' ? (
+              <>
+                <View style={styles.profilePasswordNotice}>
+                  <Ionicons name="phone-portrait-outline" size={18} color="#9b5658" />
+                  <Text style={styles.profilePasswordNoticeText}>We will verify this change with an OTP before saving a new password.</Text>
+                </View>
+                <TouchableOpacity style={[styles.profileEditSaveButton, styles.profilePasswordPrimaryButton, passwordLoading && styles.disabledButton]} disabled={passwordLoading} onPress={sendProfilePasswordOtp}>
+                  {passwordLoading ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileEditSaveText}>Send OTP</Text>}
+                </TouchableOpacity>
+              </>
+            ) : null}
+
+            {passwordStage === 'otp' ? (
+              <>
+                <Text style={styles.profileEditLabel}>OTP</Text>
+                <TextInput
+                  style={styles.profileEditInput}
+                  value={passwordOtp}
+                  onChangeText={(value) => setPasswordOtp(normalizeOtpInput(value))}
+                  placeholder="Enter OTP"
+                  placeholderTextColor="#9a918d"
+                  keyboardType="number-pad"
+                  autoComplete="one-time-code"
+                  textContentType="oneTimeCode"
+                  maxLength={8}
+                />
+                <View style={styles.profileEditActions}>
+                  <TouchableOpacity style={styles.profileEditCancelButton} disabled={passwordLoading} onPress={sendProfilePasswordOtp}>
+                    <Text style={styles.profileEditCancelText}>Resend</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.profileEditSaveButton, passwordLoading && styles.disabledButton]} disabled={passwordLoading} onPress={verifyProfilePasswordOtp}>
+                    {passwordLoading ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileEditSaveText}>Verify</Text>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+
+            {passwordStage === 'password' ? (
+              <>
+                <Text style={styles.profileEditLabel}>New password</Text>
+                <AuthPasswordField
+                  value={profilePassword}
+                  onChangeText={setProfilePassword}
+                  placeholder="New password"
+                  visible={showProfilePassword}
+                  onToggle={() => setShowProfilePassword((current) => !current)}
+                  fieldHeight={54}
+                  autoComplete="new-password"
+                />
+                <Text style={styles.profileEditLabel}>Confirm password</Text>
+                <AuthPasswordField
+                  value={profileConfirmPassword}
+                  onChangeText={setProfileConfirmPassword}
+                  placeholder="Confirm password"
+                  visible={showProfileConfirmPassword}
+                  onToggle={() => setShowProfileConfirmPassword((current) => !current)}
+                  fieldHeight={54}
+                  autoComplete="new-password"
+                />
+                <View style={styles.profileEditActions}>
+                  <TouchableOpacity style={styles.profileEditCancelButton} disabled={passwordLoading} onPress={() => setPasswordStage('otp')}>
+                    <Text style={styles.profileEditCancelText}>Back</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.profileEditSaveButton, passwordLoading && styles.disabledButton]} disabled={passwordLoading} onPress={completeProfilePasswordReset}>
+                    {passwordLoading ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileEditSaveText}>Save Password</Text>}
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+
+            {passwordMessage ? <Text style={[styles.profileEditMessage, /sending|sent|verifying|saving|updated/i.test(passwordMessage) ? null : styles.errorText]}>{passwordMessage}</Text> : null}
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -5720,6 +6147,7 @@ function WishlistDoneButton({ saved, onPress, compact }) {
 
 function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onNext, onBack, onSkip, onDone }) {
   const { width, height } = useWindowDimensions();
+  const [tourCardLayout, setTourCardLayout] = useState({ key: '', height: 0 });
   const total = onboardingTourSteps.length;
   const safeStep = Math.min(Math.max(step, 0), total - 1);
   const active = onboardingTourSteps[safeStep] || onboardingTourSteps[0];
@@ -5758,20 +6186,37 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
     spotlight.height = Math.min(spotlight.height, height - spotlight.y - 8);
   }
   const shouldPlaceAbove = spotlight && (active.placement === 'above' || spotlight.y > height * 0.54);
-  const cardHeightEstimate = intro ? 252 : 258;
+  const measuredCardHeight = tourCardLayout.key === active.key ? tourCardLayout.height : 0;
+  const cardHeight = Math.max(measuredCardHeight, intro ? 286 : 372);
+  const cardGap = 18;
   const cardSafeTop = 34;
   const cardSafeBottom = bottomNavigationHeight + 18;
-  const maxCardTop = Math.max(cardSafeTop, height - cardSafeBottom - cardHeightEstimate);
-  const preferredCardTop = spotlight
+  const maxCardTop = Math.max(cardSafeTop, height - cardSafeBottom - cardHeight);
+  const aboveTop = spotlight ? spotlight.y - cardHeight - cardGap : undefined;
+  const belowTop = spotlight ? spotlight.y + spotlight.height + cardGap : undefined;
+  const aboveFits = spotlight ? aboveTop >= cardSafeTop : false;
+  const belowFits = spotlight ? belowTop + cardHeight <= height - cardSafeBottom : false;
+  const aboveSpace = spotlight ? spotlight.y - cardSafeTop - cardGap : 0;
+  const belowSpace = spotlight ? height - cardSafeBottom - (spotlight.y + spotlight.height) - cardGap : 0;
+  const placeAbove = spotlight
     ? shouldPlaceAbove
-      ? spotlight.y - cardHeightEstimate - 16
-      : spotlight.y + spotlight.height + 16
-    : undefined;
+      ? (aboveFits || !belowFits || aboveSpace >= belowSpace)
+      : (!belowFits && (aboveFits || aboveSpace > belowSpace))
+    : false;
+  const preferredCardTop = spotlight ? (placeAbove ? aboveTop : belowTop) : undefined;
   const cardTop = spotlight
     ? clamp(preferredCardTop, cardSafeTop, maxCardTop)
     : undefined;
   const cardWidth = Math.min(360, width - 40);
   const anchoredCardStyle = spotlight ? [styles.tourCardAnchored, { top: cardTop, left: (width - cardWidth) / 2, width: cardWidth }] : null;
+  const handleTourCardLayout = useCallback((event) => {
+    const nextHeight = event.nativeEvent.layout.height;
+    setTourCardLayout((current) => (
+      current.key === active.key && Math.abs(current.height - nextHeight) < 1
+        ? current
+        : { key: active.key, height: nextHeight }
+    ));
+  }, [active.key]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onSkip}>
@@ -5785,7 +6230,7 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
             <View pointerEvents="none" style={[styles.tourSpotlight, { left: spotlight.x, top: spotlight.y, width: spotlight.width, height: spotlight.height }]} />
           </>
         ) : <View style={styles.tourBackdrop} />}
-        <View style={[styles.tourCard, intro && styles.tourIntroCard, anchoredCardStyle]}>
+        <View key={active.key} style={[styles.tourCard, intro && styles.tourIntroCard, anchoredCardStyle]} onLayout={handleTourCardLayout}>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Skip onboarding tour" style={styles.tourCloseButton} activeOpacity={0.78} onPress={onSkip}>
             <Ionicons name="close" size={17} color="#5d5754" />
           </TouchableOpacity>
@@ -6736,17 +7181,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 8,
     fontWeight: '700'
-  },
-  homeTryBadge: {
-    position: 'absolute',
-    right: 10,
-    bottom: 10,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center'
   },
   homeProductEyebrow: {
     ...typography.caption,
@@ -8321,6 +8755,9 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%'
   },
+  avatarPositionedImage: {
+    position: 'absolute'
+  },
   resilientImageSkeleton: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#eee7e2'
@@ -9633,42 +10070,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     backgroundColor: '#fbf7f6'
   },
-  aiConversationHeader: {
-    minHeight: 116,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e7dfda',
-    backgroundColor: '#fffdfb',
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 13
-  },
-  aiConversationIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#f5ece9',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  aiConversationCopy: {
-    flex: 1,
-    minWidth: 0
-  },
-  aiConversationTitle: {
-    ...typography.h3,
-    marginTop: 5,
-    color: '#252221',
-    fontSize: 20,
-    lineHeight: 26
-  },
-  aiConversationSubtitle: {
-    ...typography.smallBody,
-    marginTop: 6,
-    color: '#706762',
-    fontWeight: '500'
-  },
   aiHeroPanel: {
     minHeight: 92,
     borderRadius: 10,
@@ -9691,14 +10092,6 @@ const styles = StyleSheet.create({
   aiHeroCopy: {
     flex: 1,
     minWidth: 0
-  },
-  aiStudioEyebrow: {
-    ...typography.label,
-    color: '#776f6a',
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: '700',
-    letterSpacing: 0
   },
   aiGreetingText: {
     ...typography.h4,
@@ -10064,16 +10457,6 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
     elevation: 6
-  },
-  aiImageButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: '#e2dad6',
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center'
   },
   aiComposerInput: {
     ...typography.body,
@@ -12398,6 +12781,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center'
   },
+  avatarAdjustPreviewWrap: {
+    marginTop: 18,
+    alignItems: 'center'
+  },
+  avatarAdjustPreviewFrame: {
+    width: 132,
+    height: 132,
+    borderRadius: 66,
+    overflow: 'hidden',
+    borderWidth: 4,
+    borderColor: '#ffffff',
+    backgroundColor: '#eee9e6',
+    shadowColor: '#000000',
+    shadowOpacity: 0.11,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4
+  },
+  avatarAdjustPreviewImage: {
+    width: '100%',
+    height: '100%'
+  },
+  avatarAdjustControls: {
+    marginTop: 18,
+    gap: 8,
+    alignItems: 'center'
+  },
+  avatarAdjustRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10
+  },
+  avatarAdjustIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: '#ded3ce',
+    backgroundColor: '#fbf7f6',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
   profileEditLabel: {
     ...typography.caption,
     marginTop: 17,
@@ -12459,6 +12884,31 @@ const styles = StyleSheet.create({
     marginTop: 20,
     flexDirection: 'row',
     gap: 10
+  },
+  profilePasswordNotice: {
+    marginTop: 18,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fbf7f6',
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9
+  },
+  profilePasswordNoticeText: {
+    ...typography.caption,
+    flex: 1,
+    color: '#5d5754',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700'
+  },
+  profilePasswordPrimaryButton: {
+    flex: 0,
+    marginTop: 18,
+    width: '100%'
   },
   profileEditCancelButton: {
     flex: 1,
@@ -12585,6 +13035,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700'
+  },
+  profileCreditHistoryAction: {
+    minHeight: 26,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fffdfb',
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profileCreditHistoryActionText: {
+    ...typography.caption,
+    color: '#9b5658',
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '800'
   },
   profileCreditHistoryHeaderRow: {
     marginTop: 12,
