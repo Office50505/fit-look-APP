@@ -691,7 +691,7 @@ function visibleCurrency(html, finalUrl) {
     normalizeCurrency(getMeta(html, ['product:price:currency', 'og:price:currency', 'pricecurrency'])) ||
     normalizeCurrency(priceText) ||
     currencyFromUrl(finalUrl) ||
-    'USD'
+    'INR'
   );
 }
 
@@ -1019,7 +1019,6 @@ function draftToExternalProduct(draft, fallbackQuery = '') {
   if (!sourceUrl || !imageUrl) throw new Error('Product link or image was not found');
   const price = Number(draft.price);
   const compareAtPrice = Number(draft.compareAtPrice);
-  const currency = normalizeCurrency(draft.currency) || 'USD';
   const rating = Number(draft.rating);
   const ratingCount = Number(draft.ratingCount);
 
@@ -1034,7 +1033,7 @@ function draftToExternalProduct(draft, fallbackQuery = '') {
     gender: draft.gender || 'unisex',
     price: Number.isFinite(price) ? price : null,
     compareAtPrice: Number.isFinite(compareAtPrice) ? compareAtPrice : null,
-    currency,
+    currency: 'INR',
     rating: Number.isFinite(rating) ? rating : 0,
     ratingCount: Number.isFinite(ratingCount) ? ratingCount : 0,
     badge: 'Amazon',
@@ -1380,7 +1379,7 @@ router.post('/', requireAdmin, upload.single('image'), async (req, res) => {
       gender: gender || 'unisex',
       price: Number(price),
       compareAtPrice: req.body.compareAtPrice ? Number(req.body.compareAtPrice) : undefined,
-      currency: normalizeCurrency(req.body.currency) || 'USD',
+      currency: 'INR',
       rating: req.body.rating ? Number(req.body.rating) : 4.5,
       ratingCount: req.body.ratingCount ? Number(req.body.ratingCount) : 0,
       badge: req.body.badge,

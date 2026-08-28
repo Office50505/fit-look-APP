@@ -104,15 +104,18 @@ async function prepareClosetItemPhoto(file) {
   }
 }
 
-function formatMoney(value, currency = 'USD') {
+function formatMoney(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return 'Price unavailable';
-  const normalizedCurrency = String(currency || 'USD').toUpperCase();
-  const locale = normalizedCurrency === 'INR' ? 'en-IN' : 'en-US';
+  const formatOptions = {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: Number.isInteger(amount) ? 0 : 2
+  };
   try {
-    return new Intl.NumberFormat(locale, { style: 'currency', currency: normalizedCurrency }).format(amount);
+    return new Intl.NumberFormat('en-IN', formatOptions).format(amount);
   } catch {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+    return `₹${amount.toLocaleString('en-IN', { maximumFractionDigits: formatOptions.maximumFractionDigits })}`;
   }
 }
 
@@ -2359,7 +2362,7 @@ function TokenPage({ user, setUser }) {
       <section className="wrap token-hero">
         <p className="kicker">FitLook Tokens</p>
         <h1>One token, one AI try-on.</h1>
-        <p className="lead">Get 20 free tokens on signup. Subscribe for Rs 1000/month to receive 100 try-on tokens for the month.</p>
+        <p className="lead">Get 20 free tokens on signup. Subscribe for {formatMoney(1000)}/month to receive 100 try-on tokens for the month.</p>
         <div className="token-balance">{user ? <><span>{user.tokens}</span><strong>tokens available</strong></> : <><span>20</span><strong>free tokens on signup</strong></>}</div>
         {message && <p className={`token-message ${/failed|not completed|missing|Could not|error/i.test(message) ? 'error-message' : ''}`}>{message}</p>}
       </section>
@@ -2371,7 +2374,7 @@ function TokenPage({ user, setUser }) {
             {isActive && <span>Active</span>}
           </div>
           <p className="token-amount">100 tokens every month</p>
-          <p className="token-price">Rs 1000</p>
+          <p className="token-price">{formatMoney(1000)}</p>
           <p>PhonePe checkout opens securely when you subscribe. Tokens are added only after payment is confirmed.</p>
           <button type="button" onClick={startCheckout} disabled={checkoutLoading}>
             {checkoutLoading ? 'Opening PhonePe...' : user ? 'Subscribe with PhonePe' : 'Create Account First'}

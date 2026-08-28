@@ -4799,7 +4799,7 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
               {tier.badge ? <Text style={styles.creditTierBadge}>{tier.badge}</Text> : null}
               <View style={styles.creditTierTop}>
                 <Text style={styles.creditTierName}>{tier.name}</Text>
-                <Text style={styles.creditTierPrice}>${tier.price}</Text>
+                <Text style={styles.creditTierPrice}>{formatMoney(tier.price)}</Text>
               </View>
               <View style={styles.creditAmountRow}>
                 <Text style={styles.creditAmount}>{tier.credits}</Text>
@@ -4828,16 +4828,16 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
         <Text style={styles.orderSummaryTitle}>Order Summary</Text>
         <View style={styles.orderSummaryRow}>
           <Text style={styles.orderSummaryText}>{selectedTier.name} Package ({selectedTier.credits.toLocaleString()} Credits)</Text>
-          <Text style={styles.orderSummaryText}>${selectedTier.price.toFixed(2)}</Text>
+          <Text style={styles.orderSummaryText}>{formatMoney(selectedTier.price)}</Text>
         </View>
         <View style={styles.orderSummaryRow}>
           <Text style={styles.orderSummaryText}>Estimated Tax (8%)</Text>
-          <Text style={styles.orderSummaryText}>${estimatedTax.toFixed(2)}</Text>
+          <Text style={styles.orderSummaryText}>{formatMoney(estimatedTax)}</Text>
         </View>
         <View style={styles.orderSummaryDivider} />
         <View style={styles.orderSummaryRow}>
           <Text style={styles.totalAmountLabel}>TOTAL AMOUNT</Text>
-          <Text style={styles.totalAmountValue}>${totalAmount.toFixed(2)}</Text>
+          <Text style={styles.totalAmountValue}>{formatMoney(totalAmount)}</Text>
         </View>
       </View>
 

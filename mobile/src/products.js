@@ -125,9 +125,9 @@ export function normalizeProduct(apiProduct = {}) {
   const id = firstString(raw.id, raw._id, raw.productId, raw.asin, raw.sourceUrl, raw.affiliateLink);
   const title = firstString(raw.name, raw.title, raw.productName, raw.label, raw.description) || 'Untitled product';
   const imageUrls = normalizeImages(raw);
-  const currency = cleanText(raw.currency || raw.priceCurrency || raw.currencyCode).toUpperCase() || 'USD';
-  const price = normalizePrice(raw.salePrice ?? raw.price ?? raw.currentPrice, currency);
-  const compareAtPrice = normalizePrice(raw.compareAtPrice ?? raw.listPrice ?? raw.originalPrice, currency);
+  const sourceCurrency = cleanText(raw.currency || raw.priceCurrency || raw.currencyCode).toUpperCase() || 'INR';
+  const price = normalizePrice(raw.salePrice ?? raw.price ?? raw.currentPrice, sourceCurrency);
+  const compareAtPrice = normalizePrice(raw.compareAtPrice ?? raw.listPrice ?? raw.originalPrice, sourceCurrency);
   const createdAt = raw.createdAt || raw.updatedAt || null;
   const createdAtTime = createdAt ? new Date(createdAt).getTime() : NaN;
   const calculatedNew = Number.isFinite(createdAtTime)
@@ -146,7 +146,7 @@ export function normalizeProduct(apiProduct = {}) {
     imageUrls,
     price,
     compareAtPrice,
-    currency,
+    currency: 'INR',
     colors: normalizeColors(raw),
     sizes: normalizeSizes(raw),
     isNew: Boolean(raw.isNew || raw.isNewArrival || calculatedNew),

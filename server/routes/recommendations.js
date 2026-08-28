@@ -1,6 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import Product, { productToClient } from '../models/Product.js';
+import ClosetItem from '../models/ClosetItem.js';
 import User from '../models/User.js';
 import UserEvent from '../models/UserEvent.js';
 import UserPreference from '../models/UserPreference.js';
@@ -52,6 +53,59 @@ function normalizeKey(value = '') {
 
 function queryTerms(value = '') {
   return [...new Set(String(value).toLowerCase().match(/[a-z0-9]{3,}/g) || [])].slice(0, 8);
+}
+
+function alphaTokens(value = '') {
+  return String(value || '').toLowerCase().match(/[a-z]{3,}/g) || [];
+}
+
+function alphaCompact(value = '') {
+  return String(value || '').toLowerCase().replace(/[^a-z]+/g, '');
+}
+
+function editDistanceAtMost(source = '', target = '', maxDistance = 2) {
+  const left = String(source || '');
+  const right = String(target || '');
+  if (!left || !right || Math.abs(left.length - right.length) > maxDistance) return false;
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= left.length; row += 1) {
+    const current = [row];
+    let rowMin = current[0];
+    for (let column = 1; column <= right.length; column += 1) {
+      const cost = left[row - 1] === right[column - 1] ? 0 : 1;
+      const value = Math.min(
+        previous[column] + 1,
+        current[column - 1] + 1,
+        previous[column - 1] + cost
+      );
+      current[column] = value;
+      rowMin = Math.min(rowMin, value);
+    }
+    if (rowMin > maxDistance) return false;
+    previous = current;
+  }
+  return previous[right.length] <= maxDistance;
+}
+
+function compactHasApproxTerm(compact = '', target = '', maxDistance = 2) {
+  const minLength = Math.max(1, target.length - maxDistance);
+  const maxLength = target.length + maxDistance;
+  for (let start = 0; start < compact.length; start += 1) {
+    for (let length = minLength; length <= maxLength; length += 1) {
+      const piece = compact.slice(start, start + length);
+      if (piece.length < minLength) continue;
+      if (editDistanceAtMost(piece, target, maxDistance)) return true;
+    }
+  }
+  return false;
+}
+
+function mentionsLookmefy(message = '') {
+  const lower = String(message || '').toLowerCase();
+  const compact = alphaCompact(message);
+  if (/\blook\s*mefy\b|\blookmefy\b/.test(lower) || compact.includes('lookmefy')) return true;
+  if (compactHasApproxTerm(compact, 'lookmefy', 2)) return true;
+  return alphaTokens(message).some((token) => token.length >= 6 && editDistanceAtMost(token, 'lookmefy', 2));
 }
 
 function readableError(value, fallback = 'Request failed') {
@@ -214,13 +268,197 @@ router.get('/recent-searches', requireUser, async (req, res) => {
   res.json({ searches });
 });
 
-const wearableProductPattern = /\b(dresses?|gowns?|frocks?|bodycon|maxi|midi|mini\s*dress|a-line\s*dress|wrap\s*dress|party\s*dress|cocktail\s*dress|slip\s*dress|shirt\s*dress|skater\s*dress|sarees?|saris?|lehengas?|dupattas?|kurtas?|kurtis?|salwars?|churidars?|anarkali|palazzos?|shararas?|ethnic\s*wear|shirts?|t\s*-?\s*shirts?|tshirts?|tees?|tops?|blouses?|tunics?|pants?|trousers?|trackpants?|joggers?|leggings?|jeans?|denims?|bottomwear|shorts?|skirts?|jackets?|coats?|blazers?|hoodies?|sweatshirts?|sweaters?|suits?|waistcoats?|vests?|shoes?|sneakers?|heels?|sandals?|boots?|slippers?|footwear|loafers?|pumps?|flats?|watches?|smart\s*watches?|bags?|handbags?|wallets?|purses?|belts?|caps?|hats?|scarves?|sunglasses?|eyewear|glasses|jewellery|jewelry|earrings?|necklaces?|bracelets?|accessories|loungewear|sleepwear|nightwear|pajamas?|pyjamas?)\b/i;
+const wearableProductPattern = /\b(dresses?|gowns?|frocks?|bodycon|maxi|midi|mini\s*dress|a-line\s*dress|wrap\s*dress|party\s*dress|cocktail\s*dress|slip\s*dress|shirt\s*dress|skater\s*dress|sarees?|saris?|lehengas?|dupattas?|kurtas?|kurtis?|salwars?|churidars?|anarkali|palazzos?|shararas?|ethnic\s*wear|shirts?|t\s*-?\s*shirts?|tshirts?|tees?|tops?|blouses?|tunics?|pants?|trousers?|trackpants?|joggers?|leggings?|jeans?|denims?|bottomwear|shorts?|skirts?|jackets?|coats?|blazers?|hoodies?|sweatshirts?|sweaters?|suits?|waistcoats?|vests?|shoes?|sneakers?|heels?|sandals?|boots?|slippers?|footwear|loafers?|pumps?|flats?|watches?|smart\s*watches?|bags?|handbags?|wallets?|purses?|belts?|caps?|hats?|scarves?|sunglasses?|eyewear|glasses|jewellery|jewelry|earrings?|necklaces?|bracelets?|accessories|loungewear|sleepwear|nightwear|pajamas?|pyjamas?|swimwear|bikinis?|cover\s*ups?|beachwear)\b/i;
 const nonWearableSearchPattern = /\b(beauty|makeup|cosmetics?|perfume|fragrance|skincare|serum|lipsticks?|cookware|kitchen|home\s*decor|furniture|appliances?|toys?|books?|electronics?|phones?|laptops?|groceries|food|medicine|kids?\s*toys?)\b/i;
+const fashionSignalPattern = /\b(black|white|red|pink|blue|green|yellow|beige|brown|maroon|purple|lavender|grey|gray|cream|linen|cotton|denim|silk|wool|leather|formal|casual|classy|streetwear|old\s*money|minimal|oversized|slim|regular|under|below|upto|up\s*to|budget|rs\.?|inr|₹|men|women|male|female|unisex)\b/i;
+const occasionOnlyPattern = /\b(beach|pool|vacation|holiday|resort|travel|airport|wedding|engagement|reception|sangeet|haldi|diwali|festival|festive|eid|christmas|halloween|party|club|concert|brunch|date|dinner|office|work|interview|college|campus|gym|workout|summer|winter|rainy|monsoon)\b/i;
+const sourceChoicePattern = /^(?:check\s+(?:my\s+)?wardrobe|wardrobe|closet|my\s+closet|search\s+online|search\s+amazon|shop\s+online|online|amazon|show\s+products?)$/i;
 
 function fashionSearchBlock(message = '') {
   const lower = String(message || '').toLowerCase();
   if (!nonWearableSearchPattern.test(lower)) return '';
   return 'AI Studio can search wearable fashion here. Try shirts, dresses, pants, shoes, jackets, ethnic wear, watches, bags, or accessories by colour, budget, occasion, fabric, or vibe.';
+}
+
+function aiStudioChoiceAction(message = '') {
+  const normalized = String(message || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (/^(?:check\s+(?:my\s+)?wardrobe|wardrobe|closet|my closet)$/.test(normalized)) return 'wardrobe';
+  if (/^(?:search\s+online|search\s+amazon|shop\s+online|online|amazon|show products?)$/.test(normalized)) return 'online';
+  return '';
+}
+
+function latestUserContext(history = [], fallback = '') {
+  const currentAction = aiStudioChoiceAction(fallback);
+  const entries = Array.isArray(history) ? history : [];
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.role !== 'user') continue;
+    const text = String(entry.text || '').trim();
+    if (!text || aiStudioChoiceAction(text)) continue;
+    return text.slice(0, 600);
+  }
+  return currentAction ? '' : String(fallback || '').trim().slice(0, 600);
+}
+
+function lookmefyHelpReply(message = '') {
+  const lower = String(message || '').toLowerCase();
+  const asksLookmefy = mentionsLookmefy(message);
+  if (!asksLookmefy) return null;
+  const wantsFeatures = /\b(feature|features|explain|how|work|works)\b/.test(lower);
+  return {
+    reply: wantsFeatures
+      ? 'Lookmefy helps you discover fashion products, manage a digital wardrobe, create AI try-on images and videos, and track credits from your profile. In AI Studio, ask for an item, occasion, budget, colour, fabric, or vibe and I can search products or help style from your wardrobe.'
+      : 'Lookmefy is an AI fashion app for shopping, wardrobe planning, and virtual try-ons. You can find products, save wardrobe pieces, preview looks on your profile, and manage credits in one place.',
+    products: [],
+    suggestions: ['Beach outfit', 'Kurta for wedding', 'Black shirt under ₹1000']
+  };
+}
+
+function naturalAiStudioReply(message = '') {
+  const lower = String(message || '').toLowerCase().trim();
+  if (/^(hi|hey|hello|yo|sup|heyy|hii|namaste)[!.\s]*$/i.test(lower)) {
+    return {
+      reply: 'Hey. What are we styling today? Tell me an occasion, item, budget, colour, or vibe.',
+      products: [],
+      suggestions: ['Beach outfit', 'Kurta for wedding', 'Black shirt under ₹1000']
+    };
+  }
+  if (/^(thanks|thank you|thx|cool|nice|great|perfect|okay|ok|k|love it|looks good|sounds good)[!.\s]*$/i.test(lower)) {
+    return {
+      reply: 'Anytime. Want wardrobe help, online products, or a try-on plan?',
+      products: [],
+      suggestions: ['Check wardrobe', 'Search online', 'Try on']
+    };
+  }
+  if (/\b(how are you|what'?s up)\b/i.test(lower)) {
+    return {
+      reply: 'I’m good and ready to style. Give me an occasion, product, budget, colour, fabric, or vibe.',
+      products: [],
+      suggestions: ['Office outfit', 'Casual sneakers', 'Linen shirts']
+    };
+  }
+  if (/\b(who are you|what can you do)\b/i.test(lower)) {
+    return {
+      reply: 'I can help with outfit ideas, wardrobe checks, shopping searches, try-on planning, and Lookmefy questions.',
+      products: [],
+      suggestions: ['Beach outfit', 'Search online', 'What is Lookmefy?']
+    };
+  }
+  return null;
+}
+
+function hasFashionSignal(message = '') {
+  const value = String(message || '');
+  return (
+    wearableProductPattern.test(value) ||
+    occasionOnlyPattern.test(value) ||
+    fashionSignalPattern.test(value) ||
+    budgetCeiling(value)
+  );
+}
+
+function unclearFashionReply(message = '') {
+  const compact = String(message || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const words = String(message || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  if (sourceChoicePattern.test(String(message || '').trim())) return '';
+  if (hasFashionSignal(message)) return '';
+  if (!compact) return '';
+  if (words.length <= 2 && compact.length >= 8) {
+    return 'I could not understand that as a fashion request. Try something specific like "beach outfit", "kurta for wedding", "black shirt under ₹1000", or "office shoes".';
+  }
+  return 'Give me one fashion detail and I will make it useful: an item, occasion, place, budget, colour, fabric, or vibe. For example: "beach outfit", "kurta for wedding", or "white sneakers under ₹1500".';
+}
+
+function shouldAskSourceChoice(message = '') {
+  const value = String(message || '').trim();
+  if (!value || sourceChoicePattern.test(value)) return false;
+  if (wearableProductPattern.test(value)) return false;
+  if (budgetCeiling(value)) return false;
+  return occasionOnlyPattern.test(value) || /\b(outfit|look|wear|style|dress me|what should i wear)\b/i.test(value);
+}
+
+function sourceChoiceReply(message = '') {
+  const context = String(message || 'this').replace(/\s+/g, ' ').trim();
+  return {
+    reply: `For ${context}, do you want me to build from your wardrobe first or search online for product options?`,
+    products: [],
+    suggestions: ['Check wardrobe', 'Search online']
+  };
+}
+
+function onlineSearchPromptForContext(message = '', user = {}) {
+  const prompt = String(message || '').trim();
+  if (!prompt) return '';
+  if (wearableProductPattern.test(prompt)) return prompt;
+  const genderWord = user?.genderPreference === 'male' ? 'men' : user?.genderPreference === 'female' ? 'women' : '';
+  const lower = prompt.toLowerCase();
+  if (/\bbeach|pool|resort\b/.test(lower)) return `${genderWord} beach outfit beachwear swimwear sandals`.trim();
+  if (/\bdiwali|festival|festive|eid\b/.test(lower)) return `${genderWord} festive ethnic outfit kurta saree lehenga`.trim();
+  if (/\bwedding|engagement|reception|sangeet|haldi\b/.test(lower)) return `${genderWord} wedding guest outfit ethnic wear`.trim();
+  if (/\bhalloween\b/.test(lower)) return `${genderWord} halloween costume outfit`.trim();
+  if (/\bchristmas\b/.test(lower)) return `${genderWord} christmas party outfit`.trim();
+  if (/\boffice|work|interview\b/.test(lower)) return `${genderWord} office outfit formal wear`.trim();
+  if (/\bgym|workout\b/.test(lower)) return `${genderWord} gym activewear outfit`.trim();
+  if (/\btravel|airport|vacation|holiday\b/.test(lower)) return `${genderWord} travel outfit vacation wear`.trim();
+  return `${prompt} ${genderWord} outfit`.replace(/\s+/g, ' ').trim();
+}
+
+function closetText(item = {}) {
+  return [
+    item.name,
+    item.category,
+    item.color,
+    item.fabric,
+    item.pattern,
+    item.season,
+    item.formality,
+    ...(item.occasions || []),
+    ...(item.tags || [])
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function scoreClosetItemForContext(item = {}, message = '') {
+  const context = String(message || '').toLowerCase();
+  const text = closetText(item);
+  let score = item.favorite ? 4 : 0;
+  for (const term of queryTerms(context)) {
+    if (text.includes(term)) score += 4;
+  }
+  if (/\bbeach|pool|resort|vacation|summer\b/.test(context) && ['tops', 'dresses', 'shoes', 'accessories'].includes(item.category)) score += 4;
+  if (/\bwedding|diwali|festival|festive|eid\b/.test(context) && ['ethnic', 'dresses', 'suits', 'shoes', 'accessories'].includes(item.category)) score += 5;
+  if (/\boffice|work|interview|formal\b/.test(context) && ['tops', 'bottoms', 'suits', 'shoes', 'outerwear'].includes(item.category)) score += 4;
+  if (/\bgym|workout\b/.test(context) && ['activewear', 'shoes', 'tops', 'bottoms'].includes(item.category)) score += 4;
+  if (!item.lastWornAt) score += 1;
+  return score;
+}
+
+async function wardrobeReplyForContext(user, message = '') {
+  const items = await ClosetItem.find({ user: user._id }).sort({ favorite: -1, updatedAt: -1 }).limit(80).lean();
+  if (!items.length) {
+    return {
+      reply: 'Your wardrobe is empty right now. Upload a few clothes first, or I can search online for product options instead.',
+      products: [],
+      suggestions: ['Search online']
+    };
+  }
+  const ranked = items
+    .map((item) => ({ item, score: scoreClosetItemForContext(item, message) }))
+    .sort((a, b) => b.score - a.score || new Date(b.item.updatedAt || 0) - new Date(a.item.updatedAt || 0))
+    .slice(0, 4)
+    .map(({ item }) => item);
+  if (!ranked.length) {
+    return {
+      reply: 'I could not find a strong wardrobe match for that. Add a few more tagged items, or search online for product options.',
+      products: [],
+      suggestions: ['Search online']
+    };
+  }
+  const names = ranked.map((item) => item.name).filter(Boolean);
+  return {
+    reply: `From your wardrobe, start with ${names.slice(0, 3).join(', ')}${names.length > 3 ? `, and ${names[3]}` : ''}. These are the closest matches I found for ${String(message || 'your plan').trim()}.`,
+    products: [],
+    suggestions: ['Search online']
+  };
 }
 
 function productLooksWearable(product = {}, query = '') {
@@ -531,6 +769,55 @@ async function aiStudioChatService({ userId, body = {} }) {
   });
   await updatePreference({ userId: user._id, type: 'style_bot_query', query: message, metadata: { source: 'ai_studio_fashion_search' } });
 
+  const help = lookmefyHelpReply(message);
+  if (help) return help;
+
+  const natural = naturalAiStudioReply(message);
+  if (natural) return natural;
+
+  const choiceAction = aiStudioChoiceAction(message);
+  if (choiceAction) {
+    const context = latestUserContext(body?.history, message);
+    if (!context) {
+      return {
+        reply: choiceAction === 'wardrobe'
+          ? 'What occasion, place, or vibe should I check your wardrobe for?'
+          : 'What should I search online for? Tell me the item, occasion, budget, colour, or vibe.',
+        products: [],
+        suggestions: ['Beach outfit', 'Kurta for wedding', 'Black shirt under ₹1000']
+      };
+    }
+    if (choiceAction === 'wardrobe') {
+      return wardrobeReplyForContext(user, context);
+    }
+    const searchMessage = onlineSearchPromptForContext(context, user);
+    try {
+      const result = await findFashionProducts(searchMessage, user);
+      const products = result.products || [];
+      let reply = '';
+      try {
+        reply = await falAiStudioReply({ message: context, history: body?.history, products, source: result.source });
+      } catch (error) {
+        console.warn('[ai-studio] FAL request failed', readableError(error));
+        reply = localFashionReply(context, products, result.source);
+      }
+      return {
+        reply,
+        products: products.slice(0, 4),
+        suggestions: fashionFollowUps(searchMessage)
+      };
+    } catch (error) {
+      const detail = readableError(error, 'Could not search Amazon for fashion right now. Try another item type, colour, budget, or occasion.');
+      const reply = error.publicMessage || aiStudioSearchFailureReply(detail);
+      console.warn('[ai-studio] Amazon fashion search failed', detail);
+      return {
+        reply,
+        products: [],
+        suggestions: fashionFollowUps(searchMessage)
+      };
+    }
+  }
+
   const blocked = fashionSearchBlock(message);
   if (blocked) {
     return {
@@ -538,6 +825,19 @@ async function aiStudioChatService({ userId, body = {} }) {
       products: [],
       suggestions: fashionFollowUps('')
     };
+  }
+
+  const unclear = unclearFashionReply(message);
+  if (unclear) {
+    return {
+      reply: unclear,
+      products: [],
+      suggestions: ['Beach outfit', 'Kurta for wedding', 'Black shirt under ₹1000']
+    };
+  }
+
+  if (shouldAskSourceChoice(message)) {
+    return sourceChoiceReply(message);
   }
 
   try {
@@ -570,17 +870,24 @@ async function aiStudioChatService({ userId, body = {} }) {
 async function aiStudioChat(req, res) {
   const message = String(req.body?.message || '').trim().slice(0, 600);
   if (!message) return res.status(400).json({ message: 'Message AI Studio first' });
+  const history = Array.isArray(req.body?.history) ? req.body.history.slice(-8) : [];
+  const historyKey = aiStudioChoiceAction(message)
+    ? history
+        .map((entry) => `${entry?.role || ''}:${String(entry?.text || '').slice(0, 120)}`)
+        .join('|')
+        .toLowerCase()
+    : '';
 
   try {
     return inlineOrQueue({
       req,
       res,
       type: 'ai-studio-search',
-      key: `${req.user._id}:fashion:${message.toLowerCase()}`,
+      key: `${req.user._id}:fashion:${message.toLowerCase()}:${historyKey}`,
       payload: {
         body: {
           message,
-          history: Array.isArray(req.body?.history) ? req.body.history.slice(-8) : []
+          history
         }
       },
       maxAttempts: 1,

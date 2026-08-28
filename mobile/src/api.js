@@ -137,15 +137,18 @@ export function imageUrl(url) {
   return `${activeOrigin}${url.startsWith('/') ? url : `/${url}`}`;
 }
 
-export function formatMoney(value, currency = 'USD') {
+export function formatMoney(value) {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return 'Price unavailable';
-  const normalizedCurrency = String(currency || 'USD').toUpperCase();
-  const locale = normalizedCurrency === 'INR' ? 'en-IN' : 'en-US';
+  const formatOptions = {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: Number.isInteger(amount) ? 0 : 2
+  };
   try {
-    return new Intl.NumberFormat(locale, { style: 'currency', currency: normalizedCurrency }).format(amount);
+    return new Intl.NumberFormat('en-IN', formatOptions).format(amount);
   } catch {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+    return `₹${amount.toLocaleString('en-IN', { maximumFractionDigits: formatOptions.maximumFractionDigits })}`;
   }
 }
 
