@@ -9,7 +9,8 @@ function mediaTtlSeconds() {
 
 function documentId(value) {
   if (!value) return '';
-  if (value._id) return documentId(value._id);
+  if (typeof value.toHexString === 'function') return value.toHexString();
+  if (value._id && value._id !== value) return documentId(value._id);
   if (typeof value.toString === 'function') return value.toString();
   return String(value);
 }
