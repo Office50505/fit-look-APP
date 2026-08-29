@@ -1,4 +1,20 @@
-import { logger, requestId } from './logger.js';
+import { logger, redactString, requestId } from './logger.js';
+
+function safeRequestPath(req) {
+  const raw = String(req.originalUrl || req.url || '');
+  if (!raw) return raw;
+  try {
+    const parsed = new URL(raw, 'http://lookmefy.local');
+    for (const key of parsed.searchParams.keys()) {
+      if (/password|token|secret|authorization|cookie|otp|signature|signed|client[_-]?secret/i.test(key)) {
+        parsed.searchParams.set(key, '[redacted]');
+      }
+    }
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return redactString(raw);
+  }
+}
 
 function requestLogger(req, res, next) {
   const id = req.headers['x-request-id'] || requestId();
@@ -12,7 +28,7 @@ function requestLogger(req, res, next) {
     logger[level]('http_request', {
       requestId: req.id,
       method: req.method,
-      path: req.originalUrl || req.url,
+      path: safeRequestPath(req),
       statusCode: res.statusCode,
       durationMs,
       userId: req.user?._id?.toString?.(),
@@ -27,12 +43,16 @@ function errorLogger(error, req, res, _next) {
   logger.error('unhandled_request_error', {
     requestId: req.id,
     method: req.method,
-    path: req.originalUrl || req.url,
+    path: safeRequestPath(req),
     userId: req.user?._id?.toString?.(),
     error
   });
   if (res.headersSent) return;
-  res.status(error.statusCode || 500).json({ message: error.message || 'Something went wrong' });
+  const statusCode = error.statusCode || 500;
+  const message = statusCode >= 500 && process.env.NODE_ENV === 'production'
+    ? 'Something went wrong'
+    : error.message || 'Something went wrong';
+  res.status(statusCode).json({ message });
 }
 
 export { errorLogger, requestLogger };

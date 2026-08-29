@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { storedFileToClientUrl } from '../utils/storage.js';
+import { closetMediaUrl } from '../utils/mediaAccess.js';
 
 const outfitImageSchema = {
   filename: String,
@@ -58,8 +58,8 @@ closetOutfitSchema.methods.toClient = function toClient(itemsById = new Map()) {
     quality: this.quality,
     tokenCost: this.tokenCost,
     favorite: Boolean(this.favorite),
-    garmentUrl: storedFileToClientUrl(this.garment),
-    imageUrl: storedFileToClientUrl(this.image),
+    garmentUrl: this.garment?.path || this.garment?.url ? closetMediaUrl({ kind: 'garment', id: this._id, userId: this.user }) : null,
+    imageUrl: this.image?.path || this.image?.url ? closetMediaUrl({ kind: 'outfit', id: this._id, userId: this.user }) : null,
     createdAt: this.createdAt
   };
 };

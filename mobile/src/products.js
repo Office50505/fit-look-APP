@@ -51,6 +51,31 @@ function normalizePrice(value, currency) {
   return amount;
 }
 
+function currencyFromUrl(value) {
+  const url = cleanText(value);
+  if (!url) return '';
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === 'amzn.in' || host.endsWith('.amazon.in')) return 'INR';
+    if (host.endsWith('.amazon.co.uk')) return 'GBP';
+    if (host.endsWith('.amazon.ca')) return 'CAD';
+    if (host.endsWith('.amazon.com.au')) return 'AUD';
+    if (host.endsWith('.amazon.co.jp')) return 'JPY';
+  } catch {
+    // Keep source currency detection best-effort.
+  }
+  return '';
+}
+
+function normalizeCurrency(product = {}) {
+  const declared = cleanText(product.currency || product.priceCurrency || product.currencyCode).toUpperCase();
+  const inferred = [product.sourceUrl, product.affiliateLink, product.url, product.productUrl]
+    .map(currencyFromUrl)
+    .find(Boolean);
+  if (inferred && (!declared || declared === 'USD')) return inferred;
+  return declared || inferred || 'INR';
+}
+
 function resolveCandidateImage(value) {
   if (!value) return '';
   if (typeof value === 'string') return value;
@@ -125,7 +150,7 @@ export function normalizeProduct(apiProduct = {}) {
   const id = firstString(raw.id, raw._id, raw.productId, raw.asin, raw.sourceUrl, raw.affiliateLink);
   const title = firstString(raw.name, raw.title, raw.productName, raw.label, raw.description) || 'Untitled product';
   const imageUrls = normalizeImages(raw);
-  const sourceCurrency = cleanText(raw.currency || raw.priceCurrency || raw.currencyCode).toUpperCase() || 'INR';
+  const sourceCurrency = normalizeCurrency(raw);
   const price = normalizePrice(raw.salePrice ?? raw.price ?? raw.currentPrice, sourceCurrency);
   const compareAtPrice = normalizePrice(raw.compareAtPrice ?? raw.listPrice ?? raw.originalPrice, sourceCurrency);
   const createdAt = raw.createdAt || raw.updatedAt || null;
@@ -146,7 +171,7 @@ export function normalizeProduct(apiProduct = {}) {
     imageUrls,
     price,
     compareAtPrice,
-    currency: 'INR',
+    currency: sourceCurrency,
     colors: normalizeColors(raw),
     sizes: normalizeSizes(raw),
     isNew: Boolean(raw.isNew || raw.isNewArrival || calculatedNew),

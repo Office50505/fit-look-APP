@@ -9,8 +9,11 @@ import Product from '../models/Product.js';
 import TryOn, { tryOnToClient } from '../models/TryOn.js';
 import User from '../models/User.js';
 import { requireUser } from './auth.js';
+import { effectiveDevMode } from '../utils/devMode.js';
 import { inlineOrQueue, registerJobHandler } from '../utils/jobs.js';
 import { logger } from '../utils/logger.js';
+import { mediaTokenFromRequest, tryOnMediaUrl, verifyMediaAccess } from '../utils/mediaAccess.js';
+import { fetchPublicImage, remoteImageMaxBytes, remoteImageTimeoutMs } from '../utils/remoteFetch.js';
 import { deleteStoredFile, isStorageConfigurationError, readStoredFile, saveStoredFile, storedFileToClientUrl } from '../utils/storage.js';
 import { inferTryOnModel, normalizeTryOnModel } from '../utils/tryOnModel.js';
 import { wearableCompatibility } from '../utils/wearable.js';
@@ -55,7 +58,7 @@ function videoTokenCost() {
 }
 
 function devMode(user) {
-  return Boolean(user?.devMode);
+  return effectiveDevMode(user);
 }
 
 function chargedTokenCost(user) {
@@ -544,19 +547,18 @@ async function dataUriFromProduct(product, timer, options = {}) {
       let lastError;
       for (const url of candidateUrls) {
         try {
-          const response = await fetch(url, {
+          const { bytes, mimetype } = await fetchPublicImage(url, {
+            label: 'Product image',
+            timeoutMs: remoteImageTimeoutMs(),
+            maxBytes: remoteImageMaxBytes(),
             headers: {
               accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
               'user-agent': 'Mozilla/5.0 Lookmefy image fetcher'
             }
           });
-          if (!response.ok) throw new Error('Could not fetch product image');
-          const mimetype = response.headers.get('content-type') || 'image/jpeg';
-          if (!mimetype.startsWith('image/')) throw new Error('Product image URL is not an image');
-          const bytes = Buffer.from(await response.arrayBuffer());
           const normalized = await normalizeAvifImage({
             bytes,
-            mimetype,
+            mimetype: mimetype || 'image/jpeg',
             filename: path.basename(new URL(url).pathname) || 'product',
             label: 'product',
             timer
@@ -594,19 +596,18 @@ async function filePartFromUpload(image, label, timer) {
 }
 
 async function filePartFromRemoteUrl(url, label, timer) {
-  const response = await fetch(url, {
+  const remote = await fetchPublicImage(url, {
+    label: `${label} image`,
+    timeoutMs: remoteImageTimeoutMs(),
+    maxBytes: remoteImageMaxBytes(),
     headers: {
       accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
       'user-agent': 'Mozilla/5.0 Lookmefy image fetcher'
     }
   });
-  if (!response.ok) throw new Error(`Could not fetch ${label} image`);
-  const mimetype = response.headers.get('content-type') || 'image/jpeg';
-  if (!mimetype.startsWith('image/')) throw new Error(`${label} image URL is not an image`);
-  const bytes = Buffer.from(await response.arrayBuffer());
   const normalized = await normalizeAvifImage({
-    bytes,
-    mimetype,
+    bytes: remote.bytes,
+    mimetype: remote.mimetype || 'image/jpeg',
     filename: path.basename(new URL(url).pathname) || label,
     label,
     timer
@@ -1609,12 +1610,12 @@ async function callFalWanImageToImage({ user, product, garmentDataUri, prompt, t
   });
   timer?.mark('fal wan submitted', { requestId: submission.request_id });
   const result = await waitForFalResult(submission, wanTimer);
-  console.log('[tryon:wan] raw response array lengths', {
+  timer?.mark('fal wan response summary', {
     images: Array.isArray(result?.images) ? result.images.length : undefined,
     output: Array.isArray(result?.output) ? result.output.length : undefined,
-    data: Array.isArray(result?.data) ? result.data.length : undefined
+    data: Array.isArray(result?.data) ? result.data.length : undefined,
+    keys: Object.keys(result || {}).slice(0, 20)
   });
-  console.log('[tryon:wan] raw response json', JSON.stringify(result, null, 2));
   const generatedUrl = firstGeneratedImageUrl(result);
   if (!generatedUrl) throw new Error(`FAL Wan returned no image. Response keys: ${Object.keys(result || {}).join(', ')}`);
   const { bytes, mimetype } = await generatedBytesFromUrl(generatedUrl, timer);
@@ -1694,9 +1695,11 @@ function storedOrRemoteImageUrl(image) {
   return storedFileToClientUrl(image) || image?.remoteUrl || image?.sourceUrl || image?.url || '';
 }
 
-function generatedTryOnImageUrl(image) {
+function generatedTryOnImageUrl(tryOn, scope = 'product') {
+  const image = tryOn?.image;
   if (image?.storage === 'remote-pending') return '';
-  return storedFileToClientUrl(image);
+  if (!image?.path && !image?.url && !image?.sourceUrl) return '';
+  return tryOnMediaUrl({ kind: 'image', scope, id: documentId(tryOn), userId: documentId(tryOn?.user) });
 }
 
 function historyDate(record) {
@@ -1716,8 +1719,8 @@ function productHistoryItem(tryOn) {
     label: tryOn.video?.url || tryOn.video?.path ? 'Video Try-On' : 'AI Try-On',
     title: productName,
     subtitle: productBrand || 'Catalog product',
-    imageUrl: generatedTryOnImageUrl(tryOn.image),
-    videoUrl: storedFileToClientUrl(tryOn.video),
+    imageUrl: generatedTryOnImageUrl(tryOn, 'product'),
+    videoUrl: storedFileToClientUrl(tryOn.video) ? tryOnMediaUrl({ kind: 'video', scope: 'product', id: documentId(tryOn), userId: documentId(tryOn?.user) }) : '',
     sourceImageUrl: productImageUrl,
     productId,
     product: product ? {
@@ -1744,8 +1747,8 @@ function customHistoryItem(tryOn) {
     label: 'Custom Try-On',
     title: tryOn.garment?.filename || 'Uploaded garment',
     subtitle: 'Custom upload',
-    imageUrl: generatedTryOnImageUrl(tryOn.image),
-    sourceImageUrl: storedFileToClientUrl(tryOn.garment),
+    imageUrl: generatedTryOnImageUrl(tryOn, 'custom'),
+    sourceImageUrl: storedFileToClientUrl(tryOn.garment) ? tryOnMediaUrl({ kind: 'garment', scope: 'custom', id: documentId(tryOn), userId: documentId(tryOn?.user) }) : '',
     provider: tryOn.provider,
     model: tryOn.model,
     tokenCost: tryOn.tokenCost,
@@ -1762,7 +1765,7 @@ function externalHistoryItem(tryOn) {
     label: 'AI Try-On',
     title: productName,
     subtitle: tryOn.brand || 'External product',
-    imageUrl: generatedTryOnImageUrl(tryOn.image),
+    imageUrl: generatedTryOnImageUrl(tryOn, 'external'),
     sourceImageUrl: tryOn.imageUrl || '',
     sourceUrl: tryOn.sourceUrl,
     affiliateLink: tryOn.affiliateLink,
@@ -2543,12 +2546,26 @@ router.get('/custom/latest', requireUser, async (req, res) => {
   res.json({ tryOn: latest || null });
 });
 
+async function requireTryOnMediaAccess(req, { scope, kind, field }) {
+  const access = verifyMediaAccess(mediaTokenFromRequest(req), {
+    scope,
+    id: req.params.id,
+    kind,
+    field
+  });
+  if (!access) return null;
+  const Model = kind === 'video' ? generatedVideoModelForScope(scope) : generatedImageModelForScope(scope);
+  if (!Model) return null;
+  const record = await Model.findById(req.params.id).select(`${field} user`).lean();
+  if (!record || documentId(record.user) !== access.userId) return null;
+  return record;
+}
+
 router.get('/image/:scope/:id', async (req, res) => {
   try {
     const scope = String(req.params.scope || '').toLowerCase();
-    const Model = generatedImageModelForScope(scope);
-    if (!Model) return res.status(404).json({ message: 'Generated image not found' });
-    const record = await Model.findById(req.params.id).select('image').lean();
+    const record = await requireTryOnMediaAccess(req, { scope, kind: 'image', field: 'image' });
+    if (!record) return res.status(401).json({ message: 'Generated image link expired' });
     const image = record?.image;
     if (!image) return res.status(404).json({ message: 'Generated image not found' });
 
@@ -2556,15 +2573,18 @@ router.get('/image/:scope/:id', async (req, res) => {
       const { bytes, mimetype } = await generatedBytesFromUrl(image.sourceUrl);
       res.set({
         'Content-Type': mimetype || image.mimetype || 'image/jpeg',
-        'Cache-Control': 'public, max-age=300'
+        'Cache-Control': 'private, max-age=300'
       });
       return res.send(bytes);
     }
 
-    const finalUrl = storedFileToClientUrl(image);
-    const requestPath = String(req.originalUrl || '').split('?')[0];
-    if (finalUrl && finalUrl !== requestPath) return res.redirect(302, finalUrl);
-    return res.status(404).json({ message: 'Generated image is not available yet' });
+    if (!image.path && !image.url) return res.status(404).json({ message: 'Generated image is not available yet' });
+    const stored = await readStoredFile(image);
+    res.set({
+      'Content-Type': stored.mimetype || image.mimetype || 'image/jpeg',
+      'Cache-Control': 'private, max-age=300'
+    });
+    return res.send(stored.bytes);
   } catch (error) {
     logger.error('tryon_image_proxy_failed', {
       scope: req.params.scope,
@@ -2578,9 +2598,8 @@ router.get('/image/:scope/:id', async (req, res) => {
 router.get('/video/:scope/:id', async (req, res) => {
   try {
     const scope = String(req.params.scope || '').toLowerCase();
-    const Model = generatedVideoModelForScope(scope);
-    if (!Model) return res.status(404).json({ message: 'Generated video not found' });
-    const record = await Model.findById(req.params.id).select('video').lean();
+    const record = await requireTryOnMediaAccess(req, { scope, kind: 'video', field: 'video' });
+    if (!record) return res.status(401).json({ message: 'Generated video link expired' });
     const video = record?.video;
     if (!video?.path && !video?.url) return res.status(404).json({ message: 'Generated video not found' });
 
@@ -2596,6 +2615,29 @@ router.get('/video/:scope/:id', async (req, res) => {
       error
     });
     return res.status(502).json({ message: 'Generated video is temporarily unavailable' });
+  }
+});
+
+router.get('/garment/:scope/:id', async (req, res) => {
+  try {
+    const scope = String(req.params.scope || '').toLowerCase();
+    const record = await requireTryOnMediaAccess(req, { scope, kind: 'garment', field: 'garment' });
+    if (!record) return res.status(401).json({ message: 'Garment media link expired' });
+    const garment = record?.garment;
+    if (!garment?.path && !garment?.url) return res.status(404).json({ message: 'Garment media not found' });
+    const stored = await readStoredFile(garment);
+    res.set({
+      'Content-Type': stored.mimetype || garment.mimetype || 'image/jpeg',
+      'Cache-Control': 'private, max-age=300'
+    });
+    return res.send(stored.bytes);
+  } catch (error) {
+    logger.error('tryon_garment_proxy_failed', {
+      scope: req.params.scope,
+      id: req.params.id,
+      error
+    });
+    return res.status(502).json({ message: 'Garment media is temporarily unavailable' });
   }
 });
 

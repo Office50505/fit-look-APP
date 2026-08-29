@@ -39,11 +39,6 @@
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Lookmefy needs camera access so you can take profile photos for virtual try-ons.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

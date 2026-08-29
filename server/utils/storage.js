@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -115,8 +116,8 @@ function safeName(value = '', fallback = 'file') {
 function safeFilename({ filename, prefix = 'file', mimetype }) {
   const parsed = path.parse(String(filename || ''));
   const extension = (parsed.ext || extensionForMimetype(mimetype)).toLowerCase();
-  if (filename) return `${safeName(parsed.name, prefix)}${extension}`;
-  return `${safeName(prefix, 'file')}-${Date.now()}-${Math.round(Math.random() * 1e9)}${extension}`;
+  const base = filename ? safeName(parsed.name, prefix) : safeName(prefix, 'file');
+  return `${base}-${Date.now()}-${randomUUID().slice(0, 12)}${extension}`;
 }
 
 function cleanObjectPath(value = '') {

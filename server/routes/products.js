@@ -4,9 +4,11 @@ import Product, { productToClient } from '../models/Product.js';
 import User from '../models/User.js';
 import { requireUser } from './auth.js';
 import { clearRecommendationCaches } from './recommendations.js';
+import { requireAdmin } from '../utils/adminAuth.js';
 import { inferTryOnModel, normalizeTryOnModel } from '../utils/tryOnModel.js';
 import { createHybridCache } from '../utils/cache.js';
 import { inlineOrQueue, registerJobHandler } from '../utils/jobs.js';
+import { fetchPublicResource } from '../utils/remoteFetch.js';
 import { isStorageConfigurationError, saveStoredFile } from '../utils/storage.js';
 import { wearableCompatibility } from '../utils/wearable.js';
 import { genderCompatibility, genderedSearchQuery, genderPreferenceForQuery } from '../utils/genderPreference.js';
@@ -578,9 +580,9 @@ function numberFrom(value) {
 function priceFromText(value) {
   const text = stripTags(value).replace(/,/g, '').replace(/\s+/g, ' ').trim();
   if (!text) return undefined;
-  const compactCurrency = text.match(/(?:₹|Rs\.?|INR|\$|USD|€|£)\s*(\d{1,8})(\d{2})\b/i);
-  if (compactCurrency && compactCurrency[1].length > 2) {
-    const parsed = Number(`${compactCurrency[1]}.${compactCurrency[2]}`);
+  const explicitDecimal = text.match(/(?:₹|Rs\.?|INR|\$|USD|€|£)\s*(\d{1,8})\.(\d{1,2})\b/i);
+  if (explicitDecimal) {
+    const parsed = Number(`${explicitDecimal[1]}.${explicitDecimal[2].padEnd(2, '0')}`);
     if (Number.isFinite(parsed)) return parsed;
   }
   const amounts = [...text.matchAll(/\d+(?:\.\d{1,2})?/g)].map((match) => match[0]);
@@ -944,15 +946,17 @@ function cleanDescription(value = '', bullets = []) {
 async function buildProductDraft(affiliateLink) {
   const url = cleanUrl(affiliateLink);
   if (!url) throw new Error('Affiliate link is required');
-  const response = await fetch(url, {
-    redirect: 'follow',
+  const { response, bytes } = await fetchPublicResource(url, {
+    label: 'Affiliate product page',
+    timeoutMs: Math.max(1000, Number(process.env.AMAZON_PRODUCT_TIMEOUT_MS) || 15000),
+    maxBytes: Math.max(64 * 1024, Number(process.env.AMAZON_PRODUCT_MAX_BYTES) || 2 * 1024 * 1024),
+    allowedContentTypePrefixes: ['text/html', 'application/xhtml+xml'],
     headers: {
       accept: 'text/html,application/xhtml+xml',
       'user-agent': 'Mozilla/5.0 Lookmefy product importer'
     }
   });
-  if (!response.ok) throw new Error('Could not open that affiliate link');
-  const html = await response.text();
+  const html = bytes.toString('utf8');
   const finalUrl = response.url || url;
   const product = parseJsonLdProduct(html) || parseEmbeddedProduct(html) || {};
   const offer = productOffer(product);
@@ -1033,7 +1037,7 @@ function draftToExternalProduct(draft, fallbackQuery = '') {
     gender: draft.gender || 'unisex',
     price: Number.isFinite(price) ? price : null,
     compareAtPrice: Number.isFinite(compareAtPrice) ? compareAtPrice : null,
-    currency: 'INR',
+    currency: draft.currency || 'INR',
     rating: Number.isFinite(rating) ? rating : 0,
     ratingCount: Number.isFinite(ratingCount) ? ratingCount : 0,
     badge: 'Amazon',
@@ -1083,13 +1087,6 @@ function hasUsableProductTitle(product = {}, query = '') {
   if (!productSignal.test(name)) return false;
   if (tokens.length >= 3) return true;
   return productSignal.test(name);
-}
-
-function requireAdmin(req, res, next) {
-  const adminKey = process.env.ADMIN_KEY;
-  if (!adminKey) return res.status(500).json({ message: 'ADMIN_KEY is missing on the server' });
-  if (req.headers['x-admin-key'] !== adminKey) return res.status(401).json({ message: 'Invalid admin key' });
-  next();
 }
 
 function sortFor(value) {
@@ -1379,7 +1376,7 @@ router.post('/', requireAdmin, upload.single('image'), async (req, res) => {
       gender: gender || 'unisex',
       price: Number(price),
       compareAtPrice: req.body.compareAtPrice ? Number(req.body.compareAtPrice) : undefined,
-      currency: 'INR',
+      currency: String(req.body.currency || 'INR').trim().toUpperCase(),
       rating: req.body.rating ? Number(req.body.rating) : 4.5,
       ratingCount: req.body.ratingCount ? Number(req.body.ratingCount) : 0,
       badge: req.body.badge,

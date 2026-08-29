@@ -1,4 +1,6 @@
 import mongoose from 'mongoose';
+import { effectiveDevMode, signupDevModeDefault } from '../utils/devMode.js';
+import { profileMediaUrl } from '../utils/mediaAccess.js';
 import { storedFileToClientUrl } from '../utils/storage.js';
 
 function signupTokens() {
@@ -7,7 +9,7 @@ function signupTokens() {
 }
 
 function defaultDevMode() {
-  return ['1', 'true', 'yes', 'on'].includes(String(process.env.SIGNUP_DEV_MODE_DEFAULT || '').toLowerCase());
+  return signupDevModeDefault();
 }
 
 const userSchema = new mongoose.Schema(
@@ -84,6 +86,13 @@ userSchema.methods.toClient = function toClient() {
   const avatarPhotoUrl = bodyPhotoIsFullBody
     ? bodyPhotoUrl || uploadedAvatarPhotoUrl
     : uploadedAvatarPhotoUrl || bodyPhotoUrl;
+  const avatarPhotoField = bodyPhotoIsFullBody && bodyPhotoUrl
+    ? 'body'
+    : uploadedAvatarPhotoUrl
+      ? 'avatar'
+      : bodyPhotoUrl
+        ? 'body'
+        : '';
   const avatarPhotoSource = avatarPhotoIsCustomTryOn ? '' : this.avatarPhoto?.source || '';
 
   return {
@@ -103,11 +112,11 @@ userSchema.methods.toClient = function toClient() {
       currentPeriodStart: this.subscription?.currentPeriodStart || null,
       currentPeriodEnd: this.subscription?.currentPeriodEnd || null
     },
-    devMode: Boolean(this.devMode),
+    devMode: effectiveDevMode(this),
     joinedAt: this.createdAt,
-    avatarPhotoUrl,
+    avatarPhotoUrl: avatarPhotoField ? profileMediaUrl(avatarPhotoField, this._id, this._id) : null,
     avatarPhotoSource,
-    bodyPhotoUrl,
+    bodyPhotoUrl: bodyPhotoUrl ? profileMediaUrl('body', this._id, this._id) : null,
     bodyPhotoStatus: this.bodyPhoto?.status || 'uploaded',
     bodyPhotoSource: this.bodyPhoto?.source || 'upload',
     bodyPhotoGeneratedAt: this.bodyPhoto?.generatedAt || null,

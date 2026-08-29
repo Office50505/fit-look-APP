@@ -3,6 +3,7 @@ import express from 'express';
 import heicConvert from 'heic-convert';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
+import { randomInt } from 'node:crypto';
 import path from 'node:path';
 import sharp from 'sharp';
 import ClosetItem from '../models/ClosetItem.js';
@@ -16,7 +17,10 @@ import TryOn from '../models/TryOn.js';
 import User from '../models/User.js';
 import UserEvent from '../models/UserEvent.js';
 import UserPreference from '../models/UserPreference.js';
+import { getRedisClient, keyPrefix, ttlSeconds, withTimeout } from '../utils/cache.js';
+import { userDevModeControlsEnabled } from '../utils/devMode.js';
 import { normalizeGenderPreference } from '../utils/genderPreference.js';
+import { mediaTokenFromRequest, verifyMediaAccess } from '../utils/mediaAccess.js';
 import { deleteStoredFile, isStorageConfigurationError, readStoredFile, saveStoredFile } from '../utils/storage.js';
 
 const router = express.Router();
@@ -471,6 +475,55 @@ function otpKey(phone, purpose = 'signup') {
   return `${normalizeOtpPurpose(purpose)}:${phone}`;
 }
 
+function pendingOtpStorageKey(key) {
+  return `${keyPrefix()}:auth:otp:${key}`;
+}
+
+function pendingOtpIsExpired(pending) {
+  return !pending || Number(pending.expiresAt) <= Date.now();
+}
+
+async function getPendingOtp(key) {
+  const redis = await getRedisClient();
+  if (redis) {
+    const raw = await withTimeout(redis.get(pendingOtpStorageKey(key))).catch(() => '');
+    if (!raw) return null;
+    try {
+      const pending = JSON.parse(raw);
+      if (pendingOtpIsExpired(pending)) {
+        pendingOtps.delete(key);
+        await withTimeout(redis.del(pendingOtpStorageKey(key))).catch(() => {});
+        return null;
+      }
+      pendingOtps.set(key, pending);
+      return pending;
+    } catch {
+      pendingOtps.delete(key);
+      await withTimeout(redis.del(pendingOtpStorageKey(key))).catch(() => {});
+      return null;
+    }
+  }
+
+  const local = pendingOtps.get(key);
+  if (local && !pendingOtpIsExpired(local)) return local;
+  if (local) pendingOtps.delete(key);
+  return null;
+}
+
+async function setPendingOtp(key, pending) {
+  pendingOtps.set(key, pending);
+  const redis = await getRedisClient();
+  if (!redis) return;
+  const ttlMs = Math.max(1000, Number(pending.expiresAt) - Date.now());
+  await withTimeout(redis.set(pendingOtpStorageKey(key), JSON.stringify(pending), { EX: ttlSeconds(ttlMs) })).catch(() => {});
+}
+
+async function deletePendingOtp(key) {
+  pendingOtps.delete(key);
+  const redis = await getRedisClient();
+  if (redis) await withTimeout(redis.del(pendingOtpStorageKey(key))).catch(() => {});
+}
+
 function validatePassword(password = '') {
   const value = String(password || '');
   if (value.length < 8) return 'Password must be at least 8 characters';
@@ -533,7 +586,7 @@ function exposeOtpForCurrentBuild() {
 function generateOtp() {
   const fixed = exposeOtpForCurrentBuild() ? String(process.env.AUTH_FIXED_OTP || '').trim() : '';
   if (/^\d{4,8}$/.test(fixed)) return fixed;
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(randomInt(100000, 1000000));
 }
 
 function otpExpiryMinutes() {
@@ -760,7 +813,7 @@ router.post('/otp/send', async (req, res) => {
     return res.status(502).json({ message: 'Could not send OTP right now. Please try again in a moment.' });
   }
 
-  pendingOtps.set(otpKey(phone, purpose), {
+  await setPendingOtp(otpKey(phone, purpose), {
     otp,
     provider: delivery.provider || 'local',
     expiresAt,
@@ -784,20 +837,21 @@ router.post('/otp/verify', async (req, res) => {
   if (blockedUntil) return sendOtpBlocked(res, blockedUntil);
 
   const key = otpKey(phone, purpose);
-  const pending = pendingOtps.get(key);
+  const pending = await getPendingOtp(key);
   if (!pending || pending.expiresAt <= Date.now()) {
-    pendingOtps.delete(key);
+    await deletePendingOtp(key);
     recordOtpFailure(phone);
     return res.status(400).json({ message: 'OTP expired. Please request a new one.' });
   }
 
   pending.attempts += 1;
   if (pending.attempts > 5) {
-    pendingOtps.delete(key);
+    await deletePendingOtp(key);
     const blocked = recordOtpFailure(phone);
     if (blocked) return sendOtpBlocked(res, blocked);
     return res.status(429).json({ message: 'Too many OTP attempts. Please request a new one.' });
   }
+  await setPendingOtp(key, pending);
   if (pending.provider === 'msg91') {
     try {
       await verifyMsg91Otp(phone, otp);
@@ -816,7 +870,7 @@ router.post('/otp/verify', async (req, res) => {
     return res.status(401).json({ message: 'Invalid OTP' });
   }
 
-  pendingOtps.delete(key);
+  await deletePendingOtp(key);
   clearOtpFailures(phone);
 
   const user = await User.findOne({ phone }).select('_id passwordSetAt').lean();
@@ -877,7 +931,6 @@ router.post('/signup/complete', upload.single('bodyPhoto'), async (req, res) => 
       genderPreference,
       passwordHash,
       passwordSetAt: now,
-      devMode: parseBoolean(req.body.devMode),
       avatarPhoto,
       bodyPhoto
     });
@@ -921,8 +974,10 @@ router.post('/signup', upload.single('bodyPhoto'), async (req, res) => {
   const { name, email, password } = req.body;
   const username = normalizeUsername(req.body.username) || await uniqueUsername(name);
   const genderPreference = normalizeGenderPreference(req.body.genderPreference);
+  const passwordError = validatePassword(password);
   if (!name || !email || !password || !username || !genderPreference) return res.status(400).json({ message: 'Name, username, email, gender preference, and password are required' });
   if (username.length < 3) return res.status(400).json({ message: 'Username must be at least 3 characters' });
+  if (passwordError) return res.status(400).json({ message: passwordError });
   if (!req.file) return res.status(400).json({ message: 'Full-body photo is required' });
 
   const existing = await User.findOne({
@@ -945,7 +1000,6 @@ router.post('/signup', upload.single('bodyPhoto'), async (req, res) => {
       genderPreference,
       passwordHash,
       passwordSetAt: new Date(),
-      devMode: parseBoolean(req.body.devMode),
       avatarPhoto,
       bodyPhoto
     });
@@ -973,8 +1027,9 @@ router.get('/username-suggestions', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
-  const phone = normalizePhone(req.body?.phone || req.body?.mobile || req.body?.mobileNumber || '');
-  const identifier = String(req.body.email || req.body.username || '').trim().toLowerCase();
+  const submittedIdentifier = String(req.body.email || req.body.username || '').trim().toLowerCase();
+  const phone = normalizePhone(req.body?.phone || req.body?.mobile || req.body?.mobileNumber || submittedIdentifier);
+  const identifier = phone ? '' : submittedIdentifier;
   const { password } = req.body;
   if ((!phone && !identifier) || !password) return res.status(400).json({ message: 'Mobile number and password are required' });
   const user = phone
@@ -1001,9 +1056,41 @@ router.get('/me', requireUser, async (req, res) => {
 });
 
 router.patch('/dev-mode', requireUser, async (req, res) => {
+  if (!userDevModeControlsEnabled()) {
+    return res.status(403).json({ message: 'Dev mode controls are disabled on this server.' });
+  }
   req.user.devMode = parseBoolean(req.body?.devMode);
   await req.user.save();
   res.json({ user: req.user.toClient() });
+});
+
+router.get('/media/:kind/:id', async (req, res) => {
+  try {
+    const kind = String(req.params.kind || '').toLowerCase();
+    if (!['avatar', 'body'].includes(kind)) return res.status(404).json({ message: 'Profile media not found' });
+
+    const access = verifyMediaAccess(mediaTokenFromRequest(req), {
+      scope: 'profile',
+      id: req.params.id,
+      kind: 'image',
+      field: kind
+    });
+    if (!access) return res.status(401).json({ message: 'Profile media link expired' });
+
+    const user = await User.findById(req.params.id).select('avatarPhoto bodyPhoto').lean();
+    if (!user || user._id.toString() !== access.userId) return res.status(404).json({ message: 'Profile media not found' });
+
+    const file = kind === 'avatar' ? user.avatarPhoto : user.bodyPhoto;
+    if (!file?.path && !file?.url) return res.status(404).json({ message: 'Profile media not found' });
+    const stored = await readStoredFile(file);
+    res.set({
+      'Content-Type': stored.mimetype || file.mimetype || 'image/jpeg',
+      'Cache-Control': 'private, max-age=300'
+    });
+    return res.send(stored.bytes);
+  } catch {
+    return res.status(404).json({ message: 'Profile media not found' });
+  }
 });
 
 router.patch('/profile', requireUser, upload.single('bodyPhoto'), async (req, res) => {

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { storedFileToClientUrl } from '../utils/storage.js';
+import { documentId, tryOnMediaUrl } from '../utils/mediaAccess.js';
 
 const tryOnSchema = new mongoose.Schema(
   {
@@ -42,12 +42,14 @@ tryOnSchema.index({ user: 1, updatedAt: -1 });
 
 function tryOnToClient(tryOn) {
   const id = tryOn._id.toString();
+  const userId = documentId(tryOn.user);
+  const hasImage = Boolean(tryOn.image?.path || tryOn.image?.url || tryOn.image?.sourceUrl);
   const hasVideo = Boolean(tryOn.video?.path || tryOn.video?.url);
   return {
     id,
     productId: tryOn.product.toString(),
-    imageUrl: storedFileToClientUrl(tryOn.image),
-    videoUrl: hasVideo ? `/api/tryons/video/product/${id}` : null,
+    imageUrl: hasImage ? tryOnMediaUrl({ kind: 'image', scope: 'product', id, userId }) : null,
+    videoUrl: hasVideo ? tryOnMediaUrl({ kind: 'video', scope: 'product', id, userId }) : null,
     videoModel: tryOn.video?.model || '',
     videoTokenCost: tryOn.video?.tokenCost || 0,
     videoGeneratedAt: tryOn.video?.generatedAt || null,

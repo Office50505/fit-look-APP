@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeModules, Platform } from 'react-native';
 
-const productionApi = 'http://43.205.133.61/api';
+const defaultProductionApi = 'https://api.lookmefy.com/api';
 const developmentApi = Platform.OS === 'android' ? 'http://10.0.2.2:5050/api' : 'http://localhost:5050/api';
 const isDevelopmentRuntime = typeof __DEV__ !== 'undefined' && __DEV__;
 function normalizeApiUrl(url) {
@@ -68,6 +68,17 @@ function isLocalApiUrl(url) {
   }
 }
 
+function requireSecureProductionApiUrl(url) {
+  const normalized = normalizeApiUrl(url);
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.protocol === 'https:') return normalized;
+  } catch {
+    // Fall through to the production error below.
+  }
+  throw new Error('Production API URL must be an HTTPS URL. Set EXPO_PUBLIC_API_URL before building.');
+}
+
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL || '';
 const configuredFallbackApiUrls = String(process.env.EXPO_PUBLIC_API_FALLBACK_URLS || '')
   .split(',')
@@ -78,7 +89,7 @@ const productionConfiguredFallbackApiUrls = configuredFallbackApiUrls.filter((ur
 
 export const API_URL = isDevelopmentRuntime
   ? platformApiUrl(productionConfiguredApiUrl || localRuntimeApiUrl(configuredApiUrl) || developmentApi)
-  : platformApiUrl(productionConfiguredApiUrl || productionApi);
+  : platformApiUrl(requireSecureProductionApiUrl(productionConfiguredApiUrl || defaultProductionApi));
 const runtimeApiUrl = isDevelopmentRuntime
   ? (productionConfiguredApiUrl ? '' : localRuntimeApiUrl(configuredApiUrl || developmentApi))
   : '';
@@ -137,18 +148,18 @@ export function imageUrl(url) {
   return `${activeOrigin}${url.startsWith('/') ? url : `/${url}`}`;
 }
 
-export function formatMoney(value) {
+export function formatMoney(value, currency = 'INR') {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return 'Price unavailable';
   const formatOptions = {
     style: 'currency',
-    currency: 'INR',
+    currency: currency || 'INR',
     maximumFractionDigits: Number.isInteger(amount) ? 0 : 2
   };
   try {
     return new Intl.NumberFormat('en-IN', formatOptions).format(amount);
   } catch {
-    return `₹${amount.toLocaleString('en-IN', { maximumFractionDigits: formatOptions.maximumFractionDigits })}`;
+    return `${formatOptions.currency} ${amount.toLocaleString('en-IN', { maximumFractionDigits: formatOptions.maximumFractionDigits })}`;
   }
 }
 

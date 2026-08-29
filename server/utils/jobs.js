@@ -100,7 +100,7 @@ async function claimNextJob() {
       type: { $in: types },
       $or: [
         { status: 'queued', runAfter: { $lte: now } },
-        { status: 'running', lockedAt: { $lte: staleBefore } }
+        { status: 'running', lockedAt: { $lte: staleBefore }, $expr: { $lt: ['$attempts', '$maxAttempts'] } }
       ]
     },
     {

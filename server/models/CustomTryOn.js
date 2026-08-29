@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { storedFileToClientUrl } from '../utils/storage.js';
+import { documentId, tryOnMediaUrl } from '../utils/mediaAccess.js';
 
 const customTryOnSchema = new mongoose.Schema(
   {
@@ -33,16 +33,16 @@ const customTryOnSchema = new mongoose.Schema(
 
 customTryOnSchema.index({ user: 1, createdAt: -1 });
 
-function customTryOnImageUrl(image) {
+function customTryOnImageUrl(image, id, userId) {
   if (image?.storage === 'remote-pending') return '';
-  return storedFileToClientUrl(image);
+  return image?.path || image?.url || image?.sourceUrl ? tryOnMediaUrl({ kind: 'image', scope: 'custom', id, userId }) : '';
 }
 
 customTryOnSchema.methods.toClient = function toClient() {
   return {
     id: this._id.toString(),
-    imageUrl: customTryOnImageUrl(this.image),
-    garmentUrl: storedFileToClientUrl(this.garment),
+    imageUrl: customTryOnImageUrl(this.image, this._id, this.user),
+    garmentUrl: this.garment?.path || this.garment?.url ? tryOnMediaUrl({ kind: 'garment', scope: 'custom', id: this._id, userId: documentId(this.user) }) : null,
     provider: this.provider,
     model: this.model,
     quality: this.quality,

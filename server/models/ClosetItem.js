@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { storedFileToClientUrl } from '../utils/storage.js';
+import { closetMediaUrl } from '../utils/mediaAccess.js';
 
 const closetImageSchema = {
   filename: String,
@@ -56,7 +56,7 @@ closetItemSchema.methods.toClient = function toClient() {
     favorite: Boolean(this.favorite),
     wearCount: this.wearCount || 0,
     lastWornAt: this.lastWornAt || null,
-    imageUrl: storedFileToClientUrl(this.image),
+    imageUrl: this.image?.path || this.image?.url ? closetMediaUrl({ kind: 'item', id: this._id, userId: this.user }) : null,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt
   };

@@ -847,7 +847,7 @@
     "setupHealthOk": true,
     "setupOtpOk": true,
     "testPhone": "+15558579951",
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI2YTg4M2EwOGZlODFmMzMzZTkxYjZiNWQiLCJpYXQiOjE3ODczMTI2NDgsImV4cCI6MTc4ODUyMjI0OH0.qFt0CA4OBFNRYHkSIZZfipsdN3zBHn1G4nkmM2Y7n3c",
+    "token": "[redacted]",
     "baseUrl": "http://15.206.207.210"
   },
   "root_group": {

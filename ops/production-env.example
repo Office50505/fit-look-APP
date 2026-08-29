@@ -2,6 +2,14 @@
 
 NODE_ENV=production
 SERVICE_NAME=fitlook-api
+CLIENT_ORIGIN=https://www.lookmefy.com
+ADMIN_ORIGIN=https://admin.lookmefy.com
+ALLOWED_ORIGINS=https://lookmefy.com,https://www.lookmefy.com
+
+# Required secrets. Generate a unique JWT secret of at least 32 random characters.
+MONGODB_URI=mongodb+srv://user:password@cluster.example/fitlook
+JWT_SECRET=replace-with-at-least-32-random-characters
+ADMIN_KEY=replace-with-random-admin-key
 
 # Required for multi-instance cache, rate-limit state, and queue lock coordination.
 REDIS_URL=redis://default:password@redis.example:6379
@@ -59,6 +67,15 @@ PRUNA_DOWNLOAD_TIMEOUT_MS=30000
 PRUNA_POLL_ATTEMPTS=45
 PRUNA_POLL_MS=1000
 
+# AI providers. Required by production startup validation.
+FAL_KEY=
+FITROOM_API_KEY=
+FITROOM_BASE_URL=https://platform.fitroom.app
+
+# Server-side remote image download guardrails.
+REMOTE_IMAGE_TIMEOUT_MS=15000
+REMOTE_IMAGE_MAX_BYTES=8388608
+
 # OTP must not expose dev codes in production.
 MSG91_AUTH_KEY=
 MSG91_SENDER_ID=LKMEFY
@@ -69,3 +86,27 @@ AUTH_OTP_EXPIRY_MINUTES=10
 AUTH_OTP_FAILURE_MAX=5
 AUTH_OTP_FAILURE_WINDOW_MS=600000
 AUTH_OTP_FAILURE_BLOCK_MS=900000
+
+# Dev bypasses must remain disabled in production.
+ENABLE_DEV_MODE_BYPASS=0
+SIGNUP_DEV_MODE_DEFAULT=0
+ALLOW_USER_DEV_MODE_TOGGLE=0
+ALLOW_LEGACY_EMAIL_SIGNUP=0
+
+# Remote object storage is required in production.
+STORAGE_PROVIDER=bunny
+BUNNY_STORAGE_ZONE=
+BUNNY_STORAGE_ACCESS_KEY=
+BUNNY_CDN_URL=
+BUNNY_STORAGE_REGION=
+BUNNY_STORAGE_BASE_PATH=uploads
+ALLOW_LOCAL_UPLOADS=0
+MEDIA_URL_TTL_SECONDS=86400
+
+# PhonePe checkout.
+PAYMENTS_ENABLED=1
+PHONEPE_ENV=production
+PHONEPE_CLIENT_ID=
+PHONEPE_CLIENT_SECRET=
+PHONEPE_CLIENT_VERSION=
+PHONEPE_REDIRECT_URL=https://www.lookmefy.com/tokens

@@ -3648,9 +3648,7 @@ h2 { font-size: clamp(25px, 3vw, 34px); line-height: 1.08; }
 }
 .footer-col-toggle span { display: none; }
 .footer ul { display: grid; gap: 10px; margin: 0; padding: 0; color: #36332e; font-size: 11px; list-style: none; }
-.newsletter-form { display: flex; min-height: 37px; border: 1px solid var(--line); border-radius: 5px; background: #fffaf4; overflow: hidden; }
-.newsletter-form input { min-width: 0; min-height: 44px; flex: 1; border: 0; padding: 0 14px; background: transparent; outline: 0; }
-.newsletter-form button { min-height: 44px; flex: 0 0 88px; border: 0; background: var(--green); color: #fff; font-size: 11px; font-weight: 800; }
+.footer-newsletter-link { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; border-radius: 5px; padding: 0 16px; background: var(--green); color: #fff; font-size: 11px; font-weight: 800; text-transform: uppercase; }
 .footer-bottom { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding-top: 17px; border-top: 1px solid var(--line); color: #393630; font-size: 11px; }
 .legal { display: flex; gap: 38px; }
 
@@ -4335,12 +4333,6 @@ h2 { font-size: clamp(25px, 3vw, 34px); line-height: 1.08; }
   .page-image,
   .auth-visual {
     min-height: 240px;
-  }
-  .newsletter-form {
-    min-height: 44px;
-  }
-  .newsletter-form button {
-    flex-basis: 96px;
   }
   .footer {
     padding-top: 30px;

@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { storedFileToClientUrl } from '../utils/storage.js';
+import { documentId, tryOnMediaUrl } from '../utils/mediaAccess.js';
 
 const externalTryOnSchema = new mongoose.Schema(
   {
@@ -36,7 +36,7 @@ externalTryOnSchema.methods.toClient = function toClient() {
   return {
     id: this._id.toString(),
     sourceUrl: this.sourceUrl,
-    imageUrl: storedFileToClientUrl(this.image),
+    imageUrl: this.image?.path || this.image?.url || this.image?.sourceUrl ? tryOnMediaUrl({ kind: 'image', scope: 'external', id: this._id, userId: documentId(this.user) }) : null,
     provider: this.provider,
     model: this.model,
     quality: this.quality,

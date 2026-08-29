@@ -6,6 +6,7 @@ import User from '../models/User.js';
 import UserEvent from '../models/UserEvent.js';
 import UserPreference from '../models/UserPreference.js';
 import { requireUser } from './auth.js';
+import { requireAdmin } from '../utils/adminAuth.js';
 import { createHybridCache } from '../utils/cache.js';
 import { inlineOrQueue, registerJobHandler } from '../utils/jobs.js';
 import { productGenderForPreference } from '../utils/genderPreference.js';
@@ -135,13 +136,6 @@ function preferenceValue(map, key) {
 
 function eventWeight(type) {
   return EVENT_WEIGHTS[type] || 1;
-}
-
-function requireAdmin(req, res, next) {
-  const adminKey = process.env.ADMIN_KEY;
-  if (!adminKey) return res.status(500).json({ message: 'ADMIN_KEY is missing on the server' });
-  if (req.headers['x-admin-key'] !== adminKey) return res.status(401).json({ message: 'Invalid admin key' });
-  next();
 }
 
 function productPreferenceIncrements(product, weight) {

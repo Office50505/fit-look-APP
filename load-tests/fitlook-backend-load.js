@@ -225,7 +225,6 @@ Not load-tested at 1000 VUs because they create persistent data or call paid/ext
 - POST /api/tryons/:productId
 - POST /api/tryons/custom
 - POST /api/tryons/external
-- POST /api/tryons/vto-trial
 - POST /api/products/amazon-search
 - POST /api/products/preview-link
 - POST /api/products

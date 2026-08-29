@@ -4,6 +4,8 @@ const asset = (name) => `/assets/${name}`;
 const MAX_BODY_PHOTO_BYTES = 8 * 1024 * 1024;
 const TARGET_BODY_PHOTO_BYTES = 6.5 * 1024 * 1024;
 const BODY_PHOTO_ACCEPT = 'image/*,.avif,.heic,.heif,image/avif,image/heic,image/heif';
+const JOB_TIMEOUT_MS = 180000;
+const JOB_POLL_INTERVAL_MS = 1400;
 
 function formatFileSize(bytes) {
   return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
@@ -104,18 +106,18 @@ async function prepareClosetItemPhoto(file) {
   }
 }
 
-function formatMoney(value) {
+function formatMoney(value, currency = 'INR') {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return 'Price unavailable';
   const formatOptions = {
     style: 'currency',
-    currency: 'INR',
+    currency: currency || 'INR',
     maximumFractionDigits: Number.isInteger(amount) ? 0 : 2
   };
   try {
     return new Intl.NumberFormat('en-IN', formatOptions).format(amount);
   } catch {
-    return `₹${amount.toLocaleString('en-IN', { maximumFractionDigits: formatOptions.maximumFractionDigits })}`;
+    return `${formatOptions.currency} ${amount.toLocaleString('en-IN', { maximumFractionDigits: formatOptions.maximumFractionDigits })}`;
   }
 }
 
@@ -418,6 +420,32 @@ function readableError(value, fallback = 'Request failed') {
   return String(value);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function pollQueuedJob(jobId, headers, timeoutMs = JOB_TIMEOUT_MS) {
+  const startedAt = Date.now();
+  const limitMs = Math.max(JOB_TIMEOUT_MS, Number(timeoutMs) || 0);
+
+  while (Date.now() - startedAt < limitMs) {
+    await sleep(JOB_POLL_INTERVAL_MS);
+    const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+      headers,
+      cache: 'no-store'
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(readableError(data, `Job status failed (${res.status})`));
+    const status = data?.job?.status;
+    if (status === 'succeeded') return data.result;
+    if (status === 'failed') throw new Error(data?.job?.error || 'Background task failed');
+  }
+
+  throw new Error('Still processing. Please try again in a moment.');
+}
+
 function cleanDisplayText(value, fallback = '') {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
   if (!text) return fallback;
@@ -442,12 +470,17 @@ function usableBrands(brands = []) {
 }
 
 async function api(path, options = {}) {
+  const { pollJob = true, jobTimeoutMs, ...fetchOptions } = options;
   const token = localStorage.getItem('fitlook_token');
-  const headers = options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
+  const headers = fetchOptions.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`/api${path}`, { ...options, headers: { ...headers, ...options.headers } });
+  const requestHeaders = { ...headers, ...fetchOptions.headers };
+  const res = await fetch(`/api${path}`, { ...fetchOptions, headers: requestHeaders });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(readableError(data, `Request failed (${res.status})`));
+  if (res.status === 202 && data?.jobId && pollJob) {
+    return pollQueuedJob(data.jobId, requestHeaders, jobTimeoutMs);
+  }
   return data;
 }
 
@@ -658,7 +691,7 @@ function Footer() {
           <FooterCol title="Shop" links={[['All Products', '/search'], ['Men', '/search?gender=men'], ['Women', '/search?gender=women'], ['New Arrivals', '/search?newArrival=true'], ['Sale', '/sale'], ['Gift Cards', '/gift-cards']]} />
           <FooterCol title="Company" links={[['About Us', '/about'], ['How it Works', '/how-it-works'], ['Careers', '/careers'], ['Blog', '/blog'], ['Press', '/press']]} />
           <FooterCol title="Help" links={[['FAQ', '/support'], ['Shipping', '/support'], ['Returns & Exchanges', '/support'], ['Track Order', '/support'], ['Contact Us', '/contact']]} />
-          <div className="newsletter"><h3>Join Our Community</h3><p>Subscribe to get new arrivals and token offers.</p><form className="newsletter-form"><input type="email" placeholder="Enter your email" /><button>Sign Up</button></form></div>
+          <div className="newsletter"><h3>Join Our Community</h3><p>Explore new arrivals and token offers when they go live.</p><a className="footer-newsletter-link" href="/search?newArrival=true">See New Arrivals</a></div>
         </div>
         <div className="footer-bottom"><div>© 2024 FitLook. All rights reserved.</div><div className="legal"><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/delete-account">Delete Account</a><a href="/accessibility">Accessibility</a></div></div>
       </div>
@@ -2309,13 +2342,29 @@ function ImageLightbox({ image, onClose }) {
 
 function TokenPage({ user, setUser }) {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
-  
   const [message, setMessage] = useState('');
+  const [plans, setPlans] = useState([]);
   const verifiedOrderRef = useRef('');
   const params = new URLSearchParams(window.location.search);
   const returnedOrderId = params.get('merchantOrderId') || params.get('orderId') || '';
   const subscription = user?.subscription;
   const isActive = subscription?.status === 'active' && (!subscription.currentPeriodEnd || new Date(subscription.currentPeriodEnd) > new Date());
+  const fallbackPlan = { id: 'monthly_100_tokens', name: 'Lookmefy 100 Token Pack', amount: 100000, currency: 'INR', tokens: 100 };
+  const plan = plans[0] || fallbackPlan;
+  const planPrice = Number(plan.amount) / 100;
+  const planTokens = Number(plan.tokens) || 0;
+
+  useEffect(() => {
+    let alive = true;
+    api('/payments/plans')
+      .then((data) => {
+        if (alive) setPlans(Array.isArray(data?.plans) ? data.plans : []);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!user || !returnedOrderId || verifiedOrderRef.current === returnedOrderId) return;
@@ -2327,7 +2376,7 @@ function TokenPage({ user, setUser }) {
         if (!alive) return;
         if (data.user) setUser(data.user);
         const state = data.order?.status;
-        if (state === 'completed') setMessage('Payment confirmed. 100 tokens have been added to your account.');
+        if (state === 'completed') setMessage(`Payment confirmed. ${Number(data.order?.tokens) || planTokens} tokens have been added to your account.`);
         else if (state === 'failed') setMessage('Payment was not completed. You can try again when ready.');
         else setMessage('Payment is still pending. Refresh this page in a moment to check again.');
       })
@@ -2337,7 +2386,7 @@ function TokenPage({ user, setUser }) {
     return () => {
       alive = false;
     };
-  }, [user, returnedOrderId, setUser]);
+  }, [user, returnedOrderId, setUser, planTokens]);
 
   const startCheckout = async () => {
     if (!user) {
@@ -2347,7 +2396,10 @@ function TokenPage({ user, setUser }) {
     setCheckoutLoading(true);
     setMessage('Opening PhonePe checkout...');
     try {
-      const data = await api('/payments/phonepe/subscription', { method: 'POST' });
+      const data = await api('/payments/phonepe/subscription', {
+        method: 'POST',
+        body: JSON.stringify({ planId: plan.id })
+      });
       window.location.assign(data.redirectUrl);
     } catch (err) {
       setMessage(err.message);
@@ -2362,7 +2414,7 @@ function TokenPage({ user, setUser }) {
       <section className="wrap token-hero">
         <p className="kicker">FitLook Tokens</p>
         <h1>One token, one AI try-on.</h1>
-        <p className="lead">Get 20 free tokens on signup. Subscribe for {formatMoney(1000)}/month to receive 100 try-on tokens for the month.</p>
+        <p className="lead">Get 20 free tokens on signup. {plan.name} adds {planTokens} try-on tokens for {formatMoney(planPrice)}.</p>
         <div className="token-balance">{user ? <><span>{user.tokens}</span><strong>tokens available</strong></> : <><span>20</span><strong>free tokens on signup</strong></>}</div>
         {message && <p className={`token-message ${/failed|not completed|missing|Could not|error/i.test(message) ? 'error-message' : ''}`}>{message}</p>}
       </section>
@@ -2370,23 +2422,23 @@ function TokenPage({ user, setUser }) {
       <section className="wrap token-grid subscription-grid">
         <article className="token-pack featured-token-pack">
           <div className="plan-status-row">
-            <h2>Monthly</h2>
+            <h2>{plan.name}</h2>
             {isActive && <span>Active</span>}
           </div>
-          <p className="token-amount">100 tokens every month</p>
-          <p className="token-price">{formatMoney(1000)}</p>
-          <p>PhonePe checkout opens securely when you subscribe. Tokens are added only after payment is confirmed.</p>
+          <p className="token-amount">{planTokens} tokens</p>
+          <p className="token-price">{formatMoney(planPrice)}</p>
+          <p>PhonePe checkout opens securely when you buy credits. Tokens are added only after payment is confirmed.</p>
           <button type="button" onClick={startCheckout} disabled={checkoutLoading}>
-            {checkoutLoading ? 'Opening PhonePe...' : user ? 'Subscribe with PhonePe' : 'Create Account First'}
+            {checkoutLoading ? 'Opening PhonePe...' : user ? 'Buy with PhonePe' : 'Create Account First'}
           </button>
-          {isActive && subscription.currentPeriodEnd && <small>Current month ends {formatDate(subscription.currentPeriodEnd)}</small>}
+          {isActive && subscription.currentPeriodEnd && <small>Plan window ends {formatDate(subscription.currentPeriodEnd)}</small>}
         </article>
       </section>
 
       <section className="wrap token-rules">
         <article><h3>What costs tokens?</h3><p>Generating a product try-on or custom clothing try-on costs 1 token.</p></article>
         <article><h3>What is free?</h3><p>New accounts start with 20 free tokens. Browsing, search, product pages, and viewing saved try-ons are free.</p></article>
-        <article><h3>How payment works</h3><p>FitLook verifies the PhonePe order status before adding subscription tokens, so a return or callback cannot double-credit your account.</p></article>
+        <article><h3>How payment works</h3><p>FitLook verifies the PhonePe order status before adding paid tokens, so a return or callback cannot double-credit your account.</p></article>
       </section>
     </main>
   );
@@ -2979,6 +3031,10 @@ function AuthPage({ mode, setUser }) {
   const [bodyPhotoFile, setBodyPhotoFile] = useState(null);
   const [bodyPhotoPreview, setBodyPhotoPreview] = useState('');
   const [profilePhotoMode, setProfilePhotoMode] = useState('ai-full-body');
+  const [phoneValue, setPhoneValue] = useState('');
+  const [otpValue, setOtpValue] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [signupToken, setSignupToken] = useState('');
   const isSignup = mode === 'signup';
 
   useEffect(() => {
@@ -3020,18 +3076,46 @@ function AuthPage({ mode, setUser }) {
     setBodyPhotoPreview(file ? URL.createObjectURL(file) : '');
   };
 
+  const messageIsError = Boolean(message) && !/^(Working|Creating account|Sending OTP|OTP sent|Verifying OTP|Mobile verified)/i.test(message);
+
   const submit = async (event) => {
     event.preventDefault();
-    setMessage(isSignup ? 'Creating account...' : 'Working...');
     try {
+      if (isSignup && !signupToken) {
+        const phone = phoneValue.trim();
+        if (!phone) throw new Error('Enter your mobile number.');
+        if (!otpSent) {
+          setMessage('Sending OTP...');
+          await api('/auth/otp/send', {
+            method: 'POST',
+            body: JSON.stringify({ phone, purpose: 'signup' })
+          });
+          setOtpSent(true);
+          setMessage('OTP sent. Enter it to verify your mobile number.');
+          return;
+        }
+        if (!otpValue.trim()) throw new Error('Enter the OTP sent to your mobile number.');
+        setMessage('Verifying OTP...');
+        const verified = await api('/auth/otp/verify', {
+          method: 'POST',
+          body: JSON.stringify({ phone, otp: otpValue.trim(), purpose: 'signup' })
+        });
+        if (!verified.signupToken) throw new Error('Mobile verification did not return a signup token. Please try again.');
+        setSignupToken(verified.signupToken);
+        setMessage('Mobile verified. Complete your profile.');
+        return;
+      }
+
+      setMessage(isSignup ? 'Creating account...' : 'Working...');
       const form = event.currentTarget;
       const body = isSignup ? new FormData(form) : JSON.stringify(Object.fromEntries(new FormData(form)));
       if (isSignup) {
         const bodyPhoto = bodyPhotoFile || form.elements.bodyPhoto?.files?.[0] || bodyPhotoCameraRef.current?.files?.[0];
         if (!bodyPhoto) throw new Error('Choose or take a profile photo first.');
         body.set('bodyPhoto', await prepareBodyPhoto(bodyPhoto));
+        body.set('signupToken', signupToken);
       }
-      const data = await api(isSignup ? '/auth/signup' : '/auth/login', { method: 'POST', body });
+      const data = await api(isSignup ? '/auth/signup/complete' : '/auth/login', { method: 'POST', body });
       localStorage.setItem('fitlook_token', data.token);
       setUser(data.user);
       window.history.pushState({}, '', '/search');
@@ -3049,7 +3133,13 @@ function AuthPage({ mode, setUser }) {
           <h1>{isSignup ? 'Build your AI fitting room.' : 'Log in to your fitting room.'}</h1>
           <p className="auth-copy">{isSignup ? 'Upload a selfie or body photo. FitLook creates a full-body profile image for realistic outfit previews.' : 'Continue browsing, unlock your saved looks, and generate AI previews.'}</p>
           <form className="auth-form" onSubmit={submit}>
-            {isSignup && (
+            {isSignup && !signupToken && (
+              <>
+                <label className="field"><span>Mobile number</span><input name="phone" type="tel" required value={phoneValue} onChange={(event) => { setPhoneValue(event.target.value); setOtpSent(false); setOtpValue(''); }} placeholder="+91 98765 43210" /></label>
+                {otpSent && <label className="field"><span>OTP</span><input name="otp" inputMode="numeric" autoComplete="one-time-code" required value={otpValue} onChange={(event) => setOtpValue(event.target.value.replace(/\D/g, '').slice(0, 8))} /></label>}
+              </>
+            )}
+            {isSignup && signupToken && (
               <>
                 <label className="field"><span>Full name</span><input name="name" required value={nameValue} onChange={(event) => { setNameValue(event.target.value); setUsernameTouched(false); }} /></label>
                 <label className="field"><span>Username</span><input name="username" required minLength="3" value={username} onChange={(event) => { setUsernameTouched(true); setUsername(event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')); }} /></label>
@@ -3062,8 +3152,8 @@ function AuthPage({ mode, setUser }) {
                 )}
               </>
             )}
-            <label className="field"><span>{isSignup ? 'Email address' : 'Email or username'}</span><input name="email" type={isSignup ? 'email' : 'text'} required /></label>
-            {isSignup && (
+            {!isSignup && <label className="field"><span>Mobile, email, or username</span><input name="email" type="text" required /></label>}
+            {isSignup && signupToken && (
               <label className="field">
                 <span>Gender preference</span>
                 <select name="genderPreference" required defaultValue="">
@@ -3074,8 +3164,8 @@ function AuthPage({ mode, setUser }) {
                 </select>
               </label>
             )}
-            <label className="field"><span>Password</span><input name="password" type="password" required minLength="6" /></label>
-            {isSignup && (
+            {(!isSignup || signupToken) && <label className="field"><span>Password</span><input name="password" type="password" required minLength="8" /></label>}
+            {isSignup && signupToken && (
               <>
                 <label className={`upload-box ${bodyPhotoPreview ? 'has-preview' : ''}`}>
                   <input name="bodyPhoto" type="file" accept={BODY_PHOTO_ACCEPT} onChange={previewBodyPhoto} />
@@ -3111,9 +3201,9 @@ function AuthPage({ mode, setUser }) {
                 </div>
               </>
             )}
-            <button className="submit">{isSignup ? 'Create Account' : 'Log In'}</button>
+            <button className="submit">{isSignup ? (signupToken ? 'Create Account' : otpSent ? 'Verify Mobile' : 'Send OTP') : 'Log In'}</button>
           </form>
-          {message && <p className={`form-message ${message === 'Working...' ? '' : 'error-message'}`}>{message}</p>}
+          {message && <p className={`form-message ${messageIsError ? 'error-message' : ''}`}>{message}</p>}
           <p className="switch">{isSignup ? 'Already have an account?' : 'New to FitLook?'} <a href={isSignup ? '/login' : '/signup'}>{isSignup ? 'Log in' : 'Create an account'}</a></p>
         </div>
         <div className="auth-visual"><img src={asset('hero2.png')} alt="" /></div>

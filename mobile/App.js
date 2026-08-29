@@ -4472,69 +4472,6 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
   );
 }
 
-function VtoTrialScreen({ user, setUser, setToken, onNavigate }) {
-  const [person, setPerson] = useState(null);
-  const [garment, setGarment] = useState(null);
-  const [note, setNote] = useState('');
-  const [result, setResult] = useState(null);
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [lightbox, setLightbox] = useState(null);
-
-  if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
-
-  const submit = async () => {
-    if (!person || !garment) {
-      setMessage('Upload both a person image and a garment image first.');
-      return;
-    }
-    setLoading(true);
-    setResult(null);
-    setMessage('Running unrestricted FAL virtual try-on trial...');
-    try {
-      const form = new FormData();
-      form.append('person', filePart(person, 'person.jpg'));
-      form.append('garment', filePart(garment, 'garment.jpg'));
-      form.append('note', note);
-      const data = await api('/tryons/vto-trial', { method: 'POST', body: form });
-      setResult(data.trial);
-      if (data.user) setUser(data.user);
-      setMessage(`Trial ready using ${data.trial?.payloadVariant || 'model payload'}.`);
-    } catch (error) {
-      setMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
-      <View style={styles.toolHero}>
-        <Text style={styles.kicker}>FAL Trial</Text>
-        <Text style={styles.screenTitle}>Pose-lock test for virtual try-on.</Text>
-        <Text style={styles.description}>Test fal-ai/image-apps-v2/virtual-try-on with a strict prompt. This does not charge tokens or save to the normal product try-on cache.</Text>
-      </View>
-      <View style={styles.tryOnPair}>
-        <TouchableOpacity style={styles.previewBox} onPress={async () => setPerson(await pickImage())}>
-          {person?.uri ? <Image source={{ uri: person.uri }} style={styles.previewImage} /> : <Text style={styles.previewPlaceholder}>Upload person</Text>}
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.previewBox} onPress={async () => setGarment(await pickImage())}>
-          {garment?.uri ? <Image source={{ uri: garment.uri }} style={styles.previewImage} /> : <Text style={styles.previewPlaceholder}>Upload garment</Text>}
-        </TouchableOpacity>
-      </View>
-      <TextInput style={[styles.input, styles.noteInput]} value={note} onChangeText={setNote} placeholder="Optional tester note" placeholderTextColor="#94a3b8" multiline />
-      <View style={styles.previewBoxWide}>
-        {loading ? <TryOnLoading text="FAL VTO trial is running" large /> : result?.imageUrl ? <Pressable onPress={() => setLightbox(imageUrl(result.imageUrl))}><Image source={{ uri: imageUrl(result.imageUrl) }} style={styles.resultImage} /></Pressable> : <Text style={styles.previewPlaceholder}>Generated result</Text>}
-      </View>
-      {result?.imageUrl ? <AiPreviewNote /> : null}
-      {result ? <Text style={styles.debugText}>{result.model} | payload: {result.payloadVariant} | aspect: {result.aspectRatio}</Text> : null}
-      <AppButton label={loading ? 'Running Trial...' : 'Run FAL VTO Trial'} icon="flask-outline" disabled={loading} onPress={submit} />
-      {message ? <Text style={[styles.formMessage, result?.imageUrl ? null : styles.errorText]}>{message}</Text> : null}
-      <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
-    </ScrollView>
-  );
-}
-
 function StyleBotScreen({
   user,
   setUser,
@@ -4730,34 +4667,48 @@ function StyleBotScreen({
 function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [selectedTierId, setSelectedTierId] = useState('atelier');
-  const creditTiers = [
-    {
-      id: 'essentials',
-      name: 'Essentials',
-      price: 25,
-      credits: 500,
-      description: 'Ideal for seasonal wardrobe refreshes and basic fit analysis.'
-    },
-    {
-      id: 'atelier',
-      name: 'Atelier',
-      price: 60,
-      credits: 1500,
-      description: 'Comprehensive styling for power users and fashion enthusiasts.',
-      badge: 'MOST SELECTED'
-    },
-    {
-      id: 'master',
-      name: 'Master',
-      price: 180,
-      credits: 5000,
-      description: 'The ultimate tier for unlimited virtual try-ons and high-fidelity rendering.'
-    }
-  ];
-  const selectedTier = creditTiers.find((tier) => tier.id === selectedTierId) || creditTiers[1];
-  const estimatedTax = selectedTier.price * 0.08;
-  const totalAmount = selectedTier.price + estimatedTax;
+  const [plans, setPlans] = useState([]);
+  const [plansLoading, setPlansLoading] = useState(true);
+  const [selectedTierId, setSelectedTierId] = useState('monthly_100_tokens');
+  const fallbackPlan = {
+    id: 'monthly_100_tokens',
+    name: 'Lookmefy 100 Token Pack',
+    amount: 100000,
+    currency: 'INR',
+    tokens: 100
+  };
+  const creditTiers = (plans.length ? plans : [fallbackPlan]).map((plan) => ({
+    id: plan.id,
+    name: plan.name,
+    price: Number(plan.amount) / 100,
+    credits: Number(plan.tokens) || 0,
+    description: `${Number(plan.tokens) || 0} AI try-on credits for your Lookmefy account.`,
+    currency: plan.currency || 'INR'
+  }));
+  const selectedTier = creditTiers.find((tier) => tier.id === selectedTierId) || creditTiers[0];
+  const totalAmount = selectedTier.price;
+
+  useEffect(() => {
+    let alive = true;
+    setPlansLoading(true);
+    api('/payments/plans')
+      .then((data) => {
+        if (!alive) return;
+        const nextPlans = Array.isArray(data?.plans) ? data.plans : [];
+        setPlans(nextPlans);
+        if (nextPlans[0]?.id) setSelectedTierId(nextPlans[0].id);
+        setMessage('');
+      })
+      .catch((error) => {
+        if (alive) setMessage(error.message);
+      })
+      .finally(() => {
+        if (alive) setPlansLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const startCheckout = async () => {
     if (!user) {
@@ -4767,7 +4718,10 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
     setCheckoutLoading(true);
     setMessage('Opening PhonePe checkout...');
     try {
-      const data = await api('/payments/phonepe/subscription', { method: 'POST' });
+      const data = await api('/payments/phonepe/subscription', {
+        method: 'POST',
+        body: JSON.stringify({ planId: selectedTier.id })
+      });
       if (data.redirectUrl) {
         await Linking.openURL(data.redirectUrl);
         setMessage('Complete payment in PhonePe, then return to Lookmefy.');
@@ -4786,11 +4740,12 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
       <AppHeader onNavigate={onNavigate} user={user} compact />
 
       <View style={styles.creditsIntro}>
-        <Text style={styles.creditsIntroTitle}>Atmospheric Intelligence Credits</Text>
-        <Text style={styles.creditsIntroText}>Elevate your digital wardrobe with AI-powered fit predictions, virtual material simulations, and bespoke stylistic rendering.</Text>
+        <Text style={styles.creditsIntroTitle}>Lookmefy AI Credits</Text>
+        <Text style={styles.creditsIntroText}>Buy credits for product try-ons, custom clothing previews, and wardrobe outfit generation.</Text>
       </View>
 
-      <Text style={styles.creditsSectionLabel}>SELECT A CREDIT TIER</Text>
+      <Text style={styles.creditsSectionLabel}>SELECT A CREDIT PLAN</Text>
+      {plansLoading ? <ActivityIndicator size="small" color="#9b5658" /> : null}
       <View style={styles.creditTierStack}>
         {creditTiers.map((tier) => {
           const selected = selectedTier.id === tier.id;
@@ -4831,8 +4786,8 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
           <Text style={styles.orderSummaryText}>{formatMoney(selectedTier.price)}</Text>
         </View>
         <View style={styles.orderSummaryRow}>
-          <Text style={styles.orderSummaryText}>Estimated Tax (8%)</Text>
-          <Text style={styles.orderSummaryText}>{formatMoney(estimatedTax)}</Text>
+          <Text style={styles.orderSummaryText}>Taxes and fees</Text>
+          <Text style={styles.orderSummaryText}>Included where applicable</Text>
         </View>
         <View style={styles.orderSummaryDivider} />
         <View style={styles.orderSummaryRow}>
@@ -5686,7 +5641,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
           </View>
           <View style={styles.profilePaymentCopy}>
             <Text style={styles.profilePaymentTitle}>PhonePe checkout</Text>
-            <Text style={styles.profilePaymentSub}>{user.subscription?.status === 'active' ? 'Subscription active' : 'Add credits when needed'}</Text>
+            <Text style={styles.profilePaymentSub}>{user.subscription?.status === 'active' ? 'Token plan active' : 'Add credits when needed'}</Text>
           </View>
           <Ionicons name="chevron-forward" size={22} color="#55514f" />
         </TouchableOpacity>

@@ -36,7 +36,8 @@ function principal(req) {
 }
 
 function phonePrincipal(req) {
-  const phone = String(req.body?.phone || req.body?.mobile || req.body?.mobileNumber || '').replace(/\D/g, '').slice(-12);
+  const digits = String(req.body?.phone || req.body?.mobile || req.body?.mobileNumber || req.body?.email || req.body?.username || '').replace(/\D/g, '');
+  const phone = digits.length >= 10 ? digits.slice(-12) : '';
   return phone ? `phone:${phone}` : `ip:${clientIp(req)}`;
 }
 

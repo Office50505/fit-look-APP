@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import TokenOrder from '../models/TokenOrder.js';
 import User from '../models/User.js';
 import { requireUser } from './auth.js';
@@ -7,7 +8,7 @@ const router = express.Router();
 
 const MONTHLY_PLAN = {
   id: 'monthly_100_tokens',
-  name: 'Monthly Lookmefy Tokens',
+  name: 'Lookmefy 100 Token Pack',
   amount: 100000,
   currency: 'INR',
   tokens: 100
@@ -196,7 +197,7 @@ async function createPhonePePayment({ req, user }) {
       expireAfter: Number(process.env.PHONEPE_ORDER_EXPIRE_SECONDS || 1200),
       paymentFlow: {
         type: 'PG_CHECKOUT',
-        message: 'Lookmefy monthly token subscription',
+        message: 'Lookmefy token pack',
         merchantUrls: { redirectUrl }
       },
       metaInfo: {
@@ -204,7 +205,7 @@ async function createPhonePePayment({ req, user }) {
         udf2: MONTHLY_PLAN.id,
         udf3: String(MONTHLY_PLAN.tokens),
         udf4: 'Lookmefy',
-        udf5: 'monthly'
+        udf5: 'token_pack'
       }
     };
 
@@ -240,39 +241,55 @@ async function grantPaidTokens(order, providerResponse) {
 
   const now = new Date();
   const currentPeriodEnd = addMonths(now, 1);
-  const creditedOrder = await TokenOrder.findOneAndUpdate(
-    { _id: order._id, creditedAt: null },
-    {
-      $set: {
-        status: 'completed',
-        providerState: 'COMPLETED',
-        providerResponse,
-        creditedAt: now,
-        currentPeriodStart: now,
-        currentPeriodEnd
-      }
-    },
-    { new: true }
-  );
-  if (!creditedOrder) return User.findById(order.user);
+  const session = await mongoose.startSession();
+  let user = null;
 
-  return User.findByIdAndUpdate(
-    order.user,
-    {
-      $inc: { tokens: order.tokens },
-      $set: {
-        subscription: {
-          planId: order.planId,
-          status: 'active',
-          tokensPerMonth: order.tokens,
-          currentPeriodStart: now,
-          currentPeriodEnd,
-          lastOrderId: order.merchantOrderId
-        }
+  try {
+    await session.withTransaction(async () => {
+      const creditedOrder = await TokenOrder.findOneAndUpdate(
+        { _id: order._id, creditedAt: null },
+        {
+          $set: {
+            status: 'completed',
+            providerState: 'COMPLETED',
+            providerResponse,
+            creditedAt: now,
+            currentPeriodStart: now,
+            currentPeriodEnd
+          }
+        },
+        { new: true, session }
+      );
+      if (!creditedOrder) {
+        user = await User.findById(order.user).session(session);
+        return;
       }
-    },
-    { new: true }
-  );
+
+      user = await User.findByIdAndUpdate(
+        order.user,
+        {
+          $inc: { tokens: order.tokens },
+          $set: {
+            subscription: {
+              planId: order.planId,
+              status: 'active',
+              tokensPerMonth: order.tokens,
+              currentPeriodStart: now,
+              currentPeriodEnd,
+              lastOrderId: order.merchantOrderId
+            }
+          }
+        },
+        { new: true, session }
+      );
+      if (!user) {
+        throw new Error('Could not credit tokens because the user account was not found.');
+      }
+    });
+    return user || User.findById(order.user);
+  } finally {
+    await session.endSession();
+  }
 }
 
 async function reconcileOrder(order) {
@@ -314,6 +331,8 @@ router.get('/plans', (_req, res) => {
 
 router.post('/phonepe/subscription', requireUser, async (req, res) => {
   try {
+    const planId = String(req.body?.planId || MONTHLY_PLAN.id);
+    if (planId !== MONTHLY_PLAN.id) return res.status(400).json({ message: 'Selected token plan is not available' });
     const order = await createPhonePePayment({ req, user: req.user });
     res.status(201).json({ order: order.toClient(), redirectUrl: order.redirectUrl });
   } catch (error) {

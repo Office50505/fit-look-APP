@@ -15,6 +15,7 @@ import { jobQueueHealth, startJobWorker } from './utils/jobs.js';
 import { logger } from './utils/logger.js';
 import { createConcurrencyLimiter, createRateLimiter, rateLimitKeys } from './utils/rateLimit.js';
 import { errorLogger, requestLogger } from './utils/requestLogger.js';
+import { validateStartupEnvironment } from './utils/env.js';
 import { storageHealthSnapshot } from './utils/storage.js';
 
 dotenv.config();
@@ -72,7 +73,9 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(requestLogger);
-app.use('/uploads', express.static(path.join(rootDir, 'uploads')));
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/uploads', express.static(path.join(rootDir, 'uploads')));
+}
 
 const globalApiLimiter = createRateLimiter({
   name: 'api-global',
@@ -236,9 +239,7 @@ app.get('/api/health', (_req, res) => {
 app.use(errorLogger);
 
 async function start() {
-  if (!process.env.MONGODB_URI) {
-    throw new Error('MONGODB_URI is missing. Add it to .env before starting the server.');
-  }
+  validateStartupEnvironment();
 
   await mongoose.connect(process.env.MONGODB_URI, {
     dbName: process.env.MONGODB_DB || 'fitlook'

@@ -15,6 +15,35 @@ function decodeHtml(value) {
     .replace(/&#x([a-f0-9]+);/gi, (_match, code) => String.fromCharCode(parseInt(code, 16)));
 }
 
+function cleanCurrency(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function currencyFromUrl(value) {
+  const url = String(value || '').trim();
+  if (!url) return '';
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host === 'amzn.in' || host.endsWith('.amazon.in')) return 'INR';
+    if (host.endsWith('.amazon.co.uk')) return 'GBP';
+    if (host.endsWith('.amazon.ca')) return 'CAD';
+    if (host.endsWith('.amazon.com.au')) return 'AUD';
+    if (host.endsWith('.amazon.co.jp')) return 'JPY';
+  } catch {
+    // Keep source currency detection best-effort.
+  }
+  return '';
+}
+
+function productCurrency(product) {
+  const declared = cleanCurrency(product.currency);
+  const inferred = [product.sourceUrl, product.affiliateLink]
+    .map(currencyFromUrl)
+    .find(Boolean);
+  if (inferred && (!declared || declared === 'USD')) return inferred;
+  return declared || inferred || 'INR';
+}
+
 const productSchema = new mongoose.Schema(
   {
     name: { type: String, trim: true, required: true },
@@ -82,7 +111,7 @@ function productToClient(product) {
     gender: product.gender,
     price: product.price,
     compareAtPrice: product.compareAtPrice,
-    currency: 'INR',
+    currency: productCurrency(product),
     rating: product.rating,
     ratingCount: product.ratingCount,
     badge: product.badge,

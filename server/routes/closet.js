@@ -7,6 +7,8 @@ import ClosetItem from '../models/ClosetItem.js';
 import ClosetOutfit from '../models/ClosetOutfit.js';
 import User from '../models/User.js';
 import { requireUser } from './auth.js';
+import { effectiveDevMode } from '../utils/devMode.js';
+import { documentId, mediaTokenFromRequest, verifyMediaAccess } from '../utils/mediaAccess.js';
 import { deleteStoredFile, isStorageConfigurationError, readStoredFile, saveStoredFile } from '../utils/storage.js';
 
 const router = express.Router();
@@ -256,7 +258,7 @@ function tokenCost() {
 }
 
 function chargedTokenCost(user) {
-  return user?.devMode ? 0 : tokenCost();
+  return effectiveDevMode(user) ? 0 : tokenCost();
 }
 
 function fitRoomHeaders() {
@@ -479,7 +481,7 @@ async function callFitRoomTryOn({ user, garment, timer }) {
 }
 
 async function reserveToken(user, timer) {
-  if (user.devMode) {
+  if (effectiveDevMode(user)) {
     timer.mark('dev mode token bypass', { cost: 0, tokensRemaining: user.tokens });
     return user;
   }
@@ -490,7 +492,7 @@ async function reserveToken(user, timer) {
 }
 
 async function refundToken(user, timer) {
-  if (user.devMode) return user;
+  if (effectiveDevMode(user)) return user;
   const refundedUser = await User.findByIdAndUpdate(user._id, { $inc: { tokens: tokenCost() } }, { new: true });
   if (refundedUser) timer.mark('token refunded', { tokensRemaining: refundedUser.tokens });
   return refundedUser || user;
@@ -504,6 +506,48 @@ function outfitToClient(outfit, items = []) {
   const itemsById = new Map(items.map((item) => [item._id.toString(), itemToClient(item)]));
   return typeof outfit.toClient === 'function' ? outfit.toClient(itemsById) : new ClosetOutfit(outfit).toClient(itemsById);
 }
+
+async function closetMediaRecord(kind, id) {
+  if (kind === 'item') {
+    const record = await ClosetItem.findById(id).select('image user').lean();
+    return record ? { record, file: record.image } : null;
+  }
+  if (kind === 'outfit') {
+    const record = await ClosetOutfit.findById(id).select('image user').lean();
+    return record ? { record, file: record.image } : null;
+  }
+  if (kind === 'garment') {
+    const record = await ClosetOutfit.findById(id).select('garment user').lean();
+    return record ? { record, file: record.garment } : null;
+  }
+  return null;
+}
+
+router.get('/media/:kind/:id', async (req, res) => {
+  try {
+    const kind = String(req.params.kind || '').toLowerCase();
+    const access = verifyMediaAccess(mediaTokenFromRequest(req), {
+      scope: 'closet',
+      id: req.params.id,
+      kind,
+      field: kind
+    });
+    if (!access) return res.status(401).json({ message: 'Closet media link expired' });
+
+    const result = await closetMediaRecord(kind, req.params.id);
+    if (!result || documentId(result.record.user) !== access.userId) return res.status(404).json({ message: 'Closet media not found' });
+    if (!result.file?.path && !result.file?.url) return res.status(404).json({ message: 'Closet media not found' });
+
+    const stored = await readStoredFile(result.file);
+    res.set({
+      'Content-Type': stored.mimetype || result.file.mimetype || 'image/jpeg',
+      'Cache-Control': 'private, max-age=300'
+    });
+    return res.send(stored.bytes);
+  } catch {
+    return res.status(404).json({ message: 'Closet media not found' });
+  }
+});
 
 function closetStats(items) {
   const byCategory = {};
@@ -676,7 +720,7 @@ router.patch('/items/:id', requireUser, async (req, res) => {
   if (req.body?.formality !== undefined) updates.formality = inferFormality(req.body.formality);
   if (req.body?.occasions !== undefined) updates.occasions = cleanList(req.body.occasions);
   if (req.body?.tags !== undefined) updates.tags = cleanList(req.body.tags);
-  if (req.body?.favorite !== undefined) updates.favorite = Boolean(req.body.favorite);
+  if (req.body?.favorite !== undefined) updates.favorite = ['1', 'true', 'yes', 'on'].includes(String(req.body.favorite || '').toLowerCase());
   const item = await ClosetItem.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true });
   if (!item) return res.status(404).json({ message: 'Closet item not found' });
   res.json({ item: item.toClient() });
@@ -754,7 +798,6 @@ router.post('/outfits/generate', requireUser, async (req, res) => {
       garment: garmentFile,
       image: imageFile
     });
-    await ClosetItem.updateMany({ _id: { $in: items.map((item) => item._id) }, user: req.user._id }, { $inc: { wearCount: 1 }, $set: { lastWornAt: new Date() } });
     timer.end({ outfitId: outfit._id.toString(), tokensRemaining: req.user.tokens });
     res.status(201).json({ outfit: outfitToClient(outfit, items), user: req.user.toClient() });
   } catch (error) {
@@ -767,7 +810,7 @@ router.post('/outfits/generate', requireUser, async (req, res) => {
 
 router.patch('/outfits/:id', requireUser, async (req, res) => {
   const updates = {};
-  if (req.body?.favorite !== undefined) updates.favorite = Boolean(req.body.favorite);
+  if (req.body?.favorite !== undefined) updates.favorite = ['1', 'true', 'yes', 'on'].includes(String(req.body.favorite || '').toLowerCase());
   if (req.body?.title !== undefined) updates.title = cleanWord(req.body.title, 'Generated outfit');
   if (req.body?.plannedFor !== undefined) updates.plannedFor = cleanDate(req.body.plannedFor);
   const outfit = await ClosetOutfit.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { $set: updates }, { new: true });
