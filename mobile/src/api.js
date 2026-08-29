@@ -132,7 +132,7 @@ export async function clearToken() {
 
 export function imageUrl(url) {
   if (!url) return '';
-  if (/^(?:https?:|data:image)/i.test(url)) return url;
+  if (/^(?:https?:|data:(?:image|video))/i.test(url)) return url;
   const activeOrigin = activeApiUrl.replace(/\/api\/?$/, '');
   return `${activeOrigin}${url.startsWith('/') ? url : `/${url}`}`;
 }

@@ -879,7 +879,7 @@ async function aiStudioChat(req, res) {
     : '';
 
   try {
-    return inlineOrQueue({
+    return await inlineOrQueue({
       req,
       res,
       type: 'ai-studio-search',

@@ -41,11 +41,13 @@ tryOnSchema.index({ product: 1, createdAt: -1 });
 tryOnSchema.index({ user: 1, updatedAt: -1 });
 
 function tryOnToClient(tryOn) {
+  const id = tryOn._id.toString();
+  const hasVideo = Boolean(tryOn.video?.path || tryOn.video?.url);
   return {
-    id: tryOn._id.toString(),
+    id,
     productId: tryOn.product.toString(),
     imageUrl: storedFileToClientUrl(tryOn.image),
-    videoUrl: storedFileToClientUrl(tryOn.video),
+    videoUrl: hasVideo ? `/api/tryons/video/product/${id}` : null,
     videoModel: tryOn.video?.model || '',
     videoTokenCost: tryOn.video?.tokenCost || 0,
     videoGeneratedAt: tryOn.video?.generatedAt || null,

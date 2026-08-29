@@ -1780,6 +1780,44 @@ function generatedImageModelForScope(scope) {
   return null;
 }
 
+function generatedVideoModelForScope(scope) {
+  if (scope === 'product') return TryOn;
+  return null;
+}
+
+function sendVideoBytes(req, res, { bytes, mimetype }) {
+  const size = bytes.length;
+  const contentType = mimetype?.startsWith('video/') ? mimetype : 'video/mp4';
+  res.set({
+    'Accept-Ranges': 'bytes',
+    'Content-Type': contentType,
+    'Cache-Control': 'public, max-age=300'
+  });
+
+  const range = String(req.headers.range || '');
+  const match = range.match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) {
+    res.set('Content-Length', String(size));
+    return res.status(200).send(bytes);
+  }
+
+  const requestedStart = match[1] ? Number(match[1]) : 0;
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  const start = Math.max(0, requestedStart);
+  const end = Math.min(size - 1, requestedEnd);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
+    res.set('Content-Range', `bytes */${size}`);
+    return res.sendStatus(416);
+  }
+
+  const chunk = bytes.subarray(start, end + 1);
+  res.set({
+    'Content-Length': String(chunk.length),
+    'Content-Range': `bytes ${start}-${end}/${size}`
+  });
+  return res.status(206).send(chunk);
+}
+
 function canUseRemoteFirstImage(generated = {}) {
   return /^https?:\/\//i.test(String(generated.remoteUrl || ''));
 }
@@ -2537,6 +2575,30 @@ router.get('/image/:scope/:id', async (req, res) => {
   }
 });
 
+router.get('/video/:scope/:id', async (req, res) => {
+  try {
+    const scope = String(req.params.scope || '').toLowerCase();
+    const Model = generatedVideoModelForScope(scope);
+    if (!Model) return res.status(404).json({ message: 'Generated video not found' });
+    const record = await Model.findById(req.params.id).select('video').lean();
+    const video = record?.video;
+    if (!video?.path && !video?.url) return res.status(404).json({ message: 'Generated video not found' });
+
+    const stored = await readStoredFile(video);
+    return sendVideoBytes(req, res, {
+      bytes: stored.bytes,
+      mimetype: stored.mimetype || video.mimetype || 'video/mp4'
+    });
+  } catch (error) {
+    logger.error('tryon_video_proxy_failed', {
+      scope: req.params.scope,
+      id: req.params.id,
+      error
+    });
+    return res.status(502).json({ message: 'Generated video is temporarily unavailable' });
+  }
+});
+
 router.post('/custom', requireUser, upload.single('garment'), async (req, res) => {
   const timer = createTimer('custom-upload', { userId: req.user._id.toString() });
   let garment = null;
@@ -2553,7 +2615,7 @@ router.post('/custom', requireUser, upload.single('garment'), async (req, res) =
     const garmentFile = await normalizeMemoryImageFile(req.file, 'garment', timer);
     garment = await saveUploadFile(garmentFile, 'garment', req.user);
     endTimer({ queued: true, garment: garment.path || garment.url || '' });
-    return inlineOrQueue({
+    return await inlineOrQueue({
       req,
       res,
       type: 'tryon-custom',
@@ -2573,7 +2635,7 @@ router.post('/custom', requireUser, upload.single('garment'), async (req, res) =
 
 router.post('/external', requireUser, async (req, res) => {
   try {
-    return inlineOrQueue({
+    return await inlineOrQueue({
       req,
       res,
       type: 'tryon-external',
@@ -2590,7 +2652,7 @@ router.post('/external', requireUser, async (req, res) => {
 
 router.post('/:productId/video', requireUser, async (req, res) => {
   try {
-    return inlineOrQueue({
+    return await inlineOrQueue({
       req,
       res,
       type: 'tryon-video',
@@ -2610,7 +2672,7 @@ router.post('/:productId/video', requireUser, async (req, res) => {
 
 router.post('/:productId', requireUser, async (req, res) => {
   try {
-    return inlineOrQueue({
+    return await inlineOrQueue({
       req,
       res,
       type: 'tryon-product',

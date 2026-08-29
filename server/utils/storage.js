@@ -103,9 +103,10 @@ function extensionForMimetype(mimetype = '') {
 
 function safeName(value = '', fallback = 'file') {
   const parsed = path.parse(String(value || fallback));
-  const name = (parsed.name || fallback)
+  const name = (parsed.base || parsed.name || fallback)
     .normalize('NFKD')
     .replace(/[^\w.-]+/g, '-')
+    .replace(/^\.+$/g, '')
     .replace(/^-+|-+$/g, '')
     .slice(0, 80) || fallback;
   return name;

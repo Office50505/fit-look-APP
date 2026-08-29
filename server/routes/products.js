@@ -1273,7 +1273,7 @@ async function amazonSearchProductsService({ userId, body = {} }) {
 
 router.post('/amazon-search', requireUser, async (req, res) => {
   try {
-    return inlineOrQueue({
+    return await inlineOrQueue({
       req,
       res,
       type: 'amazon-product-search',
