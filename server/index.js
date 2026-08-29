@@ -94,9 +94,9 @@ const otpPhoneLimiter = createRateLimiter({
 const otpIpLimiter = createRateLimiter({
   name: 'otp-ip',
   windowMs: 60 * 60 * 1000,
-  max: Number(process.env.RATE_LIMIT_OTP_IP_MAX || 10),
+  max: Number(process.env.RATE_LIMIT_OTP_IP_MAX || 60),
   keyGenerator: rateLimitKeys.clientIp,
-  message: 'Too many OTP requests from this device. Please try again later.'
+  message: 'Too many OTP requests from this network. Please try again later.'
 });
 const otpVerifyLimiter = createRateLimiter({
   name: 'otp-verify',

@@ -19,13 +19,29 @@ function safeRequestPath(req) {
 function requestLogger(req, res, next) {
   const id = req.headers['x-request-id'] || requestId();
   const start = performance.now();
+  let finished = false;
   req.id = String(id);
   res.setHeader('X-Request-Id', req.id);
 
   res.on('finish', () => {
+    finished = true;
     const durationMs = Math.round(performance.now() - start);
     const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
     logger[level]('http_request', {
+      requestId: req.id,
+      method: req.method,
+      path: safeRequestPath(req),
+      statusCode: res.statusCode,
+      durationMs,
+      userId: req.user?._id?.toString?.(),
+      ip: req.ip
+    });
+  });
+
+  res.on('close', () => {
+    if (finished) return;
+    const durationMs = Math.round(performance.now() - start);
+    logger.warn('http_request_closed', {
       requestId: req.id,
       method: req.method,
       path: safeRequestPath(req),

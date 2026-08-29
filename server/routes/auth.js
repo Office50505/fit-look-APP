@@ -20,6 +20,7 @@ import UserPreference from '../models/UserPreference.js';
 import { getRedisClient, keyPrefix, ttlSeconds, withTimeout } from '../utils/cache.js';
 import { userDevModeControlsEnabled } from '../utils/devMode.js';
 import { normalizeGenderPreference } from '../utils/genderPreference.js';
+import { logger } from '../utils/logger.js';
 import { mediaTokenFromRequest, verifyMediaAccess } from '../utils/mediaAccess.js';
 import { deleteStoredFile, isStorageConfigurationError, readStoredFile, saveStoredFile } from '../utils/storage.js';
 
@@ -947,10 +948,16 @@ router.post('/signup/complete', upload.single('bodyPhoto'), async (req, res) => 
 });
 
 router.post('/password/reset', async (req, res) => {
+  const startedAt = performance.now();
   const phone = verifyAuthActionToken(req.body?.resetToken, 'password-reset');
   const password = String(req.body?.password || '');
   const confirmPassword = String(req.body?.confirmPassword || '');
   const passwordError = validatePassword(password);
+
+  logger.info('auth_password_reset_start', {
+    requestId: req.id,
+    tokenValid: Boolean(phone)
+  });
 
   if (!phone) return res.status(401).json({ message: 'Password reset expired. Verify OTP again.' });
   if (passwordError) return res.status(400).json({ message: passwordError });
@@ -960,10 +967,18 @@ router.post('/password/reset', async (req, res) => {
   if (!user) return res.status(404).json({ message: 'No account found for this mobile number' });
 
   const now = new Date();
+  const hashStartedAt = performance.now();
   user.passwordHash = await bcrypt.hash(password, 12);
+  const hashDurationMs = Math.round(performance.now() - hashStartedAt);
   user.passwordSetAt = now;
   user.phoneVerifiedAt = user.phoneVerifiedAt || now;
   await user.save();
+  logger.info('auth_password_reset_done', {
+    requestId: req.id,
+    userId: user._id.toString(),
+    hashDurationMs,
+    durationMs: Math.round(performance.now() - startedAt)
+  });
   res.json({ token: sign(user), user: user.toClient() });
 });
 

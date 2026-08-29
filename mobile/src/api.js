@@ -181,6 +181,8 @@ function readableError(value, fallback = 'Request failed') {
 
 function featureNameForPath(path = '') {
   if (/\/auth\/otp/i.test(path)) return 'OTP';
+  if (/\/auth\/login/i.test(path)) return 'login';
+  if (/\/auth\/password\/reset/i.test(path)) return 'password reset';
   if (/\/auth\/(?:profile|body-photo|avatar-crop|me)/i.test(path)) return 'profile';
   if (/\/recommendations\/(?:studio-chat|stylist-chat)/i.test(path)) return 'AI Studio';
   if (/\/products\/amazon-search/i.test(path)) return 'AI product search';
@@ -206,6 +208,9 @@ function friendlyHttpError({ status, path, detail }) {
   const detailText = /^Request failed \(\d+\)$/i.test(cleanDetail) ? '' : cleanDetail;
 
   if (status === 400) return detailText || `${feature} needs a little more information. Check the details and try again.`;
+  if (status === 401 && /\/auth\/(?:login|password\/reset|otp\/verify)/i.test(path)) {
+    return detailText || `${feature} could not be completed. Try again.`;
+  }
   if (status === 401) return 'Your session expired. Please log in again.';
   if (status === 403) return `You do not have access to this ${feature} action.`;
   if (status === 404) return detailText || `${feature} is not available on the running backend. Restart the backend with the latest code, then try again.`;

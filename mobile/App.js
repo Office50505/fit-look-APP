@@ -2798,12 +2798,18 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       setMessage('Passwords do not match.');
       return;
     }
+    if (!resetToken) {
+      setMessage('Verify the OTP before setting a new password.');
+      setResetStage('otp');
+      return;
+    }
     setLoading(true);
     setMessage('Saving password...');
     try {
       const data = await api('/auth/password/reset', {
         method: 'POST',
-        body: JSON.stringify({ resetToken, password, confirmPassword })
+        body: JSON.stringify({ resetToken, password, confirmPassword }),
+        timeoutMs: 60000
       });
       await finishAuthenticated(data);
     } catch (error) {
@@ -5443,7 +5449,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
           resetToken: passwordResetToken,
           password: profilePassword,
           confirmPassword: profileConfirmPassword
-        })
+        }),
+        timeoutMs: 60000
       });
       await saveToken(data.token);
       setToken(data.token);
