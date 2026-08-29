@@ -374,7 +374,7 @@
 				DEVELOPMENT_TEAM = LJ48CVC23W;
 				EXPO_NO_DOTENV = 1;
 				EXPO_PUBLIC_API_FALLBACK_URLS = "";
-				EXPO_PUBLIC_API_URL = "https://api.lookmefy.com/api";
+				EXPO_PUBLIC_API_URL = "https://api.lookmefy.in/api";
 				INFOPLIST_FILE = FitLook/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (

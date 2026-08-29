@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeModules, Platform } from 'react-native';
 
-const defaultProductionApi = 'https://api.lookmefy.com/api';
+const defaultProductionApi = 'https://api.lookmefy.in/api';
 const developmentApi = Platform.OS === 'android' ? 'http://10.0.2.2:5050/api' : 'http://localhost:5050/api';
 const isDevelopmentRuntime = typeof __DEV__ !== 'undefined' && __DEV__;
 function normalizeApiUrl(url) {

@@ -3,7 +3,7 @@ import { check, group, sleep } from 'k6';
 import exec from 'k6/execution';
 import { Counter, Rate, Trend } from 'k6/metrics';
 
-const BASE_URL = (__ENV.BASE_URL || 'https://api.lookmefy.com').replace(/\/$/, '');
+const BASE_URL = (__ENV.BASE_URL || 'https://api.lookmefy.in').replace(/\/$/, '');
 const TEST_PHONE = __ENV.TEST_USER_PHONE || `+1555${String(Math.floor(Math.random() * 10_000_000)).padStart(7, '0')}`;
 const TEST_OTP = __ENV.TEST_USER_OTP || '';
 const USER_AGENT = 'FitLook deployed k6 10k load test';

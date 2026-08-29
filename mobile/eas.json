@@ -19,7 +19,7 @@
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.lookmefy.com/api",
+        "EXPO_PUBLIC_API_URL": "https://api.lookmefy.in/api",
         "EXPO_PUBLIC_API_FALLBACK_URLS": ""
       },
       "ios": {
