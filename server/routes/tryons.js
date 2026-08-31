@@ -1697,7 +1697,7 @@ function storedOrRemoteImageUrl(image) {
 
 function generatedTryOnImageUrl(tryOn, scope = 'product') {
   const image = tryOn?.image;
-  if (image?.storage === 'remote-pending') return '';
+  if (image?.storage === 'remote-pending' && !image?.sourceUrl) return '';
   if (!image?.path && !image?.url && !image?.sourceUrl) return '';
   return tryOnMediaUrl({ kind: 'image', scope, id: documentId(tryOn), userId: documentId(tryOn?.user) });
 }
@@ -2451,6 +2451,12 @@ async function tryOnVideoService({ userId, productId, body = {} }) {
 }
 
 router.get('/', requireUser, async (req, res) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Surrogate-Control': 'no-store'
+  });
   const ids = String(req.query.productIds || '')
     .split(',')
     .map((id) => id.trim())
@@ -2461,7 +2467,7 @@ router.get('/', requireUser, async (req, res) => {
   const filter = { user: req.user._id };
   if (ids.length) filter.product = { $in: ids };
   const tryOns = await TryOn.find(filter)
-    .select('product provider model quality tokenCost image video createdAt')
+    .select('user product provider model quality tokenCost image video createdAt updatedAt')
     .sort({ createdAt: -1 })
     .limit(limit)
     .lean();
@@ -2482,18 +2488,18 @@ router.get('/history', requireUser, async (req, res) => {
     externalCount
   ] = await Promise.all([
     TryOn.find(userFilter)
-      .select('product provider model quality tokenCost image video createdAt updatedAt')
+      .select('user product provider model quality tokenCost image video createdAt updatedAt')
       .populate('product', 'name brand category image affiliateLink sourceUrl')
       .sort({ updatedAt: -1, createdAt: -1 })
       .limit(queryLimit)
       .lean(),
     CustomTryOn.find(userFilter)
-      .select('provider model quality tokenCost garment image createdAt updatedAt')
+      .select('user provider model quality tokenCost garment image createdAt updatedAt')
       .sort({ updatedAt: -1, createdAt: -1 })
       .limit(queryLimit)
       .lean(),
     ExternalTryOn.find(userFilter)
-      .select('sourceUrl affiliateLink productName brand category imageUrl provider model quality tokenCost image createdAt updatedAt')
+      .select('user sourceUrl affiliateLink productName brand category imageUrl provider model quality tokenCost image createdAt updatedAt')
       .sort({ updatedAt: -1, createdAt: -1 })
       .limit(queryLimit)
       .lean(),

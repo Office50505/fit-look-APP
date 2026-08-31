@@ -72,6 +72,7 @@ const horizontalScrollProps = {
 };
 const homeCategorySnapInterval = 70;
 const productImageAspectRatio = 0.8;
+const avatarCropReferenceSize = 132;
 const homeHeroSlideIntervalMs = 4000;
 const homeHeroSlides = [
   { key: 'summer', title: 'SUMMER ESSENTIALS', cta: 'SHOP NOW', image: 'homeSliderAtelier', route: 'shop' },
@@ -375,6 +376,9 @@ function avatarCropForUser(user, override) {
 
 function avatarImageStyleForUser(user, size, override) {
   const crop = avatarCropForUser(user, override);
+  const cropScale = Number.isFinite(Number(size)) && Number(size) > 0 ? Number(size) / avatarCropReferenceSize : 1;
+  const translateX = crop.translateX * cropScale;
+  const translateY = crop.translateY * cropScale;
   if (isGeneratedFullBodyAvatar(user)) {
     const width = size * crop.scale;
     const height = width * 1.5;
@@ -383,15 +387,15 @@ function avatarImageStyleForUser(user, size, override) {
       position: 'absolute',
       width,
       height,
-      left: ((size - width) / 2) + crop.translateX,
-      top: (size / 2) - faceCenterY + crop.translateY
+      left: ((size - width) / 2) + translateX,
+      top: (size / 2) - faceCenterY + translateY
     };
   }
   return {
     transform: [
       { scale: crop.scale },
-      { translateX: crop.translateX },
-      { translateY: crop.translateY }
+      { translateX },
+      { translateY }
     ]
   };
 }
@@ -458,12 +462,51 @@ function dateInputValue(value = new Date()) {
 }
 
 function productImageSource(product, tryOn) {
-  const url = resolveImageUrl(tryOn?.imageUrl || product?.imageUrl || product?.imageUrls?.[0]);
+  const url = tryOn?.imageUrl ? tryOnImageUrl(tryOn) : resolveImageUrl(product?.imageUrl || product?.imageUrls?.[0]);
   return url ? { uri: url } : null;
 }
 
 function productImageResizeMode(tryOn) {
   return tryOn?.imageUrl ? 'contain' : 'cover';
+}
+
+function mediaUrlWithVersion(url, version) {
+  const resolved = imageUrl(url);
+  const signature = String(version || '').trim();
+  if (!resolved || !signature || /[?&]_v=/.test(resolved)) return resolved;
+  return `${resolved}${resolved.includes('?') ? '&' : '?'}_v=${encodeURIComponent(signature)}`;
+}
+
+function tryOnMediaVersion(tryOn, kind = 'image') {
+  return [kind, tryOn?.updatedAt, tryOn?.videoGeneratedAt, tryOn?.createdAt, tryOn?.id]
+    .filter(Boolean)
+    .join(':');
+}
+
+function tryOnImageUrl(tryOn) {
+  return mediaUrlWithVersion(tryOn?.imageUrl, tryOnMediaVersion(tryOn, 'image'));
+}
+
+function tryOnVideoUrl(tryOn) {
+  return mediaUrlWithVersion(tryOn?.videoUrl, tryOnMediaVersion(tryOn, 'video'));
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchProductTryOn(productId, { waitForImage = false } = {}) {
+  if (!productId) return null;
+  const attempts = waitForImage ? 4 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const data = await api(`/tryons?productIds=${encodeURIComponent(productId)}`, { noCache: true });
+    const latest = (data?.tryOns || []).find((item) => String(item.productId) === String(productId)) || null;
+    if (!waitForImage || latest?.imageUrl || latest?.videoUrl || attempt === attempts - 1) return latest;
+    await wait(1200);
+  }
+  return null;
 }
 
 function chatProductKey(product = {}) {
@@ -588,7 +631,7 @@ const ResilientImage = memo(function ResilientImage({ source, fallbackSource, st
 const ProductImage = memo(function ProductImage({ product, tryOn, style, resizeMode, alt, fallbackIcon = 'image-outline' }) {
   const [imageIndex, setImageIndex] = useState(0);
   const [loaded, setLoaded] = useState(false);
-  const tryOnUrl = resolveImageUrl(tryOn?.imageUrl);
+  const tryOnUrl = tryOnImageUrl(tryOn);
   const imageUrls = useMemo(() => (
     tryOnUrl ? [tryOnUrl] : (product?.imageUrls?.length ? product.imageUrls : [product?.imageUrl]).filter(Boolean)
   ), [tryOnUrl, product?.imageUrl, product?.imageUrls]);
@@ -2178,7 +2221,9 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
         method: 'POST',
         body: existing?.imageUrl ? JSON.stringify({ force: true }) : undefined
       });
-      setTryOns((current) => ({ ...current, [product.id]: data.tryOn }));
+      let nextTryOn = data.tryOn || null;
+      if (!nextTryOn?.imageUrl) nextTryOn = await fetchProductTryOn(product.id, { waitForImage: true });
+      if (nextTryOn) setTryOns((current) => ({ ...current, [product.id]: nextTryOn }));
       if (data.user) setUser(data.user);
     } catch (error) {
       setTryOnErrors((current) => ({ ...current, [product.id]: error.message }));
@@ -2309,6 +2354,8 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
   const [tryOnVideoError, setTryOnVideoError] = useState('');
   const [selectedSize, setSelectedSize] = useState('Medium');
   const [lightbox, setLightbox] = useState(null);
+  const mediaScrollRef = useRef(null);
+  const mediaWidth = Math.max(1, Math.round(width - 28));
   const related = useProducts({ category: state.product?.category || '', limit: 5 }, token);
   const relatedProducts = related.products.filter((item) => item.id !== id).slice(0, 4);
   const [relatedTryOns] = useTryOns(user, relatedProducts, token);
@@ -2330,13 +2377,21 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
       return undefined;
     }
     let alive = true;
-    api(`/tryons?productIds=${encodeURIComponent(id)}`)
-      .then((data) => alive && setTryOn(data.tryOns?.[0] || null))
+    fetchProductTryOn(id)
+      .then((data) => alive && setTryOn(data || null))
       .catch(() => alive && setTryOn(null));
     return () => {
       alive = false;
     };
   }, [id, user?.id, user?.bodyPhotoUrl, token]);
+
+  useEffect(() => {
+    if (!tryOn?.imageUrl && !tryOn?.videoUrl) return undefined;
+    const timer = setTimeout(() => {
+      mediaScrollRef.current?.scrollTo?.({ x: 0, animated: true });
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [tryOn?.id, tryOn?.imageUrl, tryOn?.videoUrl, tryOn?.updatedAt, tryOn?.videoGeneratedAt, mediaWidth]);
 
   const generate = async () => {
     if (!user) {
@@ -2358,7 +2413,9 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
         body: regenerate ? JSON.stringify({ force: true }) : undefined,
         timeoutMs: 180000
       });
-      setTryOn(data.tryOn);
+      let nextTryOn = data.tryOn || null;
+      if (!nextTryOn?.imageUrl) nextTryOn = await fetchProductTryOn(state.product.id, { waitForImage: true });
+      if (nextTryOn) setTryOn(nextTryOn);
       if (regenerate && data.reused) setTryOnError('Existing try-on was reused. Restart the backend with the latest code, then try again.');
       if (data.user) setUser(data.user);
     } catch (error) {
@@ -2411,9 +2468,8 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
 
   const product = state.product;
   const originalUri = imageUrl(product.imageUrl);
-  const tryOnUri = imageUrl(tryOn?.imageUrl);
-  const tryOnVideoUri = imageUrl(tryOn?.videoUrl);
-  const mediaWidth = Math.max(1, Math.round(width - 28));
+  const tryOnUri = tryOnImageUrl(tryOn);
+  const tryOnVideoUri = tryOnVideoUrl(tryOn);
   const mediaItems = [
     tryOnVideoUri ? { key: 'video', label: 'Video Try-On', type: 'video', uri: tryOnVideoUri } : null,
     tryOnUri ? { key: 'tryon', label: 'AI Try-On', source: { uri: tryOnUri }, uri: tryOnUri } : null,
@@ -2442,7 +2498,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
       <ProductTopBar onNavigate={onNavigate} user={user} />
       <ScrollView contentContainerStyle={styles.productDetailContent} {...screenScrollProps}>
       <View style={[styles.productHeroMedia, { height: mediaHeight, width: mediaWidth }]}>
-        <ScrollView {...horizontalScrollProps} pagingEnabled contentContainerStyle={styles.productMediaTrack}>
+        <ScrollView ref={mediaScrollRef} {...horizontalScrollProps} pagingEnabled contentContainerStyle={styles.productMediaTrack}>
           {mediaItems.map((item, index) => (
             <Pressable key={item.key} style={[styles.productMediaSlide, { width: mediaWidth }]} onPress={() => item.type !== 'video' && item.uri && setLightbox(item.uri)}>
               {item.type === 'video' ? (

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Lookmefy",
     "slug": "lookmefy",
-    "version": "0.1.6",
+    "version": "1.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": [
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.kratikdhote.lookmefy",
-      "buildNumber": "1",
+      "buildNumber": "16",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.lookmefy.app",
-      "versionCode": 13,
+      "versionCode": 18,
       "adaptiveIcon": {
         "backgroundColor": "#101820"
       }

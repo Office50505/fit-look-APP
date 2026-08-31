@@ -34,7 +34,7 @@ const customTryOnSchema = new mongoose.Schema(
 customTryOnSchema.index({ user: 1, createdAt: -1 });
 
 function customTryOnImageUrl(image, id, userId) {
-  if (image?.storage === 'remote-pending') return '';
+  if (image?.storage === 'remote-pending' && !image?.sourceUrl) return '';
   return image?.path || image?.url || image?.sourceUrl ? tryOnMediaUrl({ kind: 'image', scope: 'custom', id, userId }) : '';
 }
 
@@ -47,7 +47,8 @@ customTryOnSchema.methods.toClient = function toClient() {
     model: this.model,
     quality: this.quality,
     tokenCost: this.tokenCost,
-    createdAt: this.createdAt
+    createdAt: this.createdAt,
+    updatedAt: this.updatedAt
   };
 };
 

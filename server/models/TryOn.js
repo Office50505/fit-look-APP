@@ -57,7 +57,8 @@ function tryOnToClient(tryOn) {
     model: tryOn.model,
     quality: tryOn.quality,
     tokenCost: tryOn.tokenCost,
-    createdAt: tryOn.createdAt
+    createdAt: tryOn.createdAt,
+    updatedAt: tryOn.updatedAt
   };
 }
 

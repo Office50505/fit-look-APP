@@ -41,7 +41,8 @@ externalTryOnSchema.methods.toClient = function toClient() {
     model: this.model,
     quality: this.quality,
     tokenCost: this.tokenCost,
-    createdAt: this.createdAt
+    createdAt: this.createdAt,
+    updatedAt: this.updatedAt
   };
 };
 
