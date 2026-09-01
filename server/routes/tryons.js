@@ -53,8 +53,8 @@ function tokenCost() {
 }
 
 function videoTokenCost() {
-  const value = Number(process.env.TRYON_VIDEO_TOKEN_COST || 2);
-  return Number.isFinite(value) && value > 0 ? Math.ceil(value) : 2;
+  const value = Number(process.env.TRYON_VIDEO_TOKEN_COST || 3);
+  return Number.isFinite(value) && value > 0 ? Math.ceil(value) : 3;
 }
 
 function devMode(user) {
@@ -2526,7 +2526,7 @@ router.get('/history', requireUser, async (req, res) => {
 router.get('/credit-history', requireUser, async (req, res) => {
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
   const events = await CreditEvent.find({ user: req.user._id })
-    .select('action product productTitle productImageUrl tokens balanceAfter createdAt')
+    .select('action product productTitle productImageUrl tokens balanceAfter metadata createdAt')
     .sort({ createdAt: -1 })
     .limit(limit)
     .lean();

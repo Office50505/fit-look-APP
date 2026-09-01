@@ -28,6 +28,7 @@ export function creditEventToClient(event) {
     productImageUrl: source.productImageUrl || '',
     tokens: Number(source.tokens) || 0,
     balanceAfter: Number(source.balanceAfter) || 0,
+    direction: source.metadata?.direction === 'credit' ? 'credit' : 'debit',
     createdAt: source.createdAt
   };
 }

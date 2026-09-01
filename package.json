@@ -15,11 +15,15 @@
     "mobile:android": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --android --port 8081",
     "mobile:ios": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --ios --port 8081",
     "mobile:ios:prebuild": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli prebuild --platform ios",
+    "mobile:ios:build": "cd mobile && eas build --platform ios --profile production",
+    "mobile:ios:submit": "cd mobile && eas submit --platform ios --profile production --latest",
+    "mobile:ios:testflight": "cd mobile && eas build --platform ios --profile production --auto-submit",
     "mobile:web": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --web --port 8081",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@apple/app-store-server-library": "^3.1.0",
     "@vitejs/plugin-react": "^5.0.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

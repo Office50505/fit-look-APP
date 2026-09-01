@@ -2,6 +2,7 @@
   "expo": {
     "name": "Lookmefy",
     "slug": "lookmefy",
+    "scheme": "lookmefy",
     "version": "1.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -10,8 +11,9 @@
     ],
     "ios": {
       "supportsTablet": true,
+      "icon": "./assets/icon-ios.png",
       "bundleIdentifier": "com.kratikdhote.lookmefy",
-      "buildNumber": "16",
+      "buildNumber": "19",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
@@ -20,8 +22,10 @@
     },
     "android": {
       "package": "com.lookmefy.app",
-      "versionCode": 18,
+      "versionCode": 19,
+      "icon": "./assets/icon-android.png",
       "adaptiveIcon": {
+        "foregroundImage": "./assets/icon-android.png",
         "backgroundColor": "#101820"
       }
     },
@@ -29,7 +33,13 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-video"
+      "expo-video",
+      [
+        "expo-iap",
+        {
+          "module": "expo-iap"
+        }
+      ]
     ]
   }
 }

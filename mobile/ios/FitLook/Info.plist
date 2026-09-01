@@ -28,6 +28,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.kratikdhote.lookmefy</string>
+				<string>lookmefy</string>
 			</array>
 		</dict>
 	</array>

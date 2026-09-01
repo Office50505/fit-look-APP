@@ -224,6 +224,8 @@ app.use('/api/tryons', tryOnImageMinuteLimiter, tryOnImageConcurrency);
 app.use('/api/closet/items/analyze', closetUploadLimiter);
 app.use('/api/closet/items', closetUploadLimiter);
 app.use('/api/payments/phonepe/subscription', paymentLimiter);
+app.use('/api/payments/apple/transactions', paymentLimiter);
+app.use('/api/payments/apple/restore', paymentLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/closet', closetRoutes);
 app.use('/api/jobs', jobRoutes);

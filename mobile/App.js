@@ -8,6 +8,7 @@ import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } fr
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   BackHandler,
   FlatList,
   Image,
@@ -29,6 +30,7 @@ import {
 import { api, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
 import { categories, images, infoPages, policyPages } from './src/assets';
 import { calculateCreditPercentage, normalizeProduct, normalizeProducts, resolveImageUrl } from './src/products';
+import { STOREKIT_CREDITS_150_PRODUCT_ID, STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID, storeKitAppAccountTokenForUser } from './src/storeKitProducts';
 
 const logoSymbol = require('./assets/lookmefy-symbol.png');
 
@@ -1239,6 +1241,50 @@ function creditHistoryProductLabel(event = {}) {
   if (!title || title === 'Product') return isCustomTryOn ? 'Custom upload' : 'Product';
   if (isCustomTryOn && /^[^/\s]+\.(?:jpe?g|png|webp|avif)$/i.test(title)) return 'Custom upload';
   return title;
+}
+
+function creditHistoryAmountLabel(event = {}) {
+  const amount = Math.abs(Number(event.tokens) || 0);
+  if (!amount) return '0';
+  return event.direction === 'credit' ? `+${amount}` : `-${amount}`;
+}
+
+function addDays(date, count) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + count);
+  return next;
+}
+
+function formatCreditRate(plan = {}) {
+  const rate = Number(plan.ratePerCredit);
+  if (!Number.isFinite(rate) || rate <= 0) return '';
+  return `${formatMoney(rate, plan.currency)} / credit${plan.billingFrequency === 'monthly' ? ' monthly' : ''}`;
+}
+
+function mobilePaymentReturnUrl() {
+  return 'lookmefy://tokens';
+}
+
+function merchantOrderIdFromUrl(value = '') {
+  try {
+    const url = new URL(String(value || ''));
+    return url.searchParams.get('merchantOrderId') || url.searchParams.get('orderId') || '';
+  } catch {
+    return '';
+  }
+}
+
+function mobileRouteFromUrl(value = '') {
+  try {
+    const url = new URL(String(value || ''));
+    const path = url.protocol === 'http:' || url.protocol === 'https:'
+      ? url.pathname
+      : `/${url.host}${url.pathname}`;
+    if (/^\/tokens(?:\/|$)/i.test(path)) return { name: 'tokens', params: {} };
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function AiPreviewNote({ style }) {
@@ -4726,29 +4772,567 @@ function StyleBotScreen({
   );
 }
 
+const fallbackSubscriptionPlan = {
+  id: 'monthly_150_credits',
+  type: 'subscription',
+  purchaseType: 'subscription_setup',
+  name: 'FitLook Monthly',
+  headline: '150 credits every month',
+  amount: 49900,
+  currency: 'INR',
+  tokens: 150,
+  credits: 150,
+  billingFrequency: 'monthly',
+  cadence: 'Monthly',
+  ratePerCredit: 3.33,
+  appStoreProductId: STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID,
+  description: '150 credits every month for AI try-on images, videos, and styling work.',
+  summary: 'Cancel future monthly billing before the next renewal from your account or by contacting support.'
+};
+
+const fallbackTopUpPlans = [
+  { id: 'top_up_50_credits', type: 'top_up', name: 'Top-up', headline: '50 credits', amount: 19900, currency: 'INR', tokens: 50, credits: 50, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.98, description: 'One-time refill for extra image try-ons and videos.' },
+  { id: 'top_up_75_credits', type: 'top_up', name: 'Top-up', headline: '75 credits', amount: 29900, currency: 'INR', tokens: 75, credits: 75, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.99, description: 'One-time refill for extra image try-ons and videos.' },
+  { id: 'top_up_110_credits', type: 'top_up', name: 'Top-up', headline: '110 credits', amount: 39900, currency: 'INR', tokens: 110, credits: 110, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.63, description: 'Better value for product batches and style exploration.' },
+  { id: 'top_up_135_credits', type: 'top_up', name: 'Top-up', headline: '135 credits', amount: 49900, currency: 'INR', tokens: 135, credits: 135, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.7, description: 'Better value for product batches and style exploration.' },
+  { id: 'top_up_400_credits', type: 'top_up', name: 'Top-up', headline: '400 credits', amount: 99900, currency: 'INR', tokens: 400, credits: 400, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 2.5, badge: 'Best value', description: 'Best value for bulk catalog work and repeated video trials.' }
+];
+
+const fallbackPaymentCatalog = {
+  subscription: fallbackSubscriptionPlan,
+  topUps: fallbackTopUpPlans,
+  appStoreProductIds: {
+    monthlySubscription: STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID,
+    credits150: STOREKIT_CREDITS_150_PRODUCT_ID
+  },
+  creditCosts: { starterCredits: 8, image: 1, customTryOn: 1, video: 3 }
+};
+
+function normalizePaymentPlan(plan = {}, fallback = {}) {
+  const amount = Number(plan.amount ?? fallback.amount) || 0;
+  const credits = Number(plan.credits ?? plan.tokens ?? fallback.credits ?? fallback.tokens) || 0;
+  const rate = Number(plan.ratePerCredit ?? fallback.ratePerCredit);
+  return {
+    ...fallback,
+    ...plan,
+    amount,
+    tokens: credits,
+    credits,
+    currency: plan.currency || fallback.currency || 'INR',
+    ratePerCredit: Number.isFinite(rate) && rate > 0 ? rate : Number((amount / 100 / Math.max(1, credits)).toFixed(2))
+  };
+}
+
+function PaymentSummaryLine({ label, value, strong }) {
+  return (
+    <View style={styles.paymentSummaryLine}>
+      <Text style={styles.paymentSummaryLabel}>{label}</Text>
+      <Text style={[styles.paymentSummaryValue, strong && styles.paymentSummaryValueStrong]} numberOfLines={2}>{value}</Text>
+    </View>
+  );
+}
+
+function MonthlyCreditCard({ plan, selected, active, onPress }) {
+  return (
+    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      <View style={styles.creditSelectedRow}>
+        {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
+        {active ? <Text style={styles.creditActivePill}>ACTIVE</Text> : null}
+      </View>
+      <Text style={styles.creditCardKicker}>FITLOOK MONTHLY</Text>
+      <Text style={styles.creditMandateTitle}>{plan.headline || `${plan.credits} credits every month`}</Text>
+      <Text style={styles.creditMandateSub}>{plan.credits} credits every month</Text>
+      <Text style={styles.creditMutedText}>{formatCreditRate(plan)}</Text>
+      <Text style={styles.creditCapsText}>{formatMoney((Number(plan.amount) || 0) / 100, plan.currency)}/month</Text>
+      <Text style={styles.creditCardDescription}>{plan.summary || 'Cancel future monthly billing before the next renewal.'}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function AddMoreCard({ selected, onPress }) {
+  return (
+    <TouchableOpacity activeOpacity={0.88} style={[styles.creditAddMoreCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      <Text style={styles.creditCardKicker}>TOP-UP</Text>
+      <Text style={styles.creditAddMoreTitle}>Add more</Text>
+      <Text style={styles.creditMandateSub}>One-time packs</Text>
+      <Text style={styles.creditCapsText}>NO SUBSCRIPTION CHANGE</Text>
+      <Text style={styles.creditCardDescription}>Choose 50, 75, 110, 135, or 400 extra credits for image try-ons and videos.</Text>
+    </TouchableOpacity>
+  );
+}
+
+function TopUpCreditCard({ plan, selected, onPress }) {
+  return (
+    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
+      {plan.badge ? <Text style={styles.topUpBestValue}>{String(plan.badge).toUpperCase()}</Text> : null}
+      <Text style={styles.creditCardKicker}>TOP-UP</Text>
+      <Text style={styles.topUpPrice}>{formatMoney((Number(plan.amount) || 0) / 100, plan.currency)}</Text>
+      <Text style={styles.creditMandateSub}>{plan.credits} credits</Text>
+      <Text style={styles.creditMutedText}>{formatCreditRate(plan)}</Text>
+      <Text style={styles.creditCapsText}>{String(plan.cadence || 'One-time').toUpperCase()}</Text>
+      <Text style={styles.creditCardDescription}>{plan.description}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function loadExpoIapModule() {
+  if (Platform.OS !== 'ios') return null;
+  try {
+    return require('expo-iap');
+  } catch {
+    return null;
+  }
+}
+
+function storeKitProductPrice(product) {
+  return product?.displayPrice || product?.localizedPriceIOS || product?.localizedPrice || '';
+}
+
+function storeKitProductTitle(product, fallback) {
+  return product?.displayName || product?.displayNameIOS || product?.title || fallback;
+}
+
+function findStoreKitProduct(items, productId) {
+  return (Array.isArray(items) ? items : []).find((item) => item?.id === productId || item?.productId === productId) || null;
+}
+
+function isStoreKitCancel(error) {
+  return /cancel/i.test(String(error?.code || error?.message || ''));
+}
+
+function applePurchaseServerPayload(purchase = {}) {
+  return {
+    id: purchase.id || '',
+    productId: purchase.productId || purchase.currentPlanId || '',
+    transactionId: purchase.transactionId || purchase.id || '',
+    transactionDate: purchase.transactionDate || null,
+    purchaseToken: purchase.purchaseToken || '',
+    transactionReceipt: purchase.transactionReceipt || '',
+    appAccountToken: purchase.appAccountToken || '',
+    environmentIOS: purchase.environmentIOS || purchase.environmentIos || '',
+    expirationDateIOS: purchase.expirationDateIOS || purchase.expirationDateIos || null,
+    originalTransactionIdentifierIOS: purchase.originalTransactionIdentifierIOS || purchase.originalTransactionIdentifierIos || '',
+    webOrderLineItemIdIOS: purchase.webOrderLineItemIdIOS || '',
+    revocationDateIOS: purchase.revocationDateIOS || null,
+    revocationReasonIOS: purchase.revocationReasonIOS || '',
+    reasonIOS: purchase.reasonIOS || purchase.transactionReasonIOS || '',
+    store: purchase.store || 'app-store'
+  };
+}
+
+function isLookmefyStoreKitPurchase(purchase = {}) {
+  const productId = String(purchase.productId || purchase.currentPlanId || '').trim();
+  return productId === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID || productId === STOREKIT_CREDITS_150_PRODUCT_ID;
+}
+
+function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
+  const [state, setState] = useState({
+    available: enabled,
+    connected: false,
+    loading: enabled,
+    syncing: false,
+    restoring: false,
+    verifying: false,
+    purchasePending: false,
+    purchasingProductId: '',
+    statusMessage: '',
+    error: '',
+    unavailableReason: '',
+    subscriptionProduct: null,
+    creditsProduct: null,
+    activeSubscriptions: []
+  });
+  const iapRef = useRef(null);
+  const processingRef = useRef(new Set());
+
+  const updateState = useCallback((patch) => {
+    setState((current) => ({ ...current, ...patch }));
+  }, []);
+
+  const finishStoreKitTransaction = useCallback(async (purchase) => {
+    const iap = iapRef.current;
+    if (!iap?.finishTransaction) return;
+    try {
+      await iap.finishTransaction({
+        purchase,
+        isConsumable: String(purchase?.productId || '') === STOREKIT_CREDITS_150_PRODUCT_ID
+      });
+    } catch (error) {
+      updateState({ error: `Apple verified the purchase, but finishing it failed: ${error.message}` });
+    }
+  }, [updateState]);
+
+  const refreshProducts = useCallback(async () => {
+    if (!enabled) return;
+    const iap = iapRef.current;
+    if (!iap) {
+      updateState({
+        loading: false,
+        available: false,
+        unavailableReason: 'StoreKit is unavailable in this build.'
+      });
+      return;
+    }
+
+    updateState({ loading: true, error: '', unavailableReason: '' });
+    try {
+      const [subscriptionProducts, consumableProducts, activeSubscriptions] = await Promise.all([
+        iap.fetchProducts({ skus: [STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID], type: 'subs' }),
+        iap.fetchProducts({ skus: [STOREKIT_CREDITS_150_PRODUCT_ID], type: 'in-app' }),
+        iap.getActiveSubscriptions ? iap.getActiveSubscriptions([STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID]).catch(() => []) : []
+      ]);
+      const subscriptionProduct = findStoreKitProduct(subscriptionProducts, STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID);
+      const creditsProduct = findStoreKitProduct(consumableProducts, STOREKIT_CREDITS_150_PRODUCT_ID);
+      updateState({
+        loading: false,
+        connected: true,
+        subscriptionProduct,
+        creditsProduct,
+        activeSubscriptions: Array.isArray(activeSubscriptions) ? activeSubscriptions : [],
+        unavailableReason: !subscriptionProduct || !creditsProduct ? 'App Store products are not available for this Apple ID/build yet.' : ''
+      });
+    } catch (error) {
+      updateState({
+        loading: false,
+        connected: false,
+        error: error.message || 'Could not load App Store products.',
+        unavailableReason: 'App Store products could not be loaded.'
+      });
+    }
+  }, [enabled, updateState]);
+
+  const syncCurrentEntitlements = useCallback(async ({ silent = false } = {}) => {
+    if (!enabled || !user) return;
+    const iap = iapRef.current;
+    if (!iap) return;
+
+    updateState({
+      syncing: !silent,
+      error: '',
+      ...(silent ? {} : { statusMessage: 'Syncing App Store status...' })
+    });
+    try {
+      const availablePurchases = iap.getAvailablePurchases
+        ? await iap.getAvailablePurchases({ onlyIncludeActiveItemsIOS: false, alsoPublishToEventListenerIOS: false })
+        : [];
+      const relevantPurchases = (Array.isArray(availablePurchases) ? availablePurchases : []).filter(isLookmefyStoreKitPurchase);
+      if (relevantPurchases.length) {
+        const restoreResult = await api('/payments/apple/restore', {
+          method: 'POST',
+          body: JSON.stringify({ purchases: relevantPurchases.map(applePurchaseServerPayload) })
+        });
+        if (restoreResult.user) setUser(restoreResult.user);
+        for (const purchase of relevantPurchases) await finishStoreKitTransaction(purchase);
+      }
+
+      const statusResult = await api('/payments/apple/status', { noCache: true });
+      if (statusResult.user) setUser(statusResult.user);
+      updateState({
+        syncing: false,
+        error: '',
+        ...(silent ? {} : { statusMessage: 'App Store status is up to date.' })
+      });
+    } catch (error) {
+      updateState({
+        syncing: false,
+        error: error.message || 'Could not sync App Store status.'
+      });
+    }
+  }, [enabled, finishStoreKitTransaction, setUser, updateState, user]);
+
+  const verifyPurchase = useCallback(async (purchase, source = 'purchase') => {
+    if (!enabled || !isLookmefyStoreKitPurchase(purchase)) return false;
+    if (!user) {
+      onRequireAuth?.('Log in with your mobile number before completing an App Store purchase.');
+      updateState({ purchasePending: false, purchasingProductId: '', error: 'Log in before completing this App Store purchase.' });
+      return false;
+    }
+
+    const key = String(purchase.transactionId || purchase.id || purchase.purchaseToken || purchase.productId || '');
+    if (key && processingRef.current.has(key)) return false;
+    if (key) processingRef.current.add(key);
+
+    updateState({
+      verifying: true,
+      purchasePending: false,
+      statusMessage: 'Verifying App Store purchase...',
+      error: ''
+    });
+
+    try {
+      const result = await api('/payments/apple/transactions', {
+        method: 'POST',
+        body: JSON.stringify({
+          source,
+          purchase: applePurchaseServerPayload(purchase)
+        })
+      });
+      if (result.user) setUser(result.user);
+      await finishStoreKitTransaction(purchase);
+      updateState({
+        verifying: false,
+        purchasingProductId: '',
+        statusMessage: result.grantedCredits
+          ? `Apple purchase verified. ${result.grantedCredits} credits added.`
+          : 'Apple purchase verified.',
+        error: ''
+      });
+      return true;
+    } catch (error) {
+      updateState({
+        verifying: false,
+        purchasingProductId: '',
+        error: error.message || 'Apple purchase verification failed.'
+      });
+      return false;
+    } finally {
+      if (key) processingRef.current.delete(key);
+    }
+  }, [enabled, finishStoreKitTransaction, onRequireAuth, setUser, updateState, user]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const iap = loadExpoIapModule();
+    iapRef.current = iap;
+    if (!iap) {
+      updateState({
+        available: false,
+        loading: false,
+        unavailableReason: 'StoreKit is unavailable in this build. Create a development or App Store build with expo-iap.'
+      });
+      return undefined;
+    }
+
+    let alive = true;
+    const purchaseSubscription = iap.purchaseUpdatedListener?.((purchase) => {
+      if (alive) verifyPurchase(purchase, 'purchase');
+    });
+    const errorSubscription = iap.purchaseErrorListener?.((error) => {
+      if (!alive) return;
+      updateState({
+        purchasePending: false,
+        purchasingProductId: '',
+        statusMessage: isStoreKitCancel(error) ? 'Purchase cancelled.' : '',
+        error: isStoreKitCancel(error) ? '' : error.message || 'Apple purchase failed.'
+      });
+    });
+
+    iap.initConnection()
+      .then(() => {
+        if (!alive) return;
+        updateState({ connected: true });
+        refreshProducts();
+      })
+      .catch((error) => {
+        if (!alive) return;
+        updateState({
+          available: false,
+          loading: false,
+          connected: false,
+          error: error.message || 'Could not connect to the App Store.',
+          unavailableReason: 'Could not connect to the App Store.'
+        });
+      });
+
+    return () => {
+      alive = false;
+      purchaseSubscription?.remove?.();
+      errorSubscription?.remove?.();
+      iap.endConnection?.().catch?.(() => {});
+    };
+  }, [enabled, refreshProducts, updateState, verifyPurchase]);
+
+  useEffect(() => {
+    if (enabled && state.connected && user?.id) {
+      syncCurrentEntitlements({ silent: true });
+    }
+  }, [enabled, state.connected, syncCurrentEntitlements, user?.id]);
+
+  const requestStoreKitPurchase = useCallback(async ({ productId, type }) => {
+    if (!enabled) return;
+    if (!user) {
+      onRequireAuth?.('Log in with your mobile number to buy credits.');
+      return;
+    }
+    const iap = iapRef.current;
+    if (!iap || !state.connected) {
+      updateState({ error: 'App Store payments are not ready yet.' });
+      return;
+    }
+    const product = productId === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID ? state.subscriptionProduct : state.creditsProduct;
+    if (!product) {
+      updateState({ error: 'This App Store product is unavailable for the current build or Apple ID.' });
+      return;
+    }
+    const appAccountToken = storeKitAppAccountTokenForUser(user);
+    if (!appAccountToken) {
+      updateState({ error: 'Could not link this App Store purchase to your Lookmefy account.' });
+      return;
+    }
+
+    updateState({
+      purchasePending: true,
+      purchasingProductId: productId,
+      statusMessage: 'Opening App Store purchase sheet...',
+      error: ''
+    });
+
+    try {
+      await iap.requestPurchase({
+        request: {
+          apple: {
+            sku: productId,
+            appAccountToken,
+            quantity: productId === STOREKIT_CREDITS_150_PRODUCT_ID ? 1 : undefined,
+            andDangerouslyFinishTransactionAutomatically: false
+          }
+        },
+        type
+      });
+      updateState({ statusMessage: 'Waiting for App Store confirmation...' });
+    } catch (error) {
+      updateState({
+        purchasePending: false,
+        purchasingProductId: '',
+        statusMessage: isStoreKitCancel(error) ? 'Purchase cancelled.' : '',
+        error: isStoreKitCancel(error) ? '' : error.message || 'Could not start App Store purchase.'
+      });
+    }
+  }, [enabled, onRequireAuth, state.connected, state.creditsProduct, state.subscriptionProduct, updateState, user]);
+
+  const restorePurchases = useCallback(async () => {
+    if (!enabled || !user) {
+      onRequireAuth?.('Log in with your mobile number to restore App Store purchases.');
+      return;
+    }
+    updateState({ restoring: true, statusMessage: 'Restoring App Store purchases...', error: '' });
+    await syncCurrentEntitlements({ silent: false });
+    updateState({ restoring: false });
+  }, [enabled, onRequireAuth, syncCurrentEntitlements, updateState, user]);
+
+  const manageSubscription = useCallback(async () => {
+    const iap = iapRef.current;
+    try {
+      await iap?.deepLinkToSubscriptions?.();
+    } catch (error) {
+      updateState({ error: error.message || 'Could not open App Store subscription settings.' });
+    }
+  }, [updateState]);
+
+  return {
+    ...state,
+    purchaseMonthly: () => requestStoreKitPurchase({ productId: STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID, type: 'subs' }),
+    purchaseCredits: () => requestStoreKitPurchase({ productId: STOREKIT_CREDITS_150_PRODUCT_ID, type: 'in-app' }),
+    restorePurchases,
+    syncCurrentEntitlements,
+    refreshProducts,
+    manageSubscription
+  };
+}
+
+function AppleStoreKitCreditCard({ selected, active, product, title, kicker, headline, subhead, description, onPress }) {
+  const price = storeKitProductPrice(product);
+  return (
+    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      <View style={styles.creditSelectedRow}>
+        {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
+        {active ? <Text style={styles.creditActivePill}>ACTIVE</Text> : null}
+      </View>
+      <Text style={styles.creditCardKicker}>{kicker}</Text>
+      <Text style={styles.creditMandateTitle}>{headline}</Text>
+      <Text style={styles.creditMandateSub}>{subhead}</Text>
+      <Text style={styles.creditMutedText}>{price || 'Unavailable'}</Text>
+      <Text style={styles.creditCapsText}>{storeKitProductTitle(product, title)}</Text>
+      <Text style={styles.creditCardDescription}>{description}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly }) {
+  const buyingSubscription = appleStoreKit.purchasingProductId === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID;
+  const buyingCredits = appleStoreKit.purchasingProductId === STOREKIT_CREDITS_150_PRODUCT_ID;
+  const busy = appleStoreKit.loading || appleStoreKit.verifying || appleStoreKit.purchasePending || appleStoreKit.syncing || appleStoreKit.restoring;
+  const selectedProduct = mode === 'top_up' ? appleStoreKit.creditsProduct : appleStoreKit.subscriptionProduct;
+  const disabled = busy || !appleStoreKit.connected || !selectedProduct || (mode === 'subscription' && activeMonthly);
+  let label = mode === 'top_up' ? 'BUY 150 CREDITS' : 'SUBSCRIBE WITH APPLE';
+  if (appleStoreKit.loading) label = 'LOADING APP STORE';
+  else if (appleStoreKit.restoring) label = 'RESTORING PURCHASES';
+  else if (appleStoreKit.syncing) label = 'SYNCING STATUS';
+  else if (buyingSubscription || buyingCredits || appleStoreKit.purchasePending) label = 'WAITING FOR APP STORE';
+  else if (appleStoreKit.verifying) label = 'VERIFYING PURCHASE';
+  else if (mode === 'subscription' && activeMonthly) label = 'MONTHLY ACTIVE';
+
+  return (
+    <>
+      <TouchableOpacity
+        style={[styles.secureCheckoutButton, disabled && styles.disabledButton]}
+        activeOpacity={0.88}
+        disabled={disabled}
+        onPress={mode === 'top_up' ? appleStoreKit.purchaseCredits : appleStoreKit.purchaseMonthly}
+      >
+        <Text style={styles.secureCheckoutText}>{label}</Text>
+      </TouchableOpacity>
+
+      <View style={styles.appleStoreActionRow}>
+        <TouchableOpacity style={styles.appleStoreActionButton} activeOpacity={0.82} disabled={busy} onPress={appleStoreKit.restorePurchases}>
+          <Ionicons name="cloud-download-outline" size={16} color="#5e3335" />
+          <Text style={styles.verifyPaymentText}>RESTORE</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.appleStoreActionButton} activeOpacity={0.82} disabled={busy} onPress={() => appleStoreKit.syncCurrentEntitlements({ silent: false })}>
+          <Ionicons name="refresh" size={16} color="#5e3335" />
+          <Text style={styles.verifyPaymentText}>SYNC STATUS</Text>
+        </TouchableOpacity>
+      </View>
+
+      {activeMonthly ? (
+        <TouchableOpacity style={styles.verifyPaymentButton} activeOpacity={0.82} onPress={appleStoreKit.manageSubscription}>
+          <Ionicons name="settings-outline" size={16} color="#5e3335" />
+          <Text style={styles.verifyPaymentText}>MANAGE APP STORE SUBSCRIPTION</Text>
+        </TouchableOpacity>
+      ) : null}
+    </>
+  );
+}
+
 function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [plans, setPlans] = useState([]);
+  const [catalog, setCatalog] = useState(fallbackPaymentCatalog);
   const [plansLoading, setPlansLoading] = useState(true);
-  const [selectedTierId, setSelectedTierId] = useState('monthly_100_tokens');
-  const fallbackPlan = {
-    id: 'monthly_100_tokens',
-    name: 'Lookmefy 100 Token Pack',
-    amount: 100000,
-    currency: 'INR',
-    tokens: 100
-  };
-  const creditTiers = (plans.length ? plans : [fallbackPlan]).map((plan) => ({
-    id: plan.id,
-    name: plan.name,
-    price: Number(plan.amount) / 100,
-    credits: Number(plan.tokens) || 0,
-    description: `${Number(plan.tokens) || 0} AI try-on credits for your Lookmefy account.`,
-    currency: plan.currency || 'INR'
-  }));
-  const selectedTier = creditTiers.find((tier) => tier.id === selectedTierId) || creditTiers[0];
-  const totalAmount = selectedTier.price;
+  const [mode, setMode] = useState('subscription');
+  const [selectedTopUpId, setSelectedTopUpId] = useState(fallbackTopUpPlans[0].id);
+  const [pendingOrderId, setPendingOrderId] = useState('');
+  const verifyingOrderRef = useRef('');
+  const appStateRef = useRef(AppState.currentState);
+
+  const subscriptionPlan = useMemo(() => normalizePaymentPlan(catalog.subscription, fallbackSubscriptionPlan), [catalog.subscription]);
+  const topUpPlans = useMemo(() => {
+    const plans = Array.isArray(catalog.topUps) && catalog.topUps.length ? catalog.topUps : fallbackTopUpPlans;
+    return plans.map((item, index) => normalizePaymentPlan(item, fallbackTopUpPlans[index] || fallbackTopUpPlans[0]));
+  }, [catalog.topUps]);
+  const selectedTopUp = topUpPlans.find((item) => item.id === selectedTopUpId) || topUpPlans[0];
+  const selectedPlan = mode === 'top_up' ? selectedTopUp : subscriptionPlan;
+  const selectedAmount = (Number(selectedPlan.amount) || 0) / 100;
+  const creditCosts = catalog.creditCosts || fallbackPaymentCatalog.creditCosts;
+  const subscription = user?.subscription;
+  const subscriptionStatus = String(subscription?.status || '').toLowerCase();
+  const subscriptionPeriodActive = !subscription?.currentPeriodEnd || new Date(subscription.currentPeriodEnd) > new Date();
+  const activeMonthly = ['active', 'billing_grace'].includes(subscriptionStatus) && subscriptionPeriodActive;
+  const isAppleCheckout = Platform.OS === 'ios';
+  const activeAppleMonthly = isAppleCheckout && subscription?.provider === 'apple' && activeMonthly;
+  const appleStoreKit = useAppleStoreKitPayments({ enabled: isAppleCheckout, user, setUser, onRequireAuth });
+  const appleSelectedProduct = mode === 'top_up' ? appleStoreKit.creditsProduct : appleStoreKit.subscriptionProduct;
+  const appleSelectedPrice = storeKitProductPrice(appleSelectedProduct) || 'Unavailable';
+  const appleSelectedProductId = mode === 'top_up' ? STOREKIT_CREDITS_150_PRODUCT_ID : STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID;
+  const visibleMessage = isAppleCheckout
+    ? appleStoreKit.error || appleStoreKit.statusMessage || appleStoreKit.unavailableReason
+    : message;
+  const firstPaymentDate = formatDate(addDays(new Date(), 1));
+  const messageIsError = isAppleCheckout
+    ? Boolean(appleStoreKit.error || appleStoreKit.unavailableReason)
+    : /failed|missing|not|error|could not|unavailable/i.test(message);
 
   useEffect(() => {
     let alive = true;
@@ -4756,9 +5340,19 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
     api('/payments/plans')
       .then((data) => {
         if (!alive) return;
-        const nextPlans = Array.isArray(data?.plans) ? data.plans : [];
-        setPlans(nextPlans);
-        if (nextPlans[0]?.id) setSelectedTierId(nextPlans[0].id);
+        const topUps = Array.isArray(data?.topUps) && data.topUps.length
+          ? data.topUps
+          : Array.isArray(data?.plans)
+            ? data.plans.filter((item) => item.type === 'top_up')
+            : [];
+        const subscriptionFromPlans = data?.subscription || (Array.isArray(data?.plans) ? data.plans.find((item) => item.type === 'subscription') : null);
+        setCatalog({
+          subscription: subscriptionFromPlans || fallbackSubscriptionPlan,
+          topUps: topUps.length ? topUps : fallbackTopUpPlans,
+          appStoreProductIds: data?.appStoreProductIds || fallbackPaymentCatalog.appStoreProductIds,
+          creditCosts: data?.creditCosts || fallbackPaymentCatalog.creditCosts
+        });
+        if (topUps[0]?.id) setSelectedTopUpId(topUps[0].id);
         setMessage('');
       })
       .catch((error) => {
@@ -4772,97 +5366,272 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
     };
   }, []);
 
-  const startCheckout = async () => {
+  const verifyPaymentOrder = useCallback(async (merchantOrderId, silent = false) => {
+    if (!user || !merchantOrderId || verifyingOrderRef.current === merchantOrderId) return;
+    verifyingOrderRef.current = merchantOrderId;
+    if (!silent) setMessage('Verifying payment with PhonePe...');
+    try {
+      const data = await api(`/payments/orders/${encodeURIComponent(merchantOrderId)}/status`, { noCache: true });
+      if (data.user) setUser(data.user);
+      const state = data.order?.status;
+      const credits = Number(data.order?.tokens) || Number(selectedPlan.credits) || 0;
+      if (state === 'completed') {
+        setPendingOrderId('');
+        setMessage(`${data.order?.purchaseType === 'top_up' ? 'Top-up confirmed' : 'Monthly mandate confirmed'}. ${credits} credits have been added.`);
+      } else if (state === 'failed') {
+        setPendingOrderId('');
+        setMessage('Payment was not completed. You can try again when ready.');
+      } else {
+        setPendingOrderId(merchantOrderId);
+        setMessage('Payment is still pending. Return here again in a moment to refresh.');
+      }
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      verifyingOrderRef.current = '';
+    }
+  }, [selectedPlan.credits, setUser, user]);
+
+  useEffect(() => {
+    const handleUrl = ({ url }) => {
+      const merchantOrderId = merchantOrderIdFromUrl(url);
+      if (merchantOrderId) verifyPaymentOrder(merchantOrderId);
+    };
+
+    Linking.getInitialURL().then((url) => {
+      const merchantOrderId = merchantOrderIdFromUrl(url);
+      if (merchantOrderId) verifyPaymentOrder(merchantOrderId);
+    }).catch(() => {});
+    const subscriptionHandle = Linking.addEventListener('url', handleUrl);
+    return () => subscriptionHandle.remove();
+  }, [verifyPaymentOrder]);
+
+  useEffect(() => {
+    const subscriptionHandle = AppState.addEventListener('change', (nextState) => {
+      const wasAway = /inactive|background/.test(appStateRef.current || '');
+      appStateRef.current = nextState;
+      if (nextState === 'active' && wasAway && pendingOrderId) {
+        verifyPaymentOrder(pendingOrderId, true);
+      }
+    });
+    return () => subscriptionHandle.remove();
+  }, [pendingOrderId, verifyPaymentOrder]);
+
+  const startCheckout = useCallback(async () => {
     if (!user) {
       onRequireAuth?.('Log in with your mobile number to buy credits.');
       return;
     }
+    if (!selectedPlan?.id) return;
+
     setCheckoutLoading(true);
-    setMessage('Opening PhonePe checkout...');
+    setMessage(mode === 'top_up' ? 'Opening PhonePe checkout...' : 'Opening PhonePe mandate setup...');
     try {
-      const data = await api('/payments/phonepe/subscription', {
+      const endpoint = mode === 'top_up' ? '/payments/phonepe/top-up' : '/payments/phonepe/subscription';
+      const data = await api(endpoint, {
         method: 'POST',
-        body: JSON.stringify({ planId: selectedTier.id })
+        body: JSON.stringify({
+          planId: selectedPlan.id,
+          platform: Platform.OS,
+          redirectUrl: mobilePaymentReturnUrl()
+        })
       });
-      if (data.redirectUrl) {
-        await Linking.openURL(data.redirectUrl);
+      const paymentUrl = data.paymentUrl || data.redirectUrl;
+      const merchantOrderId = data.order?.merchantOrderId || '';
+      if (merchantOrderId) setPendingOrderId(merchantOrderId);
+      if (paymentUrl) {
+        await Linking.openURL(paymentUrl);
         setMessage('Complete payment in PhonePe, then return to Lookmefy.');
       } else {
-        setMessage('Checkout link was not returned.');
+        setMessage('PhonePe did not return a checkout link. Please try again.');
       }
     } catch (error) {
       setMessage(error.message);
     } finally {
       setCheckoutLoading(false);
     }
-  };
+  }, [mode, onRequireAuth, selectedPlan?.id, user]);
+
+  const cancelSubscription = useCallback(() => {
+    if (!activeMonthly || cancelLoading) return;
+    Alert.alert(
+      'Cancel monthly billing?',
+      'Your current credits stay available. Future monthly PhonePe debits will be cancelled.',
+      [
+        { text: 'Keep Plan', style: 'cancel' },
+        {
+          text: 'Cancel Billing',
+          style: 'destructive',
+          onPress: async () => {
+            setCancelLoading(true);
+            setMessage('Cancelling monthly mandate...');
+            try {
+              const data = await api('/payments/subscriptions/current/cancel', { method: 'POST', noCache: true });
+              if (data.user) setUser(data.user);
+              setMessage('Monthly billing has been cancelled.');
+            } catch (error) {
+              setMessage(error.message);
+            } finally {
+              setCancelLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  }, [activeMonthly, cancelLoading, setUser]);
 
   return (
     <ScrollView style={styles.creditsScreen} contentContainerStyle={styles.creditsContent} {...screenScrollProps}>
       <AppHeader onNavigate={onNavigate} user={user} compact />
 
-      <View style={styles.creditsIntro}>
-        <Text style={styles.creditsIntroTitle}>Lookmefy AI Credits</Text>
-        <Text style={styles.creditsIntroText}>Buy credits for product try-ons, custom clothing previews, and wardrobe outfit generation.</Text>
-      </View>
-
-      <Text style={styles.creditsSectionLabel}>SELECT A CREDIT PLAN</Text>
-      {plansLoading ? <ActivityIndicator size="small" color="#9b5658" /> : null}
-      <View style={styles.creditTierStack}>
-        {creditTiers.map((tier) => {
-          const selected = selectedTier.id === tier.id;
-          return (
-            <TouchableOpacity key={tier.id} activeOpacity={0.88} style={[styles.creditTierCard, selected && styles.creditTierCardSelected]} onPress={() => setSelectedTierId(tier.id)}>
-              {tier.badge ? <Text style={styles.creditTierBadge}>{tier.badge}</Text> : null}
-              <View style={styles.creditTierTop}>
-                <Text style={styles.creditTierName}>{tier.name}</Text>
-                <Text style={styles.creditTierPrice}>{formatMoney(tier.price)}</Text>
-              </View>
-              <View style={styles.creditAmountRow}>
-                <Text style={styles.creditAmount}>{tier.credits}</Text>
-                <Text style={styles.creditAmountLabel}> CREDITS</Text>
-              </View>
-              <Text style={styles.creditTierDescription}>{tier.description}</Text>
+      <View style={styles.creditsHero}>
+        <View style={styles.creditsHeroCopy}>
+          <Text style={styles.creditsEyebrow}>{mode === 'top_up' ? 'ONE-TIME REFILL' : 'TOKEN ACCESS'}</Text>
+          <Text style={styles.creditsHeroTitle}>{mode === 'top_up' ? 'Top-ups' : 'Credits'}</Text>
+          {mode === 'top_up' ? (
+            <TouchableOpacity activeOpacity={0.78} onPress={() => setMode('subscription')}>
+              <Text style={styles.creditsBackLink}>BACK TO MANDATE</Text>
             </TouchableOpacity>
-          );
-        })}
+          ) : null}
+        </View>
+        <Text style={styles.creditsHeroText}>
+          {mode === 'top_up'
+            ? 'Choose a one-time credit pack when you want extra image try-ons or videos on top of the monthly membership.'
+            : `Pick the monthly mandate setup or open one-time top-ups. Starter accounts include ${creditCosts.starterCredits} credits, images use ${creditCosts.image} credit, and videos use ${creditCosts.video} credits.`}
+        </Text>
       </View>
 
-      <Text style={styles.creditsSectionLabel}>PAYMENT METHOD</Text>
+      {plansLoading || (isAppleCheckout && appleStoreKit.loading) ? <ActivityIndicator style={styles.creditsLoader} size="small" color="#9b5658" /> : null}
+
+      {mode === 'top_up' ? (
+        isAppleCheckout ? (
+          <View style={styles.topUpGrid}>
+            <AppleStoreKitCreditCard
+              product={appleStoreKit.creditsProduct}
+              selected
+              title="150 credit top-up"
+              kicker="TOP-UP"
+              headline="150 credits"
+              subhead="Pay-as-you-go credits"
+              description="One-time consumable App Store purchase. Credits are added only after the server verifies the Apple transaction."
+              onPress={() => {}}
+            />
+          </View>
+        ) : (
+          <View style={styles.topUpGrid}>
+            {topUpPlans.map((planItem) => (
+              <TopUpCreditCard
+                key={planItem.id}
+                plan={planItem}
+                selected={selectedPlan.id === planItem.id}
+                onPress={() => setSelectedTopUpId(planItem.id)}
+              />
+            ))}
+          </View>
+        )
+      ) : (
+        <View style={styles.creditChoiceGrid}>
+          {isAppleCheckout ? (
+            <AppleStoreKitCreditCard
+              product={appleStoreKit.subscriptionProduct}
+              selected={mode === 'subscription'}
+              active={activeAppleMonthly}
+              title="Lookmefy Premium Monthly"
+              kicker="LOOKMEFY PREMIUM"
+              headline="150 credits every month"
+              subhead="Auto-renewable monthly subscription"
+              description="Renews through your Apple ID. Monthly credits are added once per verified Apple subscription period."
+              onPress={() => setMode('subscription')}
+            />
+          ) : (
+            <MonthlyCreditCard plan={subscriptionPlan} selected={mode === 'subscription'} active={activeMonthly} onPress={() => setMode('subscription')} />
+          )}
+          <AddMoreCard selected={false} onPress={() => setMode('top_up')} />
+        </View>
+      )}
+
+      <View style={styles.creditsDivider} />
+
+      <Text style={styles.creditsSectionLabel}>Payment Method</Text>
       <View style={styles.paymentMethodCard}>
         <View style={styles.paymentMethodLeft}>
-          <Ionicons name="card-outline" size={22} color="#111111" />
-          <Text style={styles.paymentMethodText}>PhonePe checkout</Text>
+          {isAppleCheckout ? (
+            <View style={styles.appStoreMark}>
+              <Ionicons name="logo-apple" size={19} color="#ffffff" />
+            </View>
+          ) : (
+            <View style={styles.phonePeMark}>
+              <Text style={styles.phonePeMarkText}>P</Text>
+            </View>
+          )}
+          <View>
+            <Text style={styles.paymentMethodText}>{isAppleCheckout ? 'App Store' : 'PhonePe'}</Text>
+            <Text style={styles.paymentMethodSubText}>{isAppleCheckout ? 'Apple ID billing' : 'UPI, cards, and net banking'}</Text>
+          </View>
         </View>
-        <Ionicons name="radio-button-on" size={22} color="#111111" />
+        <Text style={styles.paymentSelectedText}>Selected</Text>
       </View>
-      <TouchableOpacity style={styles.addPaymentCard} activeOpacity={0.84}>
-        <Ionicons name="add-circle-outline" size={21} color="#55514f" />
-        <Text style={styles.addPaymentText}>Add New Payment Method</Text>
-      </TouchableOpacity>
 
       <View style={styles.orderSummaryCard}>
         <Text style={styles.orderSummaryTitle}>Order Summary</Text>
-        <View style={styles.orderSummaryRow}>
-          <Text style={styles.orderSummaryText}>{selectedTier.name} Package ({selectedTier.credits.toLocaleString()} Credits)</Text>
-          <Text style={styles.orderSummaryText}>{formatMoney(selectedTier.price)}</Text>
-        </View>
-        <View style={styles.orderSummaryRow}>
-          <Text style={styles.orderSummaryText}>Taxes and fees</Text>
-          <Text style={styles.orderSummaryText}>Included where applicable</Text>
-        </View>
+        <Text style={styles.orderSummaryKicker}>SELECTED PACK</Text>
         <View style={styles.orderSummaryDivider} />
-        <View style={styles.orderSummaryRow}>
-          <Text style={styles.totalAmountLabel}>TOTAL AMOUNT</Text>
-          <Text style={styles.totalAmountValue}>{formatMoney(totalAmount)}</Text>
+        {isAppleCheckout ? (
+          <>
+            <PaymentSummaryLine label="Credit Package" value={mode === 'top_up' ? '150 credit top-up' : storeKitProductTitle(appleStoreKit.subscriptionProduct, 'Lookmefy Premium Monthly')} strong />
+            <PaymentSummaryLine label="Tokens" value={mode === 'top_up' ? '150 credits' : '150 credits every month'} strong />
+            <PaymentSummaryLine label="Apple Price" value={appleSelectedPrice} strong />
+            <PaymentSummaryLine label="Billing" value={mode === 'top_up' ? 'One-time consumable' : 'Monthly auto-renewing'} strong />
+            <PaymentSummaryLine label="Product ID" value={appleSelectedProductId} strong />
+          </>
+        ) : (
+          <>
+            <PaymentSummaryLine label="Credit Package" value={mode === 'top_up' ? 'Top-up' : subscriptionPlan.name} strong />
+            <PaymentSummaryLine label="Tokens" value={mode === 'top_up' ? `${selectedPlan.credits} credits` : `${subscriptionPlan.credits} credits every month`} strong />
+            <PaymentSummaryLine label="Rate" value={formatCreditRate(selectedPlan)} strong />
+            {mode === 'top_up' ? (
+              <>
+                <PaymentSummaryLine label="Billing" value="One-time" strong />
+                <PaymentSummaryLine label="Processing Fee" value="Free" strong />
+              </>
+            ) : (
+              <>
+                <PaymentSummaryLine label="First recurring payment" value={`${formatMoney(selectedAmount, selectedPlan.currency)} on ${firstPaymentDate}`} strong />
+                <PaymentSummaryLine label="Then" value={`${formatMoney(selectedAmount, selectedPlan.currency)}/month`} strong />
+                <PaymentSummaryLine label="Billing frequency" value="Monthly" strong />
+              </>
+            )}
+          </>
+        )}
+        <View style={styles.orderSummaryDivider} />
+        <View style={styles.orderSummaryTotalRow}>
+          <Text style={styles.totalAmountLabel}>{isAppleCheckout ? 'APP STORE PRICE' : mode === 'top_up' ? 'TOTAL AMOUNT' : 'MONTHLY AMOUNT'}</Text>
+          <Text style={styles.totalAmountValue}>{isAppleCheckout ? appleSelectedPrice : formatMoney(selectedAmount, selectedPlan.currency)}</Text>
         </View>
       </View>
 
-      {message ? <Text style={[styles.creditsMessage, /failed|missing|not|error|Could not/i.test(message) ? styles.errorText : null]}>{message}</Text> : null}
+      {!isAppleCheckout && activeMonthly && mode === 'subscription' ? (
+        <TouchableOpacity style={[styles.cancelMandateButton, cancelLoading && styles.disabledButton]} activeOpacity={0.82} disabled={cancelLoading} onPress={cancelSubscription}>
+          <Text style={styles.cancelMandateText}>{cancelLoading ? 'CANCELLING...' : 'CANCEL MONTHLY BILLING'}</Text>
+        </TouchableOpacity>
+      ) : null}
 
-      <TouchableOpacity style={[styles.secureCheckoutButton, checkoutLoading && styles.disabledButton]} activeOpacity={0.88} disabled={checkoutLoading} onPress={startCheckout}>
-        <Text style={styles.secureCheckoutText}>{checkoutLoading ? 'OPENING CHECKOUT' : 'SECURE CHECKOUT'}</Text>
-      </TouchableOpacity>
+      {visibleMessage ? <Text style={[styles.creditsMessage, messageIsError ? styles.errorText : null]}>{visibleMessage}</Text> : null}
+
+      {isAppleCheckout ? (
+        <AppleStoreKitActions mode={mode} appleStoreKit={appleStoreKit} activeMonthly={activeAppleMonthly} />
+      ) : (
+        <TouchableOpacity style={[styles.secureCheckoutButton, checkoutLoading && styles.disabledButton]} activeOpacity={0.88} disabled={checkoutLoading} onPress={startCheckout}>
+          <Text style={styles.secureCheckoutText}>{checkoutLoading ? 'OPENING PHONEPE' : mode === 'top_up' ? 'SECURE CHECKOUT' : 'SET UP MANDATE'}</Text>
+        </TouchableOpacity>
+      )}
+
+      {!isAppleCheckout && pendingOrderId ? (
+        <TouchableOpacity style={styles.verifyPaymentButton} activeOpacity={0.82} onPress={() => verifyPaymentOrder(pendingOrderId)}>
+          <Ionicons name="refresh" size={16} color="#5e3335" />
+          <Text style={styles.verifyPaymentText}>VERIFY PHONEPE PAYMENT</Text>
+        </TouchableOpacity>
+      ) : null}
 
       <View style={styles.creditsFooterLinks}>
         <TouchableOpacity activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'returns' })}>
@@ -5615,7 +6384,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
               <Text style={[styles.profileCreditCell, styles.profileCreditActionColumn]} numberOfLines={1}>{event.action || 'Try-on'}</Text>
               <Text style={[styles.profileCreditCell, styles.profileCreditProductColumn]} numberOfLines={1}>{creditHistoryProductLabel(event)}</Text>
               <Text style={[styles.profileCreditCell, styles.profileCreditDateColumn]} numberOfLines={1}>{formatDate(event.createdAt)}</Text>
-              <Text style={[styles.profileCreditCell, styles.profileCreditTokenColumn, styles.profileCreditTokenText]} numberOfLines={1}>{Number(event.tokens) > 0 ? `-${event.tokens}` : event.tokens}</Text>
+              <Text style={[styles.profileCreditCell, styles.profileCreditTokenColumn, event.direction === 'credit' ? styles.profileCreditAddedText : styles.profileCreditTokenText]} numberOfLines={1}>{creditHistoryAmountLabel(event)}</Text>
             </View>
           )) : null}
           {!creditHistory.loading && !creditHistory.error && !creditHistoryExpanded && hiddenCreditEvents ? (
@@ -5704,7 +6473,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
           </View>
           <View style={styles.profilePaymentCopy}>
             <Text style={styles.profilePaymentTitle}>PhonePe checkout</Text>
-            <Text style={styles.profilePaymentSub}>{user.subscription?.status === 'active' ? 'Token plan active' : 'Add credits when needed'}</Text>
+            <Text style={styles.profilePaymentSub}>{user.subscription?.status === 'active' ? 'Monthly mandate active' : 'Add credits when needed'}</Text>
           </View>
           <Ionicons name="chevron-forward" size={22} color="#55514f" />
         </TouchableOpacity>
@@ -6405,6 +7174,15 @@ export default function App() {
       return [...current, next];
     });
   }, []);
+  useEffect(() => {
+    const openRouteFromUrl = (url) => {
+      const nextRoute = mobileRouteFromUrl(url);
+      if (nextRoute) navigate(nextRoute.name, nextRoute.params);
+    };
+    Linking.getInitialURL().then(openRouteFromUrl).catch(() => {});
+    const subscription = Linking.addEventListener('url', ({ url }) => openRouteFromUrl(url));
+    return () => subscription.remove();
+  }, [navigate]);
   const replaceRoute = useCallback((name, params = {}) => {
     setRouteStack([normalizeRoute(name, params)]);
   }, []);
@@ -12011,69 +12789,218 @@ const styles = StyleSheet.create({
   },
   creditsScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: '#fbf8f7'
   },
   creditsContent: {
-    paddingBottom: 26
+    paddingBottom: 34
   },
-  creditsTopBar: {
-    height: 66,
-    paddingHorizontal: 36,
-    borderBottomWidth: 1,
-    borderBottomColor: '#ebe3e1',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#fbf7f6'
+  creditsHero: {
+    paddingHorizontal: 24,
+    paddingTop: 34,
+    paddingBottom: 16,
+    gap: 24
   },
-  creditsTopIcon: {
-    width: 28,
-    height: 28,
-    alignItems: 'center',
-    justifyContent: 'center'
+  creditsHeroCopy: {
+    gap: 10
   },
-  creditsBrand: {
-    ...typography.h2,
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    textAlign: 'center',
-    fontSize: 25,
-    color: '#111111'
+  creditsEyebrow: {
+    ...typography.label,
+    color: '#a86164',
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0,
+    textTransform: 'uppercase'
   },
-  creditsHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 15
+  creditsHeroTitle: {
+    ...typography.display,
+    color: '#171414',
+    fontSize: 54,
+    lineHeight: 58
   },
-  creditsIntro: {
-    paddingHorizontal: 36,
-    paddingTop: 25,
+  creditsBackLink: {
+    ...typography.label,
+    color: '#9b5658',
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0,
+    textTransform: 'uppercase'
+  },
+  creditsHeroText: {
+    ...typography.label,
+    color: '#6f6967',
+    fontSize: 13,
+    lineHeight: 20,
+    letterSpacing: 0,
+    textTransform: 'uppercase'
+  },
+  creditsLoader: {
+    marginTop: 8
+  },
+  creditChoiceGrid: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
     gap: 14
   },
-  creditsIntroTitle: {
-    ...typography.productTitle,
-    fontSize: 14,
-    color: '#201c1c'
+  creditMandateCard: {
+    minHeight: 252,
+    paddingHorizontal: 20,
+    paddingVertical: 22,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dccfcb',
+    backgroundColor: '#fffdfc',
+    overflow: 'hidden',
+    gap: 10
   },
-  creditsIntroText: {
+  creditMandateCardSelected: {
+    borderColor: '#b56b6c',
+    borderWidth: 1.3
+  },
+  creditSelectedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 22
+  },
+  creditSelectedPill: {
+    ...typography.caption,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#1f1d1c',
+    color: '#ffffff',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700'
+  },
+  creditActivePill: {
+    ...typography.caption,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#e8f6ef',
+    color: '#0f766e',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700'
+  },
+  creditCardKicker: {
+    ...typography.label,
+    color: '#b26a6d',
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0,
+    textTransform: 'uppercase'
+  },
+  creditMandateTitle: {
+    ...typography.display,
+    color: '#1c1919',
+    fontSize: 40,
+    lineHeight: 44
+  },
+  creditMandateSub: {
     ...typography.body,
-    color: '#747071',
-    fontSize: 16,
-    lineHeight: 25
+    color: '#242020',
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '700'
+  },
+  creditMutedText: {
+    ...typography.caption,
+    color: '#9d9693',
+    fontSize: 12,
+    lineHeight: 17
+  },
+  creditCapsText: {
+    ...typography.label,
+    color: '#8f8582',
+    fontSize: 11,
+    lineHeight: 15,
+    letterSpacing: 0,
+    textTransform: 'uppercase'
+  },
+  creditCardDescription: {
+    ...typography.smallBody,
+    marginTop: 6,
+    color: '#5e5956',
+    fontSize: 13,
+    lineHeight: 19
+  },
+  creditAddMoreCard: {
+    minHeight: 210,
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2d8d5',
+    backgroundColor: '#fffdfc',
+    gap: 10
+  },
+  creditAddMoreTitle: {
+    ...typography.display,
+    color: '#1c1919',
+    fontSize: 38,
+    lineHeight: 42
+  },
+  topUpGrid: {
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    gap: 14
+  },
+  topUpCreditCard: {
+    minHeight: 210,
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ded5d2',
+    backgroundColor: '#fffdfc',
+    gap: 9,
+    overflow: 'hidden'
+  },
+  topUpBestValue: {
+    ...typography.caption,
+    position: 'absolute',
+    top: 0,
+    right: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderBottomLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: '#a45d5f',
+    color: '#ffffff',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700'
+  },
+  topUpPrice: {
+    ...typography.display,
+    color: '#1c1919',
+    fontSize: 42,
+    lineHeight: 48
+  },
+  creditsDivider: {
+    marginHorizontal: 24,
+    marginTop: 34,
+    height: 1,
+    backgroundColor: '#e1d8d5'
   },
   creditsSectionLabel: {
-    ...typography.label,
-    marginTop: 46,
-    paddingHorizontal: 36,
+    ...typography.h2,
+    marginTop: 34,
+    paddingHorizontal: 24,
     color: '#1c1919',
-    fontSize: 15,
-    letterSpacing: 0,
-    fontWeight: '600'
+    fontSize: 30,
+    lineHeight: 37
   },
   creditTierStack: {
     marginTop: 24,
-    paddingHorizontal: 36,
+    paddingHorizontal: 24,
     gap: 14
   },
   creditTierCard: {
@@ -12146,13 +13073,14 @@ const styles = StyleSheet.create({
     lineHeight: 18
   },
   paymentMethodCard: {
-    marginTop: 24,
-    marginHorizontal: 36,
-    height: 54,
+    marginTop: 18,
+    marginHorizontal: 24,
+    minHeight: 64,
     paddingHorizontal: 15,
+    paddingVertical: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#c9c9c9',
+    borderColor: '#272323',
     backgroundColor: '#fffdfc',
     flexDirection: 'row',
     alignItems: 'center',
@@ -12163,9 +13091,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12
   },
+  phonePeMark: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#6739b7',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  phonePeMarkText: {
+    color: '#ffffff',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '800'
+  },
+  appStoreMark: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#1f1d1c',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
   paymentMethodText: {
+    ...typography.body,
     color: '#242020',
-    fontSize: 15
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: '700'
+  },
+  paymentMethodSubText: {
+    ...typography.caption,
+    marginTop: 2,
+    color: '#7d7572',
+    fontSize: 12,
+    lineHeight: 16
+  },
+  paymentSelectedText: {
+    ...typography.caption,
+    color: '#a45d5f',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700'
   },
   addPaymentCard: {
     marginTop: 10,
@@ -12185,10 +13152,10 @@ const styles = StyleSheet.create({
     fontSize: 15
   },
   orderSummaryCard: {
-    marginTop: 44,
-    marginHorizontal: 36,
+    marginTop: 34,
+    marginHorizontal: 24,
     paddingHorizontal: 22,
-    paddingVertical: 25,
+    paddingVertical: 26,
     borderRadius: 8,
     backgroundColor: '#fffdfc',
     shadowColor: '#000000',
@@ -12196,13 +13163,51 @@ const styles = StyleSheet.create({
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 },
     elevation: 3,
-    gap: 18
+    gap: 0
   },
   orderSummaryTitle: {
-    ...typography.productTitle,
-    marginBottom: 10,
-    fontSize: 14,
+    ...typography.h2,
+    marginBottom: 6,
+    fontSize: 30,
+    lineHeight: 36,
     color: '#1d1919'
+  },
+  orderSummaryKicker: {
+    ...typography.label,
+    marginBottom: 16,
+    color: '#b26a6d',
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0,
+    textTransform: 'uppercase'
+  },
+  paymentSummaryLine: {
+    minHeight: 54,
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee5e2',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 16
+  },
+  paymentSummaryLabel: {
+    ...typography.body,
+    color: '#8b8582',
+    fontSize: 14,
+    lineHeight: 20,
+    flexShrink: 1
+  },
+  paymentSummaryValue: {
+    ...typography.body,
+    color: '#2e2927',
+    fontSize: 14,
+    lineHeight: 20,
+    flex: 1,
+    textAlign: 'right'
+  },
+  paymentSummaryValueStrong: {
+    fontWeight: '700'
   },
   orderSummaryRow: {
     flexDirection: 'row',
@@ -12219,7 +13224,14 @@ const styles = StyleSheet.create({
   },
   orderSummaryDivider: {
     height: 1,
-    backgroundColor: '#d7d0ce'
+    backgroundColor: '#e5dcda'
+  },
+  orderSummaryTotalRow: {
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
   },
   totalAmountLabel: {
     ...typography.label,
@@ -12231,20 +13243,39 @@ const styles = StyleSheet.create({
   totalAmountValue: {
     ...typography.h3,
     color: '#111111',
-    fontSize: 21,
+    fontSize: 32,
+    lineHeight: 39,
     fontWeight: '700'
+  },
+  cancelMandateButton: {
+    marginTop: 16,
+    marginHorizontal: 24,
+    height: 45,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d7c7c4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fffdfc'
+  },
+  cancelMandateText: {
+    ...typography.label,
+    color: '#9b5658',
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0
   },
   creditsMessage: {
     ...typography.caption,
     marginTop: 16,
-    marginHorizontal: 36,
+    marginHorizontal: 24,
     color: '#55514f',
     fontSize: 13,
     lineHeight: 18
   },
   secureCheckoutButton: {
-    marginTop: 52,
-    marginHorizontal: 36,
+    marginTop: 28,
+    marginHorizontal: 24,
     height: 52,
     borderRadius: 8,
     backgroundColor: '#050505',
@@ -12262,9 +13293,47 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
     fontWeight: '600'
   },
+  verifyPaymentButton: {
+    marginTop: 12,
+    marginHorizontal: 24,
+    height: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d9c8c5',
+    backgroundColor: '#fffdfc',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8
+  },
+  verifyPaymentText: {
+    ...typography.label,
+    color: '#5e3335',
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0
+  },
+  appleStoreActionRow: {
+    marginTop: 12,
+    marginHorizontal: 24,
+    flexDirection: 'row',
+    gap: 10
+  },
+  appleStoreActionButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d8c7c2',
+    backgroundColor: '#fffdfc',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8
+  },
   creditsFooterLinks: {
     marginTop: 16,
-    paddingHorizontal: 42,
+    paddingHorizontal: 30,
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 10
@@ -13127,6 +14196,10 @@ const styles = StyleSheet.create({
   },
   profileCreditTokenText: {
     color: '#9b5658',
+    fontWeight: '700'
+  },
+  profileCreditAddedText: {
+    color: '#0f766e',
     fontWeight: '700'
   },
   profileCreditSkeletonCell: {

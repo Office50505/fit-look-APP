@@ -4,8 +4,8 @@ import { profileMediaUrl } from '../utils/mediaAccess.js';
 import { storedFileToClientUrl } from '../utils/storage.js';
 
 function signupTokens() {
-  const value = Number(process.env.SIGNUP_FREE_TOKENS || 20);
-  return Number.isFinite(value) && value >= 0 ? value : 20;
+  const value = Number(process.env.SIGNUP_FREE_TOKENS || 8);
+  return Number.isFinite(value) && value >= 0 ? value : 8;
 }
 
 function defaultDevMode() {
@@ -37,9 +37,22 @@ const userSchema = new mongoose.Schema(
     subscription: {
       planId: { type: String, trim: true },
       status: { type: String, trim: true, default: 'none' },
+      provider: { type: String, trim: true },
+      merchantSubscriptionId: { type: String, trim: true },
+      appleProductId: { type: String, trim: true },
+      appleOriginalTransactionId: { type: String, trim: true },
+      appleTransactionId: { type: String, trim: true },
+      appleEnvironment: { type: String, trim: true },
+      amount: { type: Number, default: 0 },
+      currency: { type: String, trim: true, uppercase: true, default: 'INR' },
       tokensPerMonth: { type: Number, default: 0 },
       currentPeriodStart: Date,
       currentPeriodEnd: Date,
+      nextBillingAt: Date,
+      cancelledAt: Date,
+      revokedAt: Date,
+      willAutoRenew: Boolean,
+      billingRetry: Boolean,
       lastOrderId: { type: String, trim: true }
     },
     avatarPhoto: {
@@ -76,6 +89,8 @@ const userSchema = new mongoose.Schema(
 
 userSchema.index({ genderPreference: 1, createdAt: -1 });
 userSchema.index({ 'subscription.status': 1, 'subscription.currentPeriodEnd': 1 });
+userSchema.index({ 'subscription.appleOriginalTransactionId': 1 }, { sparse: true });
+userSchema.index({ 'subscription.appleTransactionId': 1 }, { sparse: true });
 
 userSchema.methods.toClient = function toClient() {
   const bodyPhotoUrl = storedFileToClientUrl(this.bodyPhoto);
@@ -108,9 +123,22 @@ userSchema.methods.toClient = function toClient() {
     subscription: {
       planId: this.subscription?.planId || null,
       status: this.subscription?.status || 'none',
+      provider: this.subscription?.provider || null,
+      merchantSubscriptionId: this.subscription?.merchantSubscriptionId || null,
+      appleProductId: this.subscription?.appleProductId || null,
+      appleOriginalTransactionId: this.subscription?.appleOriginalTransactionId || null,
+      appleTransactionId: this.subscription?.appleTransactionId || null,
+      appleEnvironment: this.subscription?.appleEnvironment || null,
+      amount: this.subscription?.amount || 0,
+      currency: this.subscription?.currency || 'INR',
       tokensPerMonth: this.subscription?.tokensPerMonth || 0,
       currentPeriodStart: this.subscription?.currentPeriodStart || null,
-      currentPeriodEnd: this.subscription?.currentPeriodEnd || null
+      currentPeriodEnd: this.subscription?.currentPeriodEnd || null,
+      nextBillingAt: this.subscription?.nextBillingAt || this.subscription?.currentPeriodEnd || null,
+      cancelledAt: this.subscription?.cancelledAt || null,
+      revokedAt: this.subscription?.revokedAt || null,
+      willAutoRenew: Boolean(this.subscription?.willAutoRenew),
+      billingRetry: Boolean(this.subscription?.billingRetry)
     },
     devMode: effectiveDevMode(this),
     joinedAt: this.createdAt,

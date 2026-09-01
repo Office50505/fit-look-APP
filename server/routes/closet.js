@@ -5,6 +5,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import ClosetItem from '../models/ClosetItem.js';
 import ClosetOutfit from '../models/ClosetOutfit.js';
+import CreditEvent from '../models/CreditEvent.js';
 import User from '../models/User.js';
 import { requireUser } from './auth.js';
 import { effectiveDevMode } from '../utils/devMode.js';
@@ -259,6 +260,22 @@ function tokenCost() {
 
 function chargedTokenCost(user) {
   return effectiveDevMode(user) ? 0 : tokenCost();
+}
+
+async function recordCreditEvent({ user, action, tokens, balanceAfter, metadata = {} }) {
+  try {
+    return await CreditEvent.create({
+      user: user._id,
+      action,
+      productTitle: 'Wardrobe',
+      tokens: Number(tokens) || 0,
+      balanceAfter: Number(balanceAfter) || 0,
+      metadata
+    });
+  } catch (error) {
+    console.error('[credit-history] could not record closet event', { error: error.message });
+    return null;
+  }
 }
 
 function fitRoomHeaders() {
@@ -797,6 +814,13 @@ router.post('/outfits/generate', requireUser, async (req, res) => {
       tokenCost: chargedTokenCost(req.user),
       garment: garmentFile,
       image: imageFile
+    });
+    await recordCreditEvent({
+      user: req.user,
+      action: 'Wardrobe outfit',
+      tokens: chargedTokenCost(req.user),
+      balanceAfter: req.user.tokens,
+      metadata: { direction: 'debit', outfitId: outfit._id.toString() }
     });
     timer.end({ outfitId: outfit._id.toString(), tokensRemaining: req.user.tokens });
     res.status(201).json({ outfit: outfitToClient(outfit, items), user: req.user.toClient() });
