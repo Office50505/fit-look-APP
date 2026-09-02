@@ -221,9 +221,10 @@ function friendlyHttpError({ status, path, detail }) {
   if (status === 422 && detailText) return detailText;
   if (status === 429) return detailText || 'Too many requests. Wait a moment, then try again.';
   if (status >= 500) {
-    if (/FAL_KEY|OPENAI_API_KEY|BUNNY|REDIS|MONGODB|missing/i.test(cleanDetail)) {
+    if (/FAL_KEY|OPENAI_API_KEY|PRUNA_API_KEY|PRUNA_KEY|PRUNA_TOKEN|FITROOM_API_KEY|BUNNY|REDIS|MONGODB|storage|missing/i.test(cleanDetail)) {
       return `${feature} is not configured on the backend yet. Check the server .env and restart it.`;
     }
+    if (/profile photo|body photo|try-on profile|not enough tokens|blocked|safety|too small|upload|unsupported|HEIC|HEIF|AVIF/i.test(cleanDetail)) return detailText;
     return `${feature} is temporarily unavailable. Try again in a moment.`;
   }
   return detailText || `${feature} request could not be completed.`;
@@ -245,9 +246,10 @@ function sleep(ms) {
   });
 }
 
-async function pollJob(baseUrl, jobId, headers, timeoutMs) {
+async function pollJob(baseUrl, jobId, headers, timeoutMs, originalPath = '') {
   const startedAt = Date.now();
   const limitMs = Math.max(JOB_TIMEOUT_MS, Number(timeoutMs) || 0);
+  const featurePath = originalPath || `/jobs/${jobId}`;
 
   while (Date.now() - startedAt < limitMs) {
     await sleep(JOB_POLL_INTERVAL_MS);
@@ -265,17 +267,20 @@ async function pollJob(baseUrl, jobId, headers, timeoutMs) {
     const status = data?.job?.status;
     if (status === 'succeeded') return data.result;
     if (status === 'failed') {
-      throw new ApiError(data?.job?.error || 'Background task failed', {
+      const detail = data?.job?.error || 'Background task failed';
+      throw new ApiError(friendlyHttpError({ status: 500, path: featurePath, detail }), {
+        status: 500,
         code: 'job_failed',
-        path: `/jobs/${jobId}`,
+        path: featurePath,
+        detail,
         baseUrl
       });
     }
   }
 
-  throw new ApiError('Still processing. Please try again in a moment.', {
+  throw new ApiError(`${featureNameForPath(featurePath)} is still processing. Please try again in a moment.`, {
     code: 'job_timeout',
-    path: `/jobs/${jobId}`,
+    path: featurePath,
     baseUrl
   });
 }
@@ -327,7 +332,7 @@ export async function api(path, options = {}) {
       }
       activeApiUrl = baseUrl;
       if (response.status === 202 && data?.jobId && shouldPollJob) {
-        return pollJob(baseUrl, data.jobId, headers, jobTimeoutMs || requestTimeout);
+        return pollJob(baseUrl, data.jobId, headers, jobTimeoutMs || requestTimeout, path);
       }
       return data;
     } catch (error) {

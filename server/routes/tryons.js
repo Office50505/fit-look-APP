@@ -1,4 +1,5 @@
 import express from 'express';
+import heicConvert from 'heic-convert';
 import multer from 'multer';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -27,6 +28,8 @@ const remoteImageDataUriCache = new Map();
 const inFlightImageDataUriCache = new Map();
 const avifExtensions = new Set(['.avif']);
 const avifMimeTypes = new Set(['image/avif', 'image/x-avif']);
+const heicExtensions = new Set(['.heic', '.heif']);
+const heicMimeTypes = new Set(['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']);
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
@@ -44,7 +47,7 @@ function isAvifUpload(file) {
 }
 
 function isAllowedImageUpload(file) {
-  return String(file.mimetype || '').startsWith('image/') || isAvifUpload(file);
+  return String(file.mimetype || '').startsWith('image/') || isAvifUpload(file) || heicExtensions.has(extensionForFile(file));
 }
 
 function tokenCost() {
@@ -398,19 +401,26 @@ function isAvifBytes(bytes, mimetype = '') {
   return avifMimeTypes.has(String(mimetype || '').toLowerCase()) || imageMimeTypeFromBuffer(bytes) === 'image/avif';
 }
 
+function isHeicBytes(bytes, mimetype = '') {
+  return heicMimeTypes.has(String(mimetype || '').toLowerCase()) || imageMimeTypeFromBuffer(bytes) === 'image/heif';
+}
+
 function filenameWithExtension(filename = '', fallbackName = 'image', extension = '.jpg') {
   const parsed = path.parse(filename || fallbackName);
   return `${parsed.name || fallbackName}${extension}`;
 }
 
 async function normalizeAvifImage({ bytes, mimetype, filename, label, timer }) {
-  if (!isAvifBytes(bytes, mimetype) && !avifExtensions.has(path.extname(filename || '').toLowerCase())) {
-    return { bytes, mimetype, filename };
-  }
+  const extension = path.extname(filename || '').toLowerCase();
+  const needsAvifConversion = isAvifBytes(bytes, mimetype) || avifExtensions.has(extension);
+  const needsHeicConversion = isHeicBytes(bytes, mimetype) || heicExtensions.has(extension);
+  if (!needsAvifConversion && !needsHeicConversion) return { bytes, mimetype, filename };
 
-  const outputBytes = await sharp(bytes).jpeg({ quality: 90 }).toBuffer();
+  const outputBytes = needsHeicConversion
+    ? Buffer.from(await heicConvert({ buffer: bytes, format: 'JPEG', quality: 0.92 }))
+    : await sharp(bytes).jpeg({ quality: 90 }).toBuffer();
   const outputFilename = filenameWithExtension(filename, label, '.jpg');
-  timer?.mark(`${label} avif converted`, {
+  timer?.mark(`${label} ${needsHeicConversion ? 'heic/heif' : 'avif'} converted`, {
     inputKb: Math.round(bytes.length / 1024),
     outputKb: Math.round(outputBytes.length / 1024)
   });

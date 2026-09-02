@@ -337,6 +337,13 @@ function tryOnProfileBlockMessage(user) {
   return '';
 }
 
+function aiFeatureErrorMessage(error, fallback = 'AI request could not be completed. Try again in a moment.') {
+  const message = String(error?.message || '').trim();
+  if (!message) return fallback;
+  if (isMissingRouteError(message)) return 'This AI feature is not active on the running backend. Restart the backend with the latest code, then try again.';
+  return message;
+}
+
 function userAvatarUrl(user) {
   const avatarUrl = user?.avatarPhotoUrl || '';
   const bodyUrl = user?.bodyPhotoUrl || '';
@@ -2272,7 +2279,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
       if (nextTryOn) setTryOns((current) => ({ ...current, [product.id]: nextTryOn }));
       if (data.user) setUser(data.user);
     } catch (error) {
-      setTryOnErrors((current) => ({ ...current, [product.id]: error.message }));
+      setTryOnErrors((current) => ({ ...current, [product.id]: aiFeatureErrorMessage(error, 'Could not generate this AI try-on. Try again in a moment.') }));
     } finally {
       setTryOnLoading((current) => ({ ...current, [product.id]: false }));
     }
@@ -2301,7 +2308,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
       setTryOns((current) => ({ ...current, [product.id]: data.tryOn }));
       if (data.user) setUser(data.user);
     } catch (error) {
-      setTryOnVideoErrors((current) => ({ ...current, [product.id]: error.message }));
+      setTryOnVideoErrors((current) => ({ ...current, [product.id]: aiFeatureErrorMessage(error, 'Could not generate this video try-on. Try again in a moment.') }));
     } finally {
       setTryOnVideoLoading((current) => ({ ...current, [product.id]: false }));
     }
@@ -2465,7 +2472,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
       if (regenerate && data.reused) setTryOnError('Existing try-on was reused. Restart the backend with the latest code, then try again.');
       if (data.user) setUser(data.user);
     } catch (error) {
-      setTryOnError(error.message);
+      setTryOnError(aiFeatureErrorMessage(error, 'Could not generate this AI try-on. Try again in a moment.'));
     } finally {
       setTryOnLoading(false);
     }
@@ -2495,7 +2502,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
       if (regenerate && data.reused) setTryOnVideoError('Existing video was reused. Restart the backend with the latest code, then try again.');
       if (data.user) setUser(data.user);
     } catch (error) {
-      setTryOnVideoError(error.message);
+      setTryOnVideoError(aiFeatureErrorMessage(error, 'Could not generate this video try-on. Try again in a moment.'));
     } finally {
       setTryOnVideoLoading(false);
     }
@@ -3856,7 +3863,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
       closet.reload();
       if (data.outfit?.imageUrl) setLightbox(imageUrl(data.outfit.imageUrl));
     } catch (error) {
-      setMessage(error.message);
+      setMessage(aiFeatureErrorMessage(error, 'Could not generate the closet look. Try again in a moment.'));
     } finally {
       setBusy('');
     }
@@ -3895,8 +3902,9 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
       if (data.suggestions) setSuggestionOverrides(data.suggestions);
       setStylistText('');
     } catch (error) {
-      setChat((current) => [...current, { role: 'assistant', text: error.message }]);
-      setMessage(error.message);
+      const messageText = aiFeatureErrorMessage(error, 'Closet stylist could not respond right now.');
+      setChat((current) => [...current, { role: 'assistant', text: messageText }]);
+      setMessage(messageText);
     } finally {
       setBusy('');
     }
@@ -4475,7 +4483,7 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
       latestCustom.reload?.();
       setMessage('Custom try-on ready.');
     } catch (error) {
-      setMessage(error.message);
+      setMessage(aiFeatureErrorMessage(error, 'Could not generate custom try-on. Try again in a moment.'));
     } finally {
       setLoading(false);
     }
@@ -4673,7 +4681,7 @@ function StyleBotScreen({
       }
       if (data.user) setUser(data.user);
     } catch (error) {
-      setChatTryOnErrors((current) => ({ ...current, [key]: error.message || 'Could not generate try-on.' }));
+      setChatTryOnErrors((current) => ({ ...current, [key]: aiFeatureErrorMessage(error, 'Could not generate try-on.') }));
     } finally {
       setChatTryOnLoading((current) => ({ ...current, [key]: false }));
     }

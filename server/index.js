@@ -15,6 +15,8 @@ import { jobQueueHealth, startJobWorker } from './utils/jobs.js';
 import { logger } from './utils/logger.js';
 import { createConcurrencyLimiter, createRateLimiter, rateLimitKeys } from './utils/rateLimit.js';
 import { errorLogger, requestLogger } from './utils/requestLogger.js';
+import { requireAdmin } from './utils/adminAuth.js';
+import { aiPreflightSnapshot } from './utils/aiPreflight.js';
 import { validateStartupEnvironment } from './utils/env.js';
 import { storageHealthSnapshot } from './utils/storage.js';
 
@@ -236,6 +238,16 @@ app.use('/api/tryons', tryOnRoutes);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, mongo: mongoose.connection.readyState === 1, storage: storageHealthSnapshot(), jobs: jobQueueHealth() });
+});
+
+function requireAiPreflightAccess(req, res, next) {
+  if (process.env.NODE_ENV !== 'production') return next();
+  return requireAdmin(req, res, next);
+}
+
+app.get('/api/health/ai', requireAiPreflightAccess, (_req, res) => {
+  const snapshot = aiPreflightSnapshot();
+  res.status(snapshot.ok ? 200 : 503).json(snapshot);
 });
 
 app.use(errorLogger);

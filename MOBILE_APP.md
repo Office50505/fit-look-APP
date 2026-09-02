@@ -19,6 +19,23 @@ npm run server
 npm run mobile
 ```
 
+## AI preflight
+
+Before enabling or deploying AI features, run the masked backend checklist:
+
+```sh
+npm run server:ai-preflight
+npm run server:ai-preflight:prod-env
+```
+
+After deploying the backend to AWS, check the live production API with the admin key:
+
+```sh
+curl -H "x-admin-key: <admin-key>" https://api.lookmefy.in/api/health/ai
+```
+
+The endpoint reports provider keys as `set` or `missing` only. It does not return secret values.
+
 ## iPhone
 
 ```sh

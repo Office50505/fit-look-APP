@@ -9,6 +9,8 @@
     "dev": "vite",
     "server": "node server/index.js",
     "server:watch": "nodemon server/index.js",
+    "server:ai-preflight": "node server/scripts/ai-preflight.js",
+    "server:ai-preflight:prod-env": "node server/scripts/ai-preflight.js production.env --production",
     "server:create-indexes": "node server/scripts/sync-indexes.js",
     "expo": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start",
     "mobile": "cd mobile && /opt/homebrew/opt/node@20/bin/node node_modules/expo/bin/cli start --port 8081",
