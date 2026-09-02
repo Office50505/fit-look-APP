@@ -30,7 +30,15 @@ import {
 import { api, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
 import { categories, images, infoPages, policyPages } from './src/assets';
 import { calculateCreditPercentage, normalizeProduct, normalizeProducts, resolveImageUrl } from './src/products';
-import { STOREKIT_CREDITS_150_PRODUCT_ID, STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID, storeKitAppAccountTokenForUser } from './src/storeKitProducts';
+import {
+  STOREKIT_CONSUMABLE_PRODUCT_IDS,
+  STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID,
+  STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID,
+  isLookmefyStoreKitProductId,
+  isStoreKitConsumableProductId,
+  storeKitAppAccountTokenForUser,
+  storeKitProductIdForTopUpPlan
+} from './src/storeKitProducts';
 
 const logoSymbol = require('./assets/lookmefy-symbol.png');
 
@@ -4799,11 +4807,11 @@ const fallbackSubscriptionPlan = {
 };
 
 const fallbackTopUpPlans = [
-  { id: 'top_up_50_credits', type: 'top_up', name: 'Top-up', headline: '50 credits', amount: 19900, currency: 'INR', tokens: 50, credits: 50, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.98, description: 'One-time refill for extra image try-ons and videos.' },
-  { id: 'top_up_75_credits', type: 'top_up', name: 'Top-up', headline: '75 credits', amount: 29900, currency: 'INR', tokens: 75, credits: 75, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.99, description: 'One-time refill for extra image try-ons and videos.' },
-  { id: 'top_up_110_credits', type: 'top_up', name: 'Top-up', headline: '110 credits', amount: 39900, currency: 'INR', tokens: 110, credits: 110, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.63, description: 'Better value for product batches and style exploration.' },
-  { id: 'top_up_135_credits', type: 'top_up', name: 'Top-up', headline: '135 credits', amount: 49900, currency: 'INR', tokens: 135, credits: 135, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.7, description: 'Better value for product batches and style exploration.' },
-  { id: 'top_up_400_credits', type: 'top_up', name: 'Top-up', headline: '400 credits', amount: 99900, currency: 'INR', tokens: 400, credits: 400, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 2.5, badge: 'Best value', description: 'Best value for bulk catalog work and repeated video trials.' }
+  { id: 'top_up_50_credits', type: 'top_up', name: 'Top-up', headline: '50 credits', amount: 19900, currency: 'INR', tokens: 50, credits: 50, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.98, appStoreProductId: STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID.top_up_50_credits, description: 'One-time refill for extra image try-ons and videos.' },
+  { id: 'top_up_75_credits', type: 'top_up', name: 'Top-up', headline: '75 credits', amount: 29900, currency: 'INR', tokens: 75, credits: 75, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.99, appStoreProductId: STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID.top_up_75_credits, description: 'One-time refill for extra image try-ons and videos.' },
+  { id: 'top_up_110_credits', type: 'top_up', name: 'Top-up', headline: '110 credits', amount: 39900, currency: 'INR', tokens: 110, credits: 110, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.63, appStoreProductId: STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID.top_up_110_credits, description: 'Better value for product batches and style exploration.' },
+  { id: 'top_up_135_credits', type: 'top_up', name: 'Top-up', headline: '135 credits', amount: 49900, currency: 'INR', tokens: 135, credits: 135, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 3.7, appStoreProductId: STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID.top_up_135_credits, description: 'Better value for product batches and style exploration.' },
+  { id: 'top_up_400_credits', type: 'top_up', name: 'Top-up', headline: '400 credits', amount: 99900, currency: 'INR', tokens: 400, credits: 400, billingFrequency: 'one_time', cadence: 'One-time', ratePerCredit: 2.5, appStoreProductId: STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID.top_up_400_credits, badge: 'Best value', description: 'Best value for bulk catalog work and repeated video trials.' }
 ];
 
 const fallbackPaymentCatalog = {
@@ -4811,7 +4819,7 @@ const fallbackPaymentCatalog = {
   topUps: fallbackTopUpPlans,
   appStoreProductIds: {
     monthlySubscription: STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID,
-    credits150: STOREKIT_CREDITS_150_PRODUCT_ID
+    creditTopUps: STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID
   },
   creditCosts: { starterCredits: 8, image: 1, customTryOn: 1, video: 3 }
 };
@@ -4901,8 +4909,25 @@ function storeKitProductTitle(product, fallback) {
   return product?.displayName || product?.displayNameIOS || product?.title || fallback;
 }
 
+function storeKitProductId(product = {}) {
+  return String(product?.id || product?.productId || '').trim();
+}
+
 function findStoreKitProduct(items, productId) {
-  return (Array.isArray(items) ? items : []).find((item) => item?.id === productId || item?.productId === productId) || null;
+  const targetProductId = String(productId || '').trim();
+  return (Array.isArray(items) ? items : []).find((item) => storeKitProductId(item) === targetProductId) || null;
+}
+
+function storeKitProductsById(items) {
+  return (Array.isArray(items) ? items : []).reduce((indexed, item) => {
+    const productId = storeKitProductId(item);
+    if (productId) indexed[productId] = item;
+    return indexed;
+  }, {});
+}
+
+function applePurchaseTransactionId(purchase = {}) {
+  return String(purchase.transactionId || purchase.id || '').trim();
 }
 
 function isStoreKitCancel(error) {
@@ -4931,7 +4956,7 @@ function applePurchaseServerPayload(purchase = {}) {
 
 function isLookmefyStoreKitPurchase(purchase = {}) {
   const productId = String(purchase.productId || purchase.currentPlanId || '').trim();
-  return productId === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID || productId === STOREKIT_CREDITS_150_PRODUCT_ID;
+  return isLookmefyStoreKitProductId(productId);
 }
 
 function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
@@ -4948,7 +4973,8 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
     error: '',
     unavailableReason: '',
     subscriptionProduct: null,
-    creditsProduct: null,
+    creditProducts: [],
+    creditProductsById: {},
     activeSubscriptions: []
   });
   const iapRef = useRef(null);
@@ -4964,7 +4990,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
     try {
       await iap.finishTransaction({
         purchase,
-        isConsumable: String(purchase?.productId || '') === STOREKIT_CREDITS_150_PRODUCT_ID
+        isConsumable: isStoreKitConsumableProductId(purchase?.productId)
       });
     } catch (error) {
       updateState({ error: `Apple verified the purchase, but finishing it failed: ${error.message}` });
@@ -4987,18 +5013,21 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
     try {
       const [subscriptionProducts, consumableProducts, activeSubscriptions] = await Promise.all([
         iap.fetchProducts({ skus: [STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID], type: 'subs' }),
-        iap.fetchProducts({ skus: [STOREKIT_CREDITS_150_PRODUCT_ID], type: 'in-app' }),
+        iap.fetchProducts({ skus: STOREKIT_CONSUMABLE_PRODUCT_IDS, type: 'in-app' }),
         iap.getActiveSubscriptions ? iap.getActiveSubscriptions([STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID]).catch(() => []) : []
       ]);
       const subscriptionProduct = findStoreKitProduct(subscriptionProducts, STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID);
-      const creditsProduct = findStoreKitProduct(consumableProducts, STOREKIT_CREDITS_150_PRODUCT_ID);
+      const creditProductsById = storeKitProductsById(consumableProducts);
+      const creditProducts = STOREKIT_CONSUMABLE_PRODUCT_IDS.map((productId) => creditProductsById[productId]).filter(Boolean);
+      const missingCreditProducts = STOREKIT_CONSUMABLE_PRODUCT_IDS.filter((productId) => !creditProductsById[productId]);
       updateState({
         loading: false,
         connected: true,
         subscriptionProduct,
-        creditsProduct,
+        creditProducts,
+        creditProductsById,
         activeSubscriptions: Array.isArray(activeSubscriptions) ? activeSubscriptions : [],
-        unavailableReason: !subscriptionProduct || !creditsProduct ? 'App Store products are not available for this Apple ID/build yet.' : ''
+        unavailableReason: !subscriptionProduct || missingCreditProducts.length ? 'Some App Store products are not available for this Apple ID/build yet.' : ''
       });
     } catch (error) {
       updateState({
@@ -5031,7 +5060,16 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
           body: JSON.stringify({ purchases: relevantPurchases.map(applePurchaseServerPayload) })
         });
         if (restoreResult.user) setUser(restoreResult.user);
-        for (const purchase of relevantPurchases) await finishStoreKitTransaction(purchase);
+        const verifiedTransactionIds = new Set(
+          (Array.isArray(restoreResult.transactions) ? restoreResult.transactions : [])
+            .map((transaction) => String(transaction?.transactionId || '').trim())
+            .filter(Boolean)
+        );
+        for (const purchase of relevantPurchases) {
+          if (verifiedTransactionIds.has(applePurchaseTransactionId(purchase))) {
+            await finishStoreKitTransaction(purchase);
+          }
+        }
       }
 
       const statusResult = await api('/payments/apple/status', { noCache: true });
@@ -5168,7 +5206,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
       updateState({ error: 'App Store payments are not ready yet.' });
       return;
     }
-    const product = productId === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID ? state.subscriptionProduct : state.creditsProduct;
+    const product = productId === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID ? state.subscriptionProduct : state.creditProductsById[productId];
     if (!product) {
       updateState({ error: 'This App Store product is unavailable for the current build or Apple ID.' });
       return;
@@ -5192,7 +5230,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
           apple: {
             sku: productId,
             appAccountToken,
-            quantity: productId === STOREKIT_CREDITS_150_PRODUCT_ID ? 1 : undefined,
+            quantity: isStoreKitConsumableProductId(productId) ? 1 : undefined,
             andDangerouslyFinishTransactionAutomatically: false
           }
         },
@@ -5207,7 +5245,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
         error: isStoreKitCancel(error) ? '' : error.message || 'Could not start App Store purchase.'
       });
     }
-  }, [enabled, onRequireAuth, state.connected, state.creditsProduct, state.subscriptionProduct, updateState, user]);
+  }, [enabled, onRequireAuth, state.connected, state.creditProductsById, state.subscriptionProduct, updateState, user]);
 
   const restorePurchases = useCallback(async () => {
     if (!enabled || !user) {
@@ -5231,7 +5269,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
   return {
     ...state,
     purchaseMonthly: () => requestStoreKitPurchase({ productId: STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID, type: 'subs' }),
-    purchaseCredits: () => requestStoreKitPurchase({ productId: STOREKIT_CREDITS_150_PRODUCT_ID, type: 'in-app' }),
+    purchaseCredits: (productId) => requestStoreKitPurchase({ productId, type: 'in-app' }),
     restorePurchases,
     syncCurrentEntitlements,
     refreshProducts,
@@ -5257,13 +5295,30 @@ function AppleStoreKitCreditCard({ selected, active, product, title, kicker, hea
   );
 }
 
-function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly }) {
+function AppleStoreKitTopUpCard({ plan, product, selected, onPress }) {
+  const price = storeKitProductPrice(product);
+  return (
+    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
+      {plan.badge ? <Text style={styles.topUpBestValue}>{String(plan.badge).toUpperCase()}</Text> : null}
+      <Text style={styles.creditCardKicker}>TOP-UP</Text>
+      <Text style={styles.topUpPrice}>{price || 'Unavailable'}</Text>
+      <Text style={styles.creditMandateSub}>{plan.credits} credits</Text>
+      <Text style={styles.creditMutedText}>{storeKitProductTitle(product, `${plan.credits} credit top-up`)}</Text>
+      <Text style={styles.creditCapsText}>{String(plan.cadence || 'One-time').toUpperCase()}</Text>
+      <Text style={styles.creditCardDescription}>{plan.description}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly, selectedTopUp }) {
   const buyingSubscription = appleStoreKit.purchasingProductId === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID;
-  const buyingCredits = appleStoreKit.purchasingProductId === STOREKIT_CREDITS_150_PRODUCT_ID;
+  const buyingCredits = isStoreKitConsumableProductId(appleStoreKit.purchasingProductId);
   const busy = appleStoreKit.loading || appleStoreKit.verifying || appleStoreKit.purchasePending || appleStoreKit.syncing || appleStoreKit.restoring;
-  const selectedProduct = mode === 'top_up' ? appleStoreKit.creditsProduct : appleStoreKit.subscriptionProduct;
+  const selectedTopUpProductId = storeKitProductIdForTopUpPlan(selectedTopUp);
+  const selectedProduct = mode === 'top_up' ? appleStoreKit.creditProductsById[selectedTopUpProductId] : appleStoreKit.subscriptionProduct;
   const disabled = busy || !appleStoreKit.connected || !selectedProduct || (mode === 'subscription' && activeMonthly);
-  let label = mode === 'top_up' ? 'BUY 150 CREDITS' : 'SUBSCRIBE WITH APPLE';
+  let label = mode === 'top_up' ? `BUY ${Number(selectedTopUp?.credits) || ''} CREDITS`.trim() : 'SUBSCRIBE WITH APPLE';
   if (appleStoreKit.loading) label = 'LOADING APP STORE';
   else if (appleStoreKit.restoring) label = 'RESTORING PURCHASES';
   else if (appleStoreKit.syncing) label = 'SYNCING STATUS';
@@ -5277,7 +5332,7 @@ function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly }) {
         style={[styles.secureCheckoutButton, disabled && styles.disabledButton]}
         activeOpacity={0.88}
         disabled={disabled}
-        onPress={mode === 'top_up' ? appleStoreKit.purchaseCredits : appleStoreKit.purchaseMonthly}
+        onPress={mode === 'top_up' ? () => appleStoreKit.purchaseCredits(selectedTopUpProductId) : appleStoreKit.purchaseMonthly}
       >
         <Text style={styles.secureCheckoutText}>{label}</Text>
       </TouchableOpacity>
@@ -5331,9 +5386,10 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
   const isAppleCheckout = Platform.OS === 'ios';
   const activeAppleMonthly = isAppleCheckout && subscription?.provider === 'apple' && activeMonthly;
   const appleStoreKit = useAppleStoreKitPayments({ enabled: isAppleCheckout, user, setUser, onRequireAuth });
-  const appleSelectedProduct = mode === 'top_up' ? appleStoreKit.creditsProduct : appleStoreKit.subscriptionProduct;
+  const appleSelectedTopUpProductId = storeKitProductIdForTopUpPlan(selectedTopUp);
+  const appleSelectedProduct = mode === 'top_up' ? appleStoreKit.creditProductsById[appleSelectedTopUpProductId] : appleStoreKit.subscriptionProduct;
   const appleSelectedPrice = storeKitProductPrice(appleSelectedProduct) || 'Unavailable';
-  const appleSelectedProductId = mode === 'top_up' ? STOREKIT_CREDITS_150_PRODUCT_ID : STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID;
+  const appleSelectedProductId = mode === 'top_up' ? appleSelectedTopUpProductId : STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID;
   const visibleMessage = isAppleCheckout
     ? appleStoreKit.error || appleStoreKit.statusMessage || appleStoreKit.unavailableReason
     : message;
@@ -5514,16 +5570,18 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
       {mode === 'top_up' ? (
         isAppleCheckout ? (
           <View style={styles.topUpGrid}>
-            <AppleStoreKitCreditCard
-              product={appleStoreKit.creditsProduct}
-              selected
-              title="150 credit top-up"
-              kicker="TOP-UP"
-              headline="150 credits"
-              subhead="Pay-as-you-go credits"
-              description="One-time consumable App Store purchase. Credits are added only after the server verifies the Apple transaction."
-              onPress={() => {}}
-            />
+            {topUpPlans.map((planItem) => {
+              const productId = storeKitProductIdForTopUpPlan(planItem);
+              return (
+                <AppleStoreKitTopUpCard
+                  key={planItem.id}
+                  plan={planItem}
+                  product={appleStoreKit.creditProductsById[productId]}
+                  selected={selectedPlan.id === planItem.id}
+                  onPress={() => setSelectedTopUpId(planItem.id)}
+                />
+              );
+            })}
           </View>
         ) : (
           <View style={styles.topUpGrid}>
@@ -5586,11 +5644,11 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
         <View style={styles.orderSummaryDivider} />
         {isAppleCheckout ? (
           <>
-            <PaymentSummaryLine label="Credit Package" value={mode === 'top_up' ? '150 credit top-up' : storeKitProductTitle(appleStoreKit.subscriptionProduct, 'Lookmefy Premium Monthly')} strong />
-            <PaymentSummaryLine label="Tokens" value={mode === 'top_up' ? '150 credits' : '150 credits every month'} strong />
+            <PaymentSummaryLine label="Credit Package" value={mode === 'top_up' ? `${selectedTopUp.credits} credit top-up` : storeKitProductTitle(appleStoreKit.subscriptionProduct, 'Lookmefy Premium Monthly')} strong />
+            <PaymentSummaryLine label="Tokens" value={mode === 'top_up' ? `${selectedTopUp.credits} credits` : '150 credits every month'} strong />
             <PaymentSummaryLine label="Apple Price" value={appleSelectedPrice} strong />
             <PaymentSummaryLine label="Billing" value={mode === 'top_up' ? 'One-time consumable' : 'Monthly auto-renewing'} strong />
-            <PaymentSummaryLine label="Product ID" value={appleSelectedProductId} strong />
+            <PaymentSummaryLine label="Product ID" value={appleSelectedProductId || 'Unavailable'} strong />
           </>
         ) : (
           <>
@@ -5627,7 +5685,7 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
       {visibleMessage ? <Text style={[styles.creditsMessage, messageIsError ? styles.errorText : null]}>{visibleMessage}</Text> : null}
 
       {isAppleCheckout ? (
-        <AppleStoreKitActions mode={mode} appleStoreKit={appleStoreKit} activeMonthly={activeAppleMonthly} />
+        <AppleStoreKitActions mode={mode} appleStoreKit={appleStoreKit} activeMonthly={activeAppleMonthly} selectedTopUp={selectedTopUp} />
       ) : (
         <TouchableOpacity style={[styles.secureCheckoutButton, checkoutLoading && styles.disabledButton]} activeOpacity={0.88} disabled={checkoutLoading} onPress={startCheckout}>
           <Text style={styles.secureCheckoutText}>{checkoutLoading ? 'OPENING PHONEPE' : mode === 'top_up' ? 'SECURE CHECKOUT' : 'SET UP MANDATE'}</Text>

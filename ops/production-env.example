@@ -121,7 +121,11 @@ PHONEPE_REDEMPTION_RETRY_STRATEGY=STANDARD
 # Apple StoreKit / App Store Server API for production iOS in-app purchases.
 # Product IDs must match App Store Connect exactly:
 #   com.lookmefy.premium.monthly
-#   com.lookmefy.credits150
+#   com.lookmefy.credits50
+#   com.lookmefy.credits75
+#   com.lookmefy.credits110
+#   com.lookmefy.credits135
+#   com.lookmefy.credits400
 APPLE_IAP_ENVIRONMENT=production
 APPLE_BUNDLE_ID=com.kratikdhote.lookmefy
 APPLE_APP_APPLE_ID=
