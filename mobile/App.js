@@ -4,7 +4,7 @@ import { useFonts } from 'expo-font';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { Component, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -229,6 +229,54 @@ const onboardingTourSteps = [
   }
 ];
 const validRoutes = new Set(['auth', 'home', 'shop', 'search', 'tryon', 'closet', 'custom', 'stylebot', 'tokens', 'profile', 'generation-history', 'product', 'wishlist', 'orders', 'signup', 'login', 'how', 'info']);
+const tabletLayoutMinWidth = 768;
+const tabletContentMaxWidth = 1180;
+
+function responsiveContentWidthForWindow(windowWidth) {
+  const safeWidth = Math.max(1, Math.round(Number(windowWidth) || 0));
+  if (safeWidth < tabletLayoutMinWidth) return safeWidth;
+  const contentRatio = safeWidth >= 1024 ? 0.9 : 0.88;
+  return Math.min(tabletContentMaxWidth, Math.round(safeWidth * contentRatio));
+}
+
+function productColumnsForWindow(windowWidth) {
+  const safeWidth = Math.max(1, Number(windowWidth) || 0);
+  if (safeWidth >= 1024) return 4;
+  if (safeWidth >= tabletLayoutMinWidth) return 3;
+  return 2;
+}
+
+function gridWidthForColumns(columns) {
+  if (columns >= 4) return '23.5%';
+  if (columns === 3) return '31.5%';
+  return null;
+}
+
+function responsiveLayoutForWindow(windowWidth) {
+  const safeWindowWidth = Math.max(1, Math.round(Number(windowWidth) || 0));
+  const isTablet = safeWindowWidth >= tabletLayoutMinWidth;
+  const productColumns = productColumnsForWindow(safeWindowWidth);
+  const gridWidth = gridWidthForColumns(productColumns);
+  const contentWidth = responsiveContentWidthForWindow(safeWindowWidth);
+  return {
+    windowWidth: safeWindowWidth,
+    contentWidth,
+    isTablet,
+    isLargeTablet: safeWindowWidth >= 1024,
+    productColumns,
+    contentFrameStyle: isTablet ? { width: contentWidth } : null,
+    productGridItemStyle: gridWidth ? { flexGrow: 0, flexBasis: gridWidth, maxWidth: gridWidth } : null,
+    productGridWidthStyle: gridWidth ? { width: gridWidth } : null,
+    categoryTileStyle: isTablet ? { width: productColumns >= 4 ? '23.5%' : '31.5%' } : null
+  };
+}
+
+const defaultResponsiveLayout = responsiveLayoutForWindow(390);
+const ResponsiveLayoutContext = createContext(defaultResponsiveLayout);
+
+function useResponsiveLayout() {
+  return useContext(ResponsiveLayoutContext);
+}
 
 function normalizeRoute(name, params = {}) {
   const routeName = typeof name === 'string' && validRoutes.has(name) ? name : 'home';
@@ -1053,6 +1101,7 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
 }
 
 function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
+  const layout = useResponsiveLayout();
   const routeName = route?.name || 'home';
   const activeRoute = routeName === 'product' || routeName === 'wishlist' || routeName === 'search'
       ? 'shop'
@@ -1067,7 +1116,7 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
     ['custom', 'color-wand-outline', 'Custom']
   ];
   return (
-    <View style={styles.bottomNav}>
+    <View style={[styles.bottomNav, layout.isTablet && styles.bottomNavTablet, layout.contentFrameStyle]}>
       {items.map(([name, icon, label]) => {
         const active = activeRoute === name;
         return (
@@ -1155,9 +1204,11 @@ function SkeletonBlock({ style }) {
 }
 
 function ProductCardSkeleton({ variant = 'grid' }) {
+  const layout = useResponsiveLayout();
   const useHomeImageFrame = variant === 'homeFrame';
+  const responsiveCardStyle = variant === 'carousel' ? null : layout.productGridItemStyle;
   return (
-    <View style={[styles.productCard, styles.skeletonProductCard, useHomeImageFrame && styles.productCardHomeFrame, variant === 'carousel' && styles.productCardCarousel]}>
+    <View style={[styles.productCard, styles.skeletonProductCard, useHomeImageFrame && styles.productCardHomeFrame, responsiveCardStyle, variant === 'carousel' && styles.productCardCarousel]}>
       <View style={[styles.productImageWrap, useHomeImageFrame && styles.homeProductImageWrap]}>
         <SkeletonBlock style={styles.skeletonFill} />
       </View>
@@ -1186,9 +1237,11 @@ function HorizontalProductSkeleton({ count = 4 }) {
   );
 }
 
-function HomeProductSkeletonGrid({ count = 4 }) {
-  return Array.from({ length: count }).map((_, index) => (
-    <View key={`home-product-skeleton-${index}`} style={styles.homeProductCard}>
+function HomeProductSkeletonGrid({ count }) {
+  const layout = useResponsiveLayout();
+  const skeletonCount = count || layout.productColumns * 2;
+  return Array.from({ length: skeletonCount }).map((_, index) => (
+    <View key={`home-product-skeleton-${index}`} style={[styles.homeProductCard, layout.productGridWidthStyle]}>
       <View style={styles.homeProductImageWrap}>
         <SkeletonBlock style={styles.skeletonFill} />
       </View>
@@ -1199,11 +1252,13 @@ function HomeProductSkeletonGrid({ count = 4 }) {
   ));
 }
 
-function HomeJournalSkeletonGrid({ count = 4 }) {
+function HomeJournalSkeletonGrid({ count }) {
+  const layout = useResponsiveLayout();
+  const skeletonCount = count || layout.productColumns * 2;
   return (
     <View style={styles.homeJournalGrid}>
-      {Array.from({ length: count }).map((_, index) => (
-        <View key={`home-journal-skeleton-${index}`} style={styles.homeJournalProductCard}>
+      {Array.from({ length: skeletonCount }).map((_, index) => (
+        <View key={`home-journal-skeleton-${index}`} style={[styles.homeJournalProductCard, layout.productGridWidthStyle]}>
           <View style={styles.homeJournalImageFrame}>
             <SkeletonBlock style={styles.skeletonFill} />
           </View>
@@ -1218,11 +1273,13 @@ function HomeJournalSkeletonGrid({ count = 4 }) {
   );
 }
 
-function WardrobeGridSkeleton({ count = 4 }) {
+function WardrobeGridSkeleton({ count }) {
+  const layout = useResponsiveLayout();
+  const skeletonCount = count || layout.productColumns * 2;
   return (
     <View style={styles.closetGrid}>
-      {Array.from({ length: count }).map((_, index) => (
-        <View key={`wardrobe-skeleton-${index}`} style={styles.closetItemCard}>
+      {Array.from({ length: skeletonCount }).map((_, index) => (
+        <View key={`wardrobe-skeleton-${index}`} style={[styles.closetItemCard, layout.productGridWidthStyle]}>
           <View style={styles.closetItemImage}>
             <SkeletonBlock style={styles.skeletonFill} />
           </View>
@@ -1312,6 +1369,7 @@ function AiPreviewNote({ style }) {
 }
 
 const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLoading, error, videoError, locked, onPress, onTryOn, onTryOnVideo, onAddToWishlist, isWishlisted, variant = 'grid' }) {
+  const layout = useResponsiveLayout();
   const price = Number(product?.price);
   const hasPrice = Number.isFinite(price);
   const hasDiscount = hasPrice && product?.compareAtPrice && product.compareAtPrice > product.price;
@@ -1319,11 +1377,12 @@ const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLo
   const videoUri = imageUrl(tryOn?.videoUrl);
   const hasTryOnImage = Boolean(tryOn?.imageUrl);
   const useHomeImageFrame = variant === 'homeFrame';
+  const responsiveCardStyle = variant === 'carousel' ? null : layout.productGridItemStyle;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={product?.title || product?.name || 'Open product'}
-      style={({ pressed }) => [styles.productCard, useHomeImageFrame && styles.productCardHomeFrame, variant === 'carousel' && styles.productCardCarousel, pressed && !locked && styles.productCardPressed, locked && styles.lockedCard]}
+      style={({ pressed }) => [styles.productCard, useHomeImageFrame && styles.productCardHomeFrame, responsiveCardStyle, variant === 'carousel' && styles.productCardCarousel, pressed && !locked && styles.productCardPressed, locked && styles.lockedCard]}
       onPress={locked ? undefined : onPress}
     >
       <View style={[styles.productImageWrap, useHomeImageFrame && styles.homeProductImageWrap]}>
@@ -1625,6 +1684,7 @@ function CategoryBubble({ item, size = 'large', active = false }) {
 }
 
 function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate, user }) {
+  const layout = useResponsiveLayout();
   const content = categoryPageContent[selectedCategory] || categoryPageContent.popular;
   const openTile = (item) => onNavigate('shop', item.params || { sort: 'newest' });
 
@@ -1632,7 +1692,7 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
     <View style={styles.categoryScreen}>
       <ShopTopBar onNavigate={onNavigate} user={user} />
       <View style={styles.categoryBrowser}>
-        <ScrollView style={styles.categoryRail} contentContainerStyle={styles.categoryRailContent} showsVerticalScrollIndicator={false}>
+        <ScrollView style={[styles.categoryRail, layout.isTablet && styles.categoryRailTablet]} contentContainerStyle={[styles.categoryRailContent, layout.isTablet && styles.categoryRailContentTablet]} showsVerticalScrollIndicator={false}>
           {categoryRailItems.map((item) => {
             const active = item.key === selectedCategory;
             return (
@@ -1652,16 +1712,16 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
           })}
         </ScrollView>
 
-        <ScrollView style={styles.categoryMain} contentContainerStyle={styles.categoryMainContent} showsVerticalScrollIndicator={false}>
+        <ScrollView style={styles.categoryMain} contentContainerStyle={[styles.categoryMainContent, layout.isTablet && styles.categoryMainContentTablet]} showsVerticalScrollIndicator={false}>
           <View style={styles.categoryKickerRow}>
             <Text style={styles.categoryKicker}>{content.kicker}</Text>
             <View style={styles.categoryKickerLine} />
           </View>
           <Text style={styles.categoryHeadline}>{content.title}</Text>
 
-          <View style={styles.categoryTileGrid}>
+          <View style={[styles.categoryTileGrid, layout.isTablet && styles.categoryTileGridTablet]}>
             {content.featured.map((item) => (
-              <TouchableOpacity key={`${content.kicker}-${item.label}`} accessibilityRole="button" activeOpacity={0.86} style={styles.categoryTile} onPress={() => openTile(item)}>
+              <TouchableOpacity key={`${content.kicker}-${item.label}`} accessibilityRole="button" activeOpacity={0.86} style={[styles.categoryTile, layout.categoryTileStyle]} onPress={() => openTile(item)}>
                 <CategoryBubble item={item} />
                 <Text style={styles.categoryTileLabel} numberOfLines={2}>{item.label}</Text>
               </TouchableOpacity>
@@ -1669,9 +1729,9 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
           </View>
 
           <Text style={styles.categorySectionTitle}>{content.sectionTitle}</Text>
-          <View style={styles.categoryTileGrid}>
+          <View style={[styles.categoryTileGrid, layout.isTablet && styles.categoryTileGridTablet]}>
             {content.items.map((item) => (
-              <TouchableOpacity key={`${content.sectionTitle}-${item.label}`} accessibilityRole="button" activeOpacity={0.86} style={styles.categoryTile} onPress={() => openTile(item)}>
+              <TouchableOpacity key={`${content.sectionTitle}-${item.label}`} accessibilityRole="button" activeOpacity={0.86} style={[styles.categoryTile, layout.categoryTileStyle]} onPress={() => openTile(item)}>
                 <CategoryBubble item={item} />
                 <Text style={styles.categoryTileLabel} numberOfLines={2}>{item.label}</Text>
               </TouchableOpacity>
@@ -1684,9 +1744,10 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
 }
 
 function CurationProductCard({ product, onPress, onAddToWishlist, isWishlisted }) {
+  const layout = useResponsiveLayout();
   const price = Number(product.price);
   return (
-    <TouchableOpacity style={styles.homeProductCard} onPress={onPress}>
+    <TouchableOpacity style={[styles.homeProductCard, layout.productGridWidthStyle]} onPress={onPress}>
       <View style={styles.homeProductImageWrap}>
         <ProductImage product={product} style={styles.homeProductImage} alt={product.title || product.name} />
         {product.isNew ? <Text style={styles.homeNewBadge}>NEW</Text> : null}
@@ -1765,8 +1826,9 @@ function ConciergeSuggestionCard({ product, fallback, featured, onShop, onTryOn,
 }
 
 function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, registerTourTarget, tourFocusRequest }) {
-  const { width } = useWindowDimensions();
-  const homeHeroWidth = Math.max(1, width - 32);
+  const layout = useResponsiveLayout();
+  const homeHeroWidth = Math.max(1, layout.contentWidth - 32);
+  const homeHeroHeight = layout.isTablet ? Math.min(320, Math.max(220, Math.round(homeHeroWidth * 0.32))) : 184;
   const heroCarouselRef = useRef(null);
   const homeScrollRef = useRef(null);
   const [heroIndex, setHeroIndex] = useState(0);
@@ -1823,8 +1885,8 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
   return (
     <View style={styles.homeScreen}>
       <AppHeader onNavigate={onNavigate} user={user} compact />
-      <ScrollView ref={homeScrollRef} style={styles.homeScroll} contentContainerStyle={styles.homeContent} {...screenScrollProps}>
-      <View style={styles.homeHero}>
+      <ScrollView ref={homeScrollRef} style={styles.homeScroll} contentContainerStyle={[styles.homeContent, layout.isTablet && styles.homeContentTablet]} {...screenScrollProps}>
+      <View style={[styles.homeHero, layout.isTablet && { height: homeHeroHeight }]}>
         <ScrollView
           ref={heroCarouselRef}
           horizontal
@@ -1864,14 +1926,14 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
         </View>
         <ScrollView
           {...horizontalScrollProps}
-          contentContainerStyle={styles.homeCategoryTrack}
+          contentContainerStyle={[styles.homeCategoryTrack, layout.isTablet && styles.homeCategoryTrackTablet]}
           decelerationRate="fast"
           snapToInterval={homeCategorySnapInterval}
           snapToAlignment="start"
         >
           {preferredHomeCategories.map((item) => (
-            <TouchableOpacity key={item.label} activeOpacity={0.86} style={styles.homeCategoryItem} onPress={() => onNavigate('shop', item.params || {})}>
-              <View style={styles.homeCategoryImageFrame}>
+            <TouchableOpacity key={item.label} activeOpacity={0.86} style={[styles.homeCategoryItem, layout.isTablet && styles.homeCategoryItemTablet]} onPress={() => onNavigate('shop', item.params || {})}>
+              <View style={[styles.homeCategoryImageFrame, layout.isTablet && styles.homeCategoryImageFrameTablet]}>
                 <Image source={images[item.image]} style={styles.homeCategoryImage} resizeMode="contain" />
               </View>
               <Text style={styles.homeCategoryLabel} numberOfLines={1}>{item.label}</Text>
@@ -1881,7 +1943,7 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
       </View>
 
       <Text style={styles.homeCurationTitle}>{homeCurationTitle}</Text>
-      <View style={styles.homeCuratedGrid}>
+      <View style={[styles.homeCuratedGrid, layout.isTablet && styles.homeCuratedGridTablet]}>
         {curated.loading ? (
           <HomeProductSkeletonGrid />
         ) : curated.error || !curatedProducts.length ? (
@@ -1910,7 +1972,7 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
             <Ionicons name="arrow-forward" size={14} color="#9b5658" />
           </TouchableOpacity>
         </View>
-        <Text style={styles.homeJournalIntro}>{journalIntro}</Text>
+        <Text style={[styles.homeJournalIntro, layout.isTablet && styles.homeJournalIntroTablet]}>{journalIntro}</Text>
         {shopLooks.loading ? (
           <HomeJournalSkeletonGrid />
         ) : shopLooks.error || !shopLookProducts.length ? (
@@ -1920,7 +1982,7 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
             {shopLookProducts.slice(0, 6).map((product, index) => {
               const price = Number(product.price);
               return (
-                <TouchableOpacity key={product.id} style={styles.homeJournalProductCard} activeOpacity={0.86} onPress={() => onNavigate('product', { id: product.id })}>
+                <TouchableOpacity key={product.id} style={[styles.homeJournalProductCard, layout.productGridWidthStyle]} activeOpacity={0.86} onPress={() => onNavigate('product', { id: product.id })}>
                   <View style={styles.homeJournalImageFrame}>
                     <ProductImage product={product} style={styles.homeJournalImage} resizeMode="cover" alt={product.title || product.name} />
                     {onAddToWishlist ? <WishlistDoneButton saved={wishlistIds?.has(product.id)} compact onPress={() => onAddToWishlist(product)} /> : null}
@@ -2407,6 +2469,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
 
 function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, onAddToWishlist, wishlistIds }) {
   const { width } = useWindowDimensions();
+  const layout = useResponsiveLayout();
   const [state, setState] = useState({ product: null, loading: true, error: '' });
   const [tryOn, setTryOn] = useState(null);
   const [tryOnLoading, setTryOnLoading] = useState(false);
@@ -2416,7 +2479,8 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
   const [selectedSize, setSelectedSize] = useState('Medium');
   const [lightbox, setLightbox] = useState(null);
   const mediaScrollRef = useRef(null);
-  const mediaWidth = Math.max(1, Math.round(width - 28));
+  const detailContentWidth = layout.contentWidth || width;
+  const mediaWidth = Math.max(1, Math.round(detailContentWidth - 28));
   const related = useProducts({ category: state.product?.category || '', limit: 5 }, token);
   const relatedProducts = related.products.filter((item) => item.id !== id).slice(0, 4);
   const [relatedTryOns] = useTryOns(user, relatedProducts, token);
@@ -2544,7 +2608,9 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
   const colorLabel = product.colors?.[0]?.name ? product.colors[0].name.toString().toUpperCase() : '';
   const sizeOptions = product.sizes?.length ? product.sizes : [];
   const detailRows = ['PRODUCT DETAILS', 'FIT & CARE', 'SHIPPING & RETURNS'];
-  const mediaHeight = Math.min(520, Math.max(360, Math.round((width - 28) * 1.31)));
+  const mediaHeight = layout.isTablet
+    ? Math.min(600, Math.max(420, Math.round(mediaWidth * 0.62)))
+    : Math.min(520, Math.max(360, Math.round(mediaWidth * 1.31)));
   const openShop = () => {
     if (!user) {
       onRequireAuth?.('Log in with your mobile number to shop this brand.');
@@ -3530,6 +3596,7 @@ function ClosetDetectionCard({ detection, fields, compact = false }) {
 
 function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}, registerTourTarget, tourFocusRequest }) {
   const { height } = useWindowDimensions();
+  const layout = useResponsiveLayout();
   const addStudioScrollRef = useRef(null);
   const emptyCloset = { items: [], outfits: [], suggestions: [], stats: {} };
   const closet = useApiState('/closet', token, Boolean(user), emptyCloset);
@@ -4390,7 +4457,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
             {(closetView === 'wardrobe' ? filteredItems : items).map((item) => {
               const selected = selectedIds.includes(item.id);
               return (
-                <Pressable key={item.id} style={[styles.closetItemCard, selected && styles.closetItemSelected]} onPress={() => toggleItem(item.id)}>
+                <Pressable key={item.id} style={[styles.closetItemCard, layout.productGridWidthStyle, selected && styles.closetItemSelected]} onPress={() => toggleItem(item.id)}>
                   <ResilientImage source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : null} style={styles.closetItemImage} resizeMode="cover" fallbackIcon="shirt-outline" />
                   <View style={styles.closetItemBody}>
                     <Text style={styles.productTitle} numberOfLines={1}>{item.name}</Text>
@@ -4435,6 +4502,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
 }
 
 function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refreshUser }) {
+  const layout = useResponsiveLayout();
   const [garment, setGarment] = useState(null);
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState('');
@@ -4452,6 +4520,7 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
   const generatedUri = result?.imageUrl ? imageUrl(result.imageUrl) : '';
   const hasGenerated = Boolean(generatedUri);
   const latestCustomTryOn = latestCustom.data?.tryOn;
+  const customResultHeight = layout.isTablet ? Math.min(520, Math.max(390, Math.round(layout.contentWidth * 0.42))) : 368;
 
   useEffect(() => {
     if (garment || result || loading || !latestCustomTryOn?.imageUrl) return;
@@ -4511,8 +4580,8 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
         <Text style={styles.description}>Upload a garment image and Lookmefy will generate it on your saved profile photo with FitRoom.</Text>
       </View>
 
-      <View style={styles.customUploadRow}>
-        <Pressable style={styles.customProfileCard} onPress={() => profilePreviewUri && setLightbox(profilePreviewUri)}>
+      <View style={[styles.customUploadRow, layout.isTablet && styles.customUploadRowTablet]}>
+        <Pressable style={[styles.customProfileCard, layout.isTablet && styles.customProfileCardTablet]} onPress={() => profilePreviewUri && setLightbox(profilePreviewUri)}>
           {profilePreviewUri ? (
             <ResilientImage source={{ uri: profilePreviewUri }} style={styles.customProfileImage} resizeMode={profilePreviewIsFullBody ? 'contain' : 'cover'} fallbackIcon="person-outline" />
           ) : (
@@ -4526,7 +4595,7 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
             <Text style={styles.customProfileSub} numberOfLines={1}>{user.bodyPhotoStatus === 'generating' ? 'Preparing' : 'Saved'}</Text>
           </View>
         </Pressable>
-        <TouchableOpacity style={[styles.customGarmentDrop, garment?.uri && styles.customGarmentDropReady]} activeOpacity={0.86} onPress={chooseGarment}>
+        <TouchableOpacity style={[styles.customGarmentDrop, layout.isTablet && styles.customGarmentDropTablet, garment?.uri && styles.customGarmentDropReady]} activeOpacity={0.86} onPress={chooseGarment}>
           {garment?.uri ? (
             <>
               <Image source={{ uri: garment.uri }} style={styles.customGarmentImage} resizeMode="cover" />
@@ -4559,11 +4628,11 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refresh
             </TouchableOpacity>
           ) : null}
         </View>
-        <Pressable style={styles.customResultFrame} onPress={() => hasGenerated && setLightbox(generatedUri)}>
+        <Pressable style={[styles.customResultFrame, { minHeight: customResultHeight }]} onPress={() => hasGenerated && setLightbox(generatedUri)}>
           {hasGenerated ? (
             <ResilientImage
               source={{ uri: generatedUri }}
-              style={styles.customResultImage}
+              style={[styles.customResultImage, { height: customResultHeight }]}
               resizeMode="cover"
               fallbackIcon="alert-circle-outline"
               fallbackText="Result unavailable. Generate again."
@@ -4848,9 +4917,9 @@ function PaymentSummaryLine({ label, value, strong }) {
   );
 }
 
-function MonthlyCreditCard({ plan, selected, active, onPress }) {
+function MonthlyCreditCard({ plan, selected, active, onPress, style }) {
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
       <View style={styles.creditSelectedRow}>
         {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
         {active ? <Text style={styles.creditActivePill}>ACTIVE</Text> : null}
@@ -4865,9 +4934,9 @@ function MonthlyCreditCard({ plan, selected, active, onPress }) {
   );
 }
 
-function AddMoreCard({ selected, onPress }) {
+function AddMoreCard({ selected, onPress, style }) {
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.creditAddMoreCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+    <TouchableOpacity activeOpacity={0.88} style={[styles.creditAddMoreCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
       <Text style={styles.creditCardKicker}>TOP-UP</Text>
       <Text style={styles.creditAddMoreTitle}>Add more</Text>
       <Text style={styles.creditMandateSub}>One-time packs</Text>
@@ -4877,9 +4946,9 @@ function AddMoreCard({ selected, onPress }) {
   );
 }
 
-function TopUpCreditCard({ plan, selected, onPress }) {
+function TopUpCreditCard({ plan, selected, onPress, style }) {
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
       {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
       {plan.badge ? <Text style={styles.topUpBestValue}>{String(plan.badge).toUpperCase()}</Text> : null}
       <Text style={styles.creditCardKicker}>TOP-UP</Text>
@@ -5277,10 +5346,10 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
   };
 }
 
-function AppleStoreKitCreditCard({ selected, active, product, title, kicker, headline, subhead, description, onPress }) {
+function AppleStoreKitCreditCard({ selected, active, product, title, kicker, headline, subhead, description, onPress, style }) {
   const price = storeKitProductPrice(product);
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
       <View style={styles.creditSelectedRow}>
         {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
         {active ? <Text style={styles.creditActivePill}>ACTIVE</Text> : null}
@@ -5295,10 +5364,10 @@ function AppleStoreKitCreditCard({ selected, active, product, title, kicker, hea
   );
 }
 
-function AppleStoreKitTopUpCard({ plan, product, selected, onPress }) {
+function AppleStoreKitTopUpCard({ plan, product, selected, onPress, style }) {
   const price = storeKitProductPrice(product);
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
       {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
       {plan.badge ? <Text style={styles.topUpBestValue}>{String(plan.badge).toUpperCase()}</Text> : null}
       <Text style={styles.creditCardKicker}>TOP-UP</Text>
@@ -5359,6 +5428,7 @@ function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly, selectedTopU
 }
 
 function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
+  const layout = useResponsiveLayout();
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -5393,6 +5463,8 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
   const visibleMessage = isAppleCheckout
     ? appleStoreKit.error || appleStoreKit.statusMessage || appleStoreKit.unavailableReason
     : message;
+  const creditChoiceCardStyle = layout.isTablet ? styles.creditGridCardHalf : null;
+  const topUpCreditCardStyle = layout.isTablet ? (layout.isLargeTablet ? styles.creditGridCardThird : styles.creditGridCardHalf) : null;
   const firstPaymentDate = formatDate(addDays(new Date(), 1));
   const messageIsError = isAppleCheckout
     ? Boolean(appleStoreKit.error || appleStoreKit.unavailableReason)
@@ -5569,7 +5641,7 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
 
       {mode === 'top_up' ? (
         isAppleCheckout ? (
-          <View style={styles.topUpGrid}>
+          <View style={[styles.topUpGrid, layout.isTablet && styles.creditResponsiveGrid]}>
             {topUpPlans.map((planItem) => {
               const productId = storeKitProductIdForTopUpPlan(planItem);
               return (
@@ -5578,25 +5650,27 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
                   plan={planItem}
                   product={appleStoreKit.creditProductsById[productId]}
                   selected={selectedPlan.id === planItem.id}
+                  style={topUpCreditCardStyle}
                   onPress={() => setSelectedTopUpId(planItem.id)}
                 />
               );
             })}
           </View>
         ) : (
-          <View style={styles.topUpGrid}>
+          <View style={[styles.topUpGrid, layout.isTablet && styles.creditResponsiveGrid]}>
             {topUpPlans.map((planItem) => (
               <TopUpCreditCard
                 key={planItem.id}
                 plan={planItem}
                 selected={selectedPlan.id === planItem.id}
+                style={topUpCreditCardStyle}
                 onPress={() => setSelectedTopUpId(planItem.id)}
               />
             ))}
           </View>
         )
       ) : (
-        <View style={styles.creditChoiceGrid}>
+        <View style={[styles.creditChoiceGrid, layout.isTablet && styles.creditResponsiveGrid]}>
           {isAppleCheckout ? (
             <AppleStoreKitCreditCard
               product={appleStoreKit.subscriptionProduct}
@@ -5607,12 +5681,13 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
               headline="150 credits every month"
               subhead="Auto-renewable monthly subscription"
               description="Renews through your Apple ID. Monthly credits are added once per verified Apple subscription period."
+              style={creditChoiceCardStyle}
               onPress={() => setMode('subscription')}
             />
           ) : (
-            <MonthlyCreditCard plan={subscriptionPlan} selected={mode === 'subscription'} active={activeMonthly} onPress={() => setMode('subscription')} />
+            <MonthlyCreditCard plan={subscriptionPlan} selected={mode === 'subscription'} active={activeMonthly} style={creditChoiceCardStyle} onPress={() => setMode('subscription')} />
           )}
-          <AddMoreCard selected={false} onPress={() => setMode('top_up')} />
+          <AddMoreCard selected={false} style={creditChoiceCardStyle} onPress={() => setMode('top_up')} />
         </View>
       )}
 
@@ -7188,6 +7263,8 @@ function ImageLightbox({ uri, onClose }) {
 }
 
 export default function App() {
+  const { width } = useWindowDimensions();
+  const responsiveLayout = useMemo(() => responsiveLayoutForWindow(width), [width]);
   const [fontsLoaded, fontLoadError] = useFonts(fontAssets);
   const [routeStack, setRouteStack] = useState([{ name: 'home', params: {} }]);
   const [user, setUser] = useState(null);
@@ -7498,10 +7575,11 @@ export default function App() {
   const accountChildRoute = wishlistRoute || ordersRoute || generationHistoryRoute;
 
   return (
+    <ResponsiveLayoutContext.Provider value={responsiveLayout}>
     <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe]}>
       <StatusBar style={welcomeRoute ? 'light' : 'dark'} />
       {authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : <AppHeader onNavigate={guardedNavigate} user={user} compact />}
-      <View style={styles.content}>
+      <View style={[styles.content, responsiveLayout.contentFrameStyle]}>
         <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
           {screen}
         </ScreenErrorBoundary>
@@ -7527,6 +7605,7 @@ export default function App() {
         onDone={completeOnboarding}
       />
     </SafeAreaView>
+    </ResponsiveLayoutContext.Provider>
   );
 }
 
@@ -7604,7 +7683,6 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    maxWidth: 520,
     width: '100%',
     alignSelf: 'center',
     backgroundColor: '#fbf7f6'
@@ -7790,13 +7868,15 @@ const styles = StyleSheet.create({
   },
   bottomNav: {
     width: '100%',
-    maxWidth: 520,
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingTop: 10,
     paddingBottom: Platform.OS === 'ios' ? 22 : 12,
     paddingHorizontal: 10,
     backgroundColor: '#fffdfb'
+  },
+  bottomNavTablet: {
+    paddingHorizontal: 18
   },
   navItem: {
     flex: 1,
@@ -7854,6 +7934,9 @@ const styles = StyleSheet.create({
   homeContent: {
     paddingBottom: screenBottomInset,
     backgroundColor: '#fbf7f6'
+  },
+  homeContentTablet: {
+    paddingBottom: screenBottomInset + 12
   },
   homeTopBar: {
     height: 52,
@@ -7966,9 +8049,16 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingRight: 2
   },
+  homeCategoryTrackTablet: {
+    gap: 18,
+    paddingRight: 8
+  },
   homeCategoryItem: {
     width: 60,
     alignItems: 'center'
+  },
+  homeCategoryItemTablet: {
+    width: 76
   },
   homeCategoryImageFrame: {
     width: 58,
@@ -7983,6 +8073,11 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 7 },
     elevation: 3
+  },
+  homeCategoryImageFrameTablet: {
+    width: 68,
+    height: 68,
+    borderRadius: 34
   },
   homeCategoryImageFrameActive: {
     borderColor: '#b66d70',
@@ -8025,6 +8120,9 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'space-between',
     rowGap: 24
+  },
+  homeCuratedGridTablet: {
+    rowGap: 30
   },
   homeProductCard: {
     width: '47%'
@@ -8129,6 +8227,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '500'
+  },
+  homeJournalIntroTablet: {
+    maxWidth: 520
   },
   homeJournalGrid: {
     marginTop: 18,
@@ -8265,6 +8366,14 @@ const styles = StyleSheet.create({
   categoryRailContent: {
     paddingBottom: 18
   },
+  categoryRailContentTablet: {
+    paddingBottom: 28
+  },
+  categoryRailTablet: {
+    width: 96,
+    maxWidth: 96,
+    flexBasis: 96
+  },
   categoryRailItem: {
     minHeight: 82,
     paddingVertical: 8,
@@ -8328,6 +8437,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 28
   },
+  categoryMainContentTablet: {
+    paddingHorizontal: 24,
+    paddingBottom: 36
+  },
   categoryKickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -8359,6 +8472,9 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'space-between',
     rowGap: 20
+  },
+  categoryTileGridTablet: {
+    rowGap: 26
   },
   categoryTile: {
     width: '31.5%',
@@ -12516,6 +12632,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12
   },
+  customUploadRowTablet: {
+    gap: 16
+  },
   customProfileCard: {
     width: 116,
     height: 232,
@@ -12524,6 +12643,10 @@ const styles = StyleSheet.create({
     borderColor: '#eaded9',
     backgroundColor: '#fffdfb',
     overflow: 'hidden'
+  },
+  customProfileCardTablet: {
+    width: 160,
+    height: 260
   },
   customProfileImage: {
     width: '100%',
@@ -12583,6 +12706,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  customGarmentDropTablet: {
+    height: 260
   },
   customGarmentDropReady: {
     borderStyle: 'solid',
@@ -12906,6 +13032,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 20,
     gap: 14
+  },
+  creditResponsiveGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'stretch'
+  },
+  creditGridCardHalf: {
+    width: '48.8%'
+  },
+  creditGridCardThird: {
+    width: '31.8%'
   },
   creditMandateCard: {
     minHeight: 252,
