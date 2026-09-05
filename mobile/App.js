@@ -41,6 +41,8 @@ import {
 } from './src/storeKitProducts';
 
 const logoSymbol = require('./assets/lookmefy-symbol.png');
+const wardrobeBottomsIcon = require('./assets/wardrobe-bottoms-icon.png');
+const wardrobeFootwearIcon = require('./assets/wardrobe-footwear-icon.png');
 
 const genders = ['men', 'women', 'unisex'];
 const profileGenderOptions = [
@@ -81,8 +83,9 @@ const horizontalScrollProps = {
   scrollEventThrottle: 16
 };
 const homeCategorySnapInterval = 70;
-const productImageAspectRatio = 0.8;
+const productImageAspectRatio = 0.72;
 const avatarCropReferenceSize = 132;
+const wishlistStorageVersion = 'v1';
 const homeHeroSlideIntervalMs = 4000;
 const homeHeroSlides = [
   { key: 'summer', title: 'SUMMER ESSENTIALS', cta: 'SHOP NOW', image: 'homeSliderAtelier', route: 'shop' },
@@ -532,7 +535,7 @@ function productImageSource(product, tryOn) {
 }
 
 function productImageResizeMode(tryOn) {
-  return tryOn?.imageUrl ? 'contain' : 'cover';
+  return 'contain';
 }
 
 function mediaUrlWithVersion(url, version) {
@@ -632,6 +635,11 @@ function sourceSignature(source) {
   if (typeof source === 'number') return `asset:${source}`;
   if (Array.isArray(source)) return source.map(sourceSignature).join(',');
   return source.uri || JSON.stringify(source);
+}
+
+function wishlistStorageKey(user) {
+  const identity = user?.id || user?.phone || user?.email || 'guest';
+  return `lookmefy:wishlist:${wishlistStorageVersion}:${identity}`;
 }
 
 const ResilientImage = memo(function ResilientImage({ source, fallbackSource, style, imageStyle, imageBaseStyle, resizeMode = 'cover', alt, fallbackIcon = 'image-outline', fallbackText }) {
@@ -1120,7 +1128,14 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
       {items.map(([name, icon, label]) => {
         const active = activeRoute === name;
         return (
-          <TouchableOpacity key={name} activeOpacity={0.82} accessibilityRole="tab" accessibilityState={{ selected: active }} style={styles.navItem} onPress={() => onNavigate(name)}>
+          <TouchableOpacity
+            key={name}
+            activeOpacity={0.82}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+            style={styles.navItem}
+            onPress={() => onNavigate(name, name === 'closet' ? { view: 'stylist' } : {})}
+          >
             <View style={[styles.navIconWrap, active && styles.navIconWrapCenter]}>
               <Ionicons name={icon} size={active ? 20 : 21} color={active ? '#111111' : '#8d8682'} />
             </View>
@@ -2592,6 +2607,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
   }
 
   const product = state.product;
+  const isWishlisted = wishlistIds?.has(product.id);
   const originalUri = imageUrl(product.imageUrl);
   const tryOnUri = tryOnImageUrl(tryOn);
   const tryOnVideoUri = tryOnVideoUrl(tryOn);
@@ -2640,8 +2656,14 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
             </Pressable>
           ))}
         </ScrollView>
-        <TouchableOpacity style={styles.productFavoriteButton}>
-          <Ionicons name="heart-outline" size={24} color="#5d5754" />
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={isWishlisted ? 'Remove product from wishlist' : 'Add product to wishlist'}
+          activeOpacity={0.84}
+          style={[styles.productFavoriteButton, isWishlisted && styles.productFavoriteButtonSaved]}
+          onPress={() => onAddToWishlist?.(product)}
+        >
+          <Ionicons name={isWishlisted ? 'heart' : 'heart-outline'} size={24} color={isWishlisted ? '#ffffff' : '#5d5754'} />
         </TouchableOpacity>
         {mediaItems.length > 1 ? (
           <View style={styles.productSwipeHint}>
@@ -3482,6 +3504,7 @@ function AuthEntryScreen({ onNavigate }) {
 }
 
 const closetCategories = ['tops', 'bottoms', 'dresses', 'suits', 'outerwear', 'shoes', 'accessories', 'activewear', 'ethnic', 'other'];
+const closetViews = ['stylist', 'combo', 'add', 'wardrobe', 'looks'];
 const closetOccasions = ['today casual', 'office meeting', 'date night', 'party', 'wedding function', 'college day', 'travel', 'rainy weather'];
 const closetSceneOptions = {
   backdrop: ['neutral studio', 'office lobby', 'cafe', 'outdoor street', 'wedding venue'],
@@ -3489,18 +3512,22 @@ const closetSceneOptions = {
   lighting: ['natural light', 'studio softbox', 'evening warm', 'bright daylight']
 };
 const closetComboSlots = [
-  { key: 'topwear', label: 'Topwear', helper: 'Shirts, tops, kurtas', short: 'To', categories: ['tops', 'outerwear', 'ethnic'] },
+  { key: 'topwear', label: 'Topwear', helper: 'Shirts, tops, kurtas', short: 'To', categories: ['tops', 'dresses', 'suits', 'outerwear', 'activewear', 'ethnic'] },
   { key: 'bottomwear', label: 'Bottomwear', helper: 'Pants, denim, skirts', short: 'Bo', categories: ['bottoms'] },
   { key: 'goggles', label: 'Goggles', helper: 'Glasses and shades', short: 'Go', categories: ['accessories'], keywords: ['goggle', 'goggles', 'glass', 'glasses', 'sunglass', 'eyewear'] },
+  { key: 'watch', label: 'Watch', helper: 'Watches and wristwear', short: 'Wa', categories: ['accessories'], keywords: ['watch', 'watches', 'wristwatch', 'wristwear'] },
   { key: 'cap', label: 'Cap', helper: 'Caps and hats', short: 'Ca', categories: ['accessories'], keywords: ['cap', 'hat'] },
   { key: 'footwear', label: 'Footwear', helper: 'Shoes, boots, sandals', short: 'Fo', categories: ['shoes'] }
 ];
 const wardrobeCategoryTabs = [
-  { key: 'tops', label: 'Tops', icon: 'shirt-outline', slot: 'topwear' },
-  { key: 'bottoms', label: 'Bottoms', icon: 'accessibility-outline', slot: 'bottomwear' },
-  { key: 'outerwear', label: 'Outerwear', icon: 'body-outline', slot: 'topwear' },
-  { key: 'shoes', label: 'Shoes', icon: 'walk-outline', slot: 'footwear' },
-  { key: 'accessories', label: 'Accessori', icon: 'sparkles-outline', slot: 'goggles' }
+  { key: 'tops', label: 'Tops', icon: 'shirt-outline', slot: 'topwear', side: 'left' },
+  { key: 'bottoms', label: 'Bottoms', icon: 'pants', slot: 'bottomwear', side: 'left' },
+  { key: 'outerwear', label: 'Outerwear', icon: 'body-outline', slot: 'topwear', side: 'left' },
+  { key: 'shoes', label: 'Footwear', icon: 'shoe', slot: 'footwear', side: 'left' },
+  { key: 'accessories', label: 'Accessories', icon: 'sparkles-outline', slot: 'goggles', side: 'right', filter: 'accessories' },
+  { key: 'glasses', label: 'Glasses', icon: 'glasses-outline', slot: 'goggles', side: 'right', filter: 'accessories' },
+  { key: 'watches', label: 'Watches', icon: 'watch-outline', slot: 'watch', side: 'right', filter: 'accessories' },
+  { key: 'bags-hats', label: 'Bags & Hats', icon: 'bag-handle-outline', slot: 'cap', side: 'right', filter: 'accessories' }
 ];
 const wardrobeFallbackRecommendations = [
   { title: 'Urban Sophisticate', images: ['trending-2.jpg', 'category-3.jpg', 'category-6.jpg'] },
@@ -3562,6 +3589,92 @@ function optionsForSlot(slot, items) {
   return exactOptions.length ? exactOptions : items.filter((item) => slotMatchesItem(slot, item));
 }
 
+function wardrobeUploadCategory(tab) {
+  const category = tab?.filter || tab?.key || 'tops';
+  return closetCategories.includes(category) ? category : 'accessories';
+}
+
+function wardrobeTabItemText(item = {}) {
+  return [item.name, item.category, item.color, item.formality, ...(item.tags || []), ...(item.occasions || [])]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function wardrobeTabMatchesItem(tab, item = {}) {
+  if (!tab) return true;
+  const category = wardrobeUploadCategory(tab);
+  if (category !== 'all' && item.category !== category) return false;
+  const text = wardrobeTabItemText(item);
+  if (tab.key === 'glasses') return /\b(glasses?|goggles?|sunglasses?|eyewear|spectacles?)\b/.test(text);
+  if (tab.key === 'watches') return /\b(watches?|wrist\s*watches?|wristwatch|wristwear)\b/.test(text);
+  if (tab.key === 'bags-hats') return /\b(bags?|purses?|handbags?|caps?|hats?)\b/.test(text);
+  return true;
+}
+
+function selectedIdsFromComboSlots(slots = {}) {
+  const ids = closetComboSlots.map((slot) => slots[slot.key]).filter(Boolean);
+  return [...new Set(ids)];
+}
+
+function tryOnSelectionsFromWardrobe(slotItems = [], fallbackItems = []) {
+  const used = new Set();
+  const selections = slotItems
+    .map((slot) => {
+      const item = slot.selected || slot.options.find((option) => !used.has(option.id));
+      if (!item?.id || used.has(item.id)) return null;
+      used.add(item.id);
+      return { slot: slot.key, label: slot.label, item };
+    })
+    .filter(Boolean);
+  if (selections.length) return selections;
+  return fallbackItems.slice(0, 5).map((item, index) => ({ slot: `fallback-${index}`, label: titleCase(item.category || 'Item'), item }));
+}
+
+function wardrobeTryOnSlotForItem(item = {}) {
+  const category = String(item.category || '').toLowerCase();
+  const text = [item.name, category, item.color, item.formality, ...(item.tags || []), ...(item.occasions || [])]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (category === 'shoes') return 'footwear';
+  if (category === 'bottoms') return 'bottomwear';
+  if (category === 'outerwear') return 'outerwear';
+  if (category === 'dresses' || category === 'suits') return category;
+  if (['tops', 'activewear', 'ethnic'].includes(category)) return 'topwear';
+  if (category === 'accessories') {
+    if (/\b(watches?|wrist\s*watches?|wristwear)\b/.test(text)) return 'watch';
+    if (/\b(glasses?|goggles?|sunglasses?|eyewear|spectacles?)\b/.test(text)) return 'goggles';
+    if (/\b(caps?|hats?|bags?|purses?|handbags?)\b/.test(text)) return 'cap';
+    return 'accessories';
+  }
+  return category || 'selection';
+}
+
+function wardrobeItemSlotsFromItems(entries = []) {
+  return entries.map((item, index) => ({
+    itemId: item.id,
+    slot: wardrobeTryOnSlotForItem(item),
+    label: titleCase(item.category || `Item ${index + 1}`)
+  }));
+}
+
+function closetCategoryEntryLabel(category) {
+  const labels = {
+    accessories: 'Accessory',
+    shoes: 'Shoe',
+    bottoms: 'Bottom',
+    dresses: 'Dress',
+    suits: 'Suit',
+    tops: 'Top',
+    outerwear: 'Outerwear',
+    activewear: 'Activewear',
+    ethnic: 'Ethnic',
+    other: 'Item'
+  };
+  return labels[category] || titleCase(category || 'Item');
+}
+
 function ClosetDetectionCard({ detection, fields, compact = false }) {
   if (!detection) return null;
   const loading = detection.status === 'loading';
@@ -3600,14 +3713,16 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
   const addStudioScrollRef = useRef(null);
   const emptyCloset = { items: [], outfits: [], suggestions: [], stats: {} };
   const closet = useApiState('/closet', token, Boolean(user), emptyCloset);
+  const initialItemCategory = closetCategories.includes(initial.category) ? initial.category : initial.view === 'add' ? 'dresses' : 'tops';
   const [closetView, setClosetView] = useState(initial.view === 'add' ? 'add' : 'stylist');
   const [selectedIds, setSelectedIds] = useState([]);
   const [comboSlots, setComboSlots] = useState({});
   const [activeSlot, setActiveSlot] = useState('topwear');
   const [filter, setFilter] = useState('all');
+  const [activeWardrobeTabKey, setActiveWardrobeTabKey] = useState('');
   const [itemPhoto, setItemPhoto] = useState(null);
   const [itemName, setItemName] = useState('');
-  const [itemCategory, setItemCategory] = useState(initial.view === 'add' ? 'dresses' : 'tops');
+  const [itemCategory, setItemCategory] = useState(initialItemCategory);
   const [itemColor, setItemColor] = useState('');
   const [itemFabric, setItemFabric] = useState('');
   const [itemPattern, setItemPattern] = useState('');
@@ -3628,26 +3743,50 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
     { role: 'assistant', text: 'Ask what to wear today, for an occasion, or which pants fit a shirt from your closet.' }
   ]);
   const [suggestionOverrides, setSuggestionOverrides] = useState(null);
+  const [savedClosetItems, setSavedClosetItems] = useState([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
   const [lightbox, setLightbox] = useState(null);
   const wardrobeUploadTourTarget = useTourTarget('wardrobe-upload', registerTourTarget, { request: tourFocusRequest, scrollRef: addStudioScrollRef, scrollOffset: 116 });
 
   useEffect(() => {
-    if (initial.view === 'add') setClosetView('add');
-    else setClosetView((current) => current === 'add' ? 'stylist' : current);
-  }, [initial.view]);
+    if (closetViews.includes(initial.view)) setClosetView(initial.view);
+    else setClosetView('stylist');
+    if (!initial.view || initial.view === 'wardrobe') {
+      setSelectedIds([]);
+      setComboSlots({});
+    }
+    if (closetCategories.includes(initial.category)) {
+      setFilter(initial.category);
+      setItemCategory(initial.category);
+    }
+    if (initial.type && wardrobeCategoryTabs.some((tab) => tab.key === initial.type)) {
+      setActiveWardrobeTabKey(initial.type);
+    } else if (initial.category) {
+      setActiveWardrobeTabKey('');
+    }
+  }, [initial.category, initial.type, initial.view]);
 
   if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
 
   const isAddStudio = initial.view === 'add' || closetView === 'add';
 
-  const items = closet.data.items || [];
+  const closetItems = closet.data.items || [];
+  const savedClosetItemIds = new Set(savedClosetItems.map((item) => item.id).filter(Boolean));
+  const items = [
+    ...savedClosetItems,
+    ...closetItems.filter((item) => !savedClosetItemIds.has(item.id))
+  ];
   const outfits = closet.data.outfits || [];
   const suggestions = suggestionOverrides || closet.data.suggestions || [];
   const latestOutfit = outfits[0];
   const selectedItems = selectedIds.map((id) => items.find((item) => item.id === id)).filter(Boolean);
-  const filteredItems = items.filter((item) => filter === 'all' || item.category === filter);
+  const activeWardrobeTab = wardrobeCategoryTabs.find((tab) => tab.key === activeWardrobeTabKey) || null;
+  const filteredItems = items.filter((item) => {
+    if (filter !== 'all' && item.category !== filter) return false;
+    return wardrobeTabMatchesItem(activeWardrobeTab, item);
+  });
+  const activeAddSectionItems = items.filter((item) => item.category === itemCategory).slice(0, 8);
   const selectedKey = selectedIds.slice().sort().join(':');
   const comboPreviewItems = (selectedItems.length ? selectedItems : items.filter((item) => ['tops', 'bottoms', 'suits', 'outerwear', 'shoes'].includes(item.category))).slice(0, 4);
   const mainPreview = user.bodyPhotoUrl || latestOutfit?.imageUrl || comboPreviewItems[0]?.imageUrl || null;
@@ -3695,16 +3834,21 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
       items: items.slice(0, 4)
     }
   ];
-  const activeWardrobeCategory = wardrobeCategoryTabs.find((tab) => tab.key === filter) || wardrobeCategoryTabs.find((tab) => tab.slot === activeSlot) || wardrobeCategoryTabs[0];
   const wardrobePreviewSource = mainPreview
     ? { uri: imageUrl(mainPreview) }
     : null;
-  const comboSlotSelectedIds = [...new Set(Object.values(comboSlots).filter(Boolean))];
-  const tryThisLookIds = selectedIds.length
-    ? selectedIds
-    : comboSlotSelectedIds.length
-      ? comboSlotSelectedIds
-      : comboPreviewItems.map((item) => item.id).filter(Boolean);
+  const wardrobeLeftCategoryTabs = wardrobeCategoryTabs.filter((tab) => tab.side !== 'right');
+  const wardrobeRightCategoryTabs = wardrobeCategoryTabs.filter((tab) => tab.side === 'right');
+  const wardrobeFilterLabel = activeWardrobeTab?.label || (filter === 'all' ? 'All Items' : titleCase(filter));
+  const wardrobeFilterTitle = filter === 'all' && !activeWardrobeTab ? 'Your Closet' : `${wardrobeFilterLabel} Entries`;
+  const comboSlotSelectedIds = selectedIdsFromComboSlots(comboSlots);
+  const tryThisSelections = tryOnSelectionsFromWardrobe(slotItems, comboPreviewItems);
+  const tryThisLookIds = tryThisSelections.map((selection) => selection.item.id).filter(Boolean);
+  const tryThisItemSlots = tryThisSelections.map((selection) => ({
+    slot: selection.slot,
+    label: selection.label,
+    itemId: selection.item.id
+  }));
   const wardrobePreviewHeight = clamp(height * 0.62, 470, 620);
   const recommendationSource = suggestions.slice(0, 3);
   const detectionSummaryFields = [
@@ -3718,10 +3862,11 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
   ].filter(([, value]) => String(value || '').trim());
 
   const toggleItem = (id) => {
+    if (selectedIds.includes(id)) setComboSlots((slots) => Object.fromEntries(Object.entries(slots).filter(([, itemId]) => itemId !== id)));
     setSelectedIds((current) => current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id].slice(-5));
   };
 
-  const selectedIdsFromSlots = (slots) => [...new Set(Object.values(slots).filter(Boolean))];
+  const selectedIdsFromSlots = selectedIdsFromComboSlots;
 
   const slotsFromItems = (entries = []) => {
     const next = {};
@@ -3770,8 +3915,37 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
     });
   };
 
+  const openWardrobeCategory = (tab) => {
+    const category = wardrobeUploadCategory(tab);
+    setActiveSlot(tab.slot);
+    setFilter(category);
+    setActiveWardrobeTabKey(tab.key);
+    setItemCategory(category);
+    setSelectedIds([]);
+    setComboSlots({});
+    setClosetView('wardrobe');
+    onNavigate('closet', { view: 'wardrobe', category, type: tab.key });
+  };
+
+  const switchClosetView = (nextView) => {
+    if (nextView === 'stylist' || nextView === 'wardrobe') {
+      setSelectedIds([]);
+      setComboSlots({});
+    }
+    setClosetView(nextView);
+  };
+
+  const openSavedAddSectionItem = (item) => {
+    const slot = closetComboSlots.find((entry) => slotMatchesItem(entry, item));
+    if (slot) chooseSlotItem(slot.key, item);
+    setFilter(item.category);
+    setActiveWardrobeTabKey('');
+    setClosetView('wardrobe');
+    onNavigate('closet', { view: 'wardrobe', category: item.category });
+  };
+
   const applyDetectedItemFields = (fields = {}) => {
-    const nextCategory = closetCategories.includes(fields.category) ? fields.category : '';
+    const nextCategory = closetCategories.includes(fields.category) && fields.category !== 'other' ? fields.category : '';
     if (fields.name) setItemName(fields.name);
     if (nextCategory) setItemCategory(nextCategory);
     if (fields.color) setItemColor(fields.color);
@@ -3811,7 +3985,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
       const missingRoute = isMissingRouteError(error.message);
       const detectionMessage = missingRoute
         ? 'Detection service is not active on the running backend. Restart the backend, then try again.'
-        : error.message || 'AI detection is unavailable. You can still fill the details manually.';
+        : 'AI detection is unavailable right now. You can still fill the details manually and save this item.';
       setItemDetection({
         status: 'error',
         message: detectionMessage
@@ -3882,7 +4056,9 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
       form.append('formality', itemFormality);
       form.append('occasions', itemOccasions);
       form.append('tags', itemTags);
-      await api('/closet/items', { method: 'POST', body: form });
+      const data = await api('/closet/items', { method: 'POST', body: form });
+      const savedItem = data.item;
+      const savedCategory = savedItem?.category || itemCategory;
       setSuggestionOverrides(null);
       setItemPhoto(null);
       setItemDetection(null);
@@ -3894,8 +4070,14 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
       setItemFormality('any');
       setItemOccasions('');
       setItemTags('');
-      setMessage('Closet item added.');
+      if (savedItem?.id) setSavedClosetItems((current) => [savedItem, ...current.filter((item) => item.id !== savedItem.id)]);
+      setComboSlots({});
+      setSelectedIds([]);
+      setFilter(savedCategory);
+      setClosetView('wardrobe');
+      setMessage(`${savedItem?.name || 'Closet item'} added to ${titleCase(savedCategory)}.`);
       closet.reload();
+      onNavigate('closet', { view: 'wardrobe', category: savedCategory });
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -3914,12 +4096,15 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
       return;
     }
     setBusy('generate');
-    setMessage('Generating your closet look with FitRoom...');
+    setMessage('Generating your closet look...');
     try {
       const data = await api('/closet/outfits/generate', {
         method: 'POST',
+        timeoutMs: 240000,
+        jobTimeoutMs: 300000,
         body: JSON.stringify({
           itemIds: ids,
+          itemSlots: details.itemSlots || ids.map((id, index) => ({ itemId: id, slot: `selection-${index}` })),
           occasion: details.occasion || occasion,
           weather,
           mood,
@@ -3934,7 +4119,12 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
       if (data.user) setUser(data.user);
       setSuggestionOverrides(null);
       setMessage('Closet look is ready.');
-      setSelectedIds(ids);
+      if (details.clearSelectionAfterGenerate) {
+        setSelectedIds([]);
+        setComboSlots({});
+      } else {
+        setSelectedIds(ids);
+      }
       closet.reload();
       if (data.outfit?.imageUrl) setLightbox(imageUrl(data.outfit.imageUrl));
     } catch (error) {
@@ -3942,6 +4132,20 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
     } finally {
       setBusy('');
     }
+  };
+
+  const generateSelectedWardrobeLook = () => {
+    const ids = selectedIds.filter((id) => items.some((item) => item.id === id));
+    const entries = ids.map((id) => items.find((item) => item.id === id)).filter(Boolean);
+    setComboSlots({});
+    setSelectedIds([]);
+    setClosetView('stylist');
+    onNavigate('closet', { view: 'stylist' });
+    generateOutfit(ids, {
+      title: 'My wardrobe look',
+      itemSlots: wardrobeItemSlotsFromItems(entries),
+      clearSelectionAfterGenerate: true
+    });
   };
 
   const askForSuggestions = async (nextOccasion = occasion) => {
@@ -3973,7 +4177,6 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
       const reply = data.reply || 'Look ideas are ready.';
       setChat((current) => [...current, { role: 'assistant', text: reply }]);
       setMessage(reply);
-      if (data.suggestions?.[0]) setSelectedIds(data.suggestions[0].itemIds || []);
       if (data.suggestions) setSuggestionOverrides(data.suggestions);
       setStylistText('');
     } catch (error) {
@@ -3991,6 +4194,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
     try {
       await api(`/closet/items/${encodeURIComponent(id)}`, { method: 'DELETE' });
       setSuggestionOverrides(null);
+      setSavedClosetItems((current) => current.filter((item) => item.id !== id));
       setSelectedIds((current) => current.filter((itemId) => itemId !== id));
       setComboSlots((current) => Object.fromEntries(Object.entries(current).filter(([, itemId]) => itemId !== id)));
       setMessage('Closet item removed.');
@@ -4023,14 +4227,35 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
     setItemCategory(order[(currentIndex + 1) % order.length]);
   };
 
+  const renderWardrobeCategoryButton = (tab) => {
+    const renderCategoryIcon = () => {
+      if (tab.icon === 'pants') return <Image source={wardrobeBottomsIcon} style={styles.wardrobeCategoryAssetIcon} resizeMode="contain" />;
+      if (tab.icon === 'shoe') return <Image source={wardrobeFootwearIcon} style={styles.wardrobeCategoryAssetIcon} resizeMode="contain" />;
+      return <Ionicons name={tab.icon} size={28} color="#444444" />;
+    };
+    return (
+      <Pressable
+        key={tab.key}
+        style={styles.wardrobeCategoryButton}
+        onPress={() => openWardrobeCategory(tab)}
+      >
+        {({ pressed }) => (
+          <>
+            <View style={[styles.wardrobeCategoryIcon, pressed && styles.wardrobeCategoryIconActive]}>
+              {renderCategoryIcon()}
+            </View>
+            <Text style={[styles.wardrobeCategoryLabel, pressed && styles.wardrobeCategoryLabelActive]} numberOfLines={1}>{tab.label}</Text>
+          </>
+        )}
+      </Pressable>
+    );
+  };
+
   if (isAddStudio) {
     return (
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.addStudioScreen}>
         <ScrollView ref={addStudioScrollRef} contentContainerStyle={styles.addStudioContent} {...screenScrollProps}>
           <View style={styles.addStudioTopBar}>
-            <TouchableOpacity style={styles.addStudioTopButton} onPress={discardAddDraft}>
-              <Ionicons name="close" size={24} color="#171412" />
-            </TouchableOpacity>
             <BrandLogo compact style={styles.addStudioBrandLogo} />
             <TouchableOpacity style={styles.addStudioTopButton} onPress={() => onNavigate('closet')}>
               <Ionicons name="cube-outline" size={22} color="#171412" />
@@ -4045,7 +4270,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
           <TouchableOpacity ref={wardrobeUploadTourTarget.ref} onLayout={wardrobeUploadTourTarget.onLayout} style={styles.addStudioUploadBox} activeOpacity={0.84} onPress={pickClosetItemPhoto}>
             {itemPhoto?.uri ? (
               <>
-                <Image source={{ uri: itemPhoto.uri }} style={styles.addStudioUploadImage} resizeMode="cover" />
+                <ResilientImage source={{ uri: itemPhoto.uri }} style={styles.addStudioUploadImage} resizeMode="cover" fallbackIcon="shirt-outline" />
                 {busy === 'analyze-item' ? (
                   <View style={styles.addStudioAnalyzeOverlay}>
                     <ActivityIndicator size="small" color="#ffffff" />
@@ -4068,7 +4293,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
             </TouchableOpacity>
             {itemPhoto?.uri ? [({ uri: itemPhoto.uri })].map((source, index) => (
               <View key={index} style={styles.addStudioThumbWrap}>
-                <Image source={source} style={styles.addStudioThumbImage} resizeMode="cover" />
+                <ResilientImage source={source} style={styles.addStudioThumbImage} resizeMode="cover" fallbackIcon="shirt-outline" />
                 <TouchableOpacity style={styles.addStudioThumbClose} onPress={clearItemPhoto}>
                   <Ionicons name="close" size={12} color="#6c625e" />
                 </TouchableOpacity>
@@ -4079,8 +4304,35 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
           <ClosetDetectionCard detection={itemDetection} fields={detectionSummaryFields} />
 
           <View style={styles.addStudioArchiveHead}>
-            <Text style={styles.addStudioArchiveTitle}>Archive Entry: {titleCase(itemCategory || 'Dress').replace(/s$/, '')}</Text>
+            <Text style={styles.addStudioArchiveTitle}>Archive Entry: {closetCategoryEntryLabel(itemCategory || 'dresses')}</Text>
             <View style={styles.addStudioArchiveLine} />
+          </View>
+
+          <View style={styles.addStudioSavedSection}>
+            <View style={styles.addStudioSavedHead}>
+              <Text style={styles.addStudioSavedTitle}>Saved {titleCase(itemCategory || 'items')}</Text>
+              <Text style={styles.addStudioSavedCount}>{activeAddSectionItems.length}</Text>
+            </View>
+            {closet.loading && !activeAddSectionItems.length ? (
+              <View style={styles.addStudioSavedEmpty}>
+                <ActivityIndicator size="small" color="#9b5658" />
+              </View>
+            ) : activeAddSectionItems.length ? (
+              <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.addStudioSavedTrack}>
+                {activeAddSectionItems.map((item) => (
+                  <TouchableOpacity key={item.id} style={styles.addStudioSavedCard} activeOpacity={0.86} onPress={() => openSavedAddSectionItem(item)}>
+                    <ResilientImage source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : null} style={styles.addStudioSavedImage} resizeMode="cover" fallbackIcon="shirt-outline" />
+                    <Text style={styles.addStudioSavedName} numberOfLines={1}>{item.name}</Text>
+                    <Text style={styles.addStudioSavedMeta} numberOfLines={1}>{[item.color, item.category].filter(Boolean).map(titleCase).join(' | ')}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={styles.addStudioSavedEmpty}>
+                <Ionicons name="shirt-outline" size={22} color="#9b5658" />
+                <Text style={styles.addStudioSavedEmptyText}>No saved {titleCase(itemCategory || 'items')} yet</Text>
+              </View>
+            )}
           </View>
 
           <Text style={styles.addStudioSectionLabel}>ITEM SPECIFICATIONS</Text>
@@ -4192,43 +4444,29 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
           </TouchableOpacity>
         </View>
 
-        <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.wardrobeCategoryTrack}>
-          {wardrobeCategoryTabs.map((tab) => {
-            const active = activeWardrobeCategory.key === tab.key;
-            return (
-              <TouchableOpacity
-                key={tab.key}
-                style={styles.wardrobeCategoryButton}
-                activeOpacity={0.82}
-                onPress={() => {
-                  setActiveSlot(tab.slot);
-                  setFilter(tab.key);
-                }}
-              >
-                <View style={[styles.wardrobeCategoryIcon, active && styles.wardrobeCategoryIconActive]}>
-                  <Ionicons name={tab.icon} size={28} color="#444444" />
-                </View>
-                <Text style={[styles.wardrobeCategoryLabel, active && styles.wardrobeCategoryLabelActive]}>{tab.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
         {closetView === 'stylist' ? (
           <>
             <View style={styles.wardrobePreviewWrap}>
-              <Pressable style={[styles.wardrobePreviewCard, { height: wardrobePreviewHeight }]} onPress={() => mainPreview && setLightbox(imageUrl(mainPreview))}>
-                {wardrobePreviewSource ? (
-                  <ResilientImage source={wardrobePreviewSource} style={styles.wardrobePreviewImage} resizeMode="contain" fallbackIcon="shirt-outline" />
-                ) : null}
-                {busy === 'generate' ? <View style={styles.previewGenerating}><ActivityIndicator color="#fff" /><Text style={styles.previewGeneratingText}>Generating look</Text></View> : null}
-              </Pressable>
+              <View style={styles.wardrobePreviewStage}>
+                <Pressable style={[styles.wardrobePreviewCard, { height: wardrobePreviewHeight }]} onPress={() => mainPreview && setLightbox(imageUrl(mainPreview))}>
+                  {wardrobePreviewSource ? (
+                    <ResilientImage source={wardrobePreviewSource} style={styles.wardrobePreviewImage} resizeMode="contain" fallbackIcon="shirt-outline" />
+                  ) : null}
+                  {busy === 'generate' ? <View style={styles.previewGenerating}><ActivityIndicator color="#fff" /><Text style={styles.previewGeneratingText}>Generating look</Text></View> : null}
+                </Pressable>
+                <View style={[styles.wardrobeCategoryRail, styles.wardrobeCategoryRailLeft]}>
+                  {wardrobeLeftCategoryTabs.map(renderWardrobeCategoryButton)}
+                </View>
+                <View style={[styles.wardrobeCategoryRail, styles.wardrobeCategoryRailRight]}>
+                  {wardrobeRightCategoryTabs.map(renderWardrobeCategoryButton)}
+                </View>
+              </View>
               <TouchableOpacity
                 style={[styles.wardrobeTryButton, (!tryThisLookIds.length || busy === 'generate') && styles.disabledButton]}
                 disabled={!tryThisLookIds.length || busy === 'generate'}
-                onPress={() => generateOutfit(tryThisLookIds, { title: 'My wardrobe look' })}
+                onPress={() => generateOutfit(tryThisLookIds, { title: 'My wardrobe look', itemSlots: tryThisItemSlots })}
               >
-                <Text style={styles.wardrobeTryText}>{busy === 'generate' ? 'Generating...' : 'Try This Look'}</Text>
+                <Text style={styles.wardrobeTryText}>{busy === 'generate' ? 'Generating...' : 'Try On'}</Text>
               </TouchableOpacity>
             </View>
 
@@ -4265,7 +4503,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
             <FilterChips
               selected={closetView}
               options={[['stylist', 'Preview'], ['combo', 'Combo'], ['add', 'Add'], ['wardrobe', 'Wardrobe'], ['looks', 'Looks']]}
-              onSelect={setClosetView}
+              onSelect={switchClosetView}
               compact
             />
           </View>
@@ -4274,7 +4512,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
         {closetView === 'add' ? <View style={styles.closetPanel}>
           <Text style={styles.sectionTitle}>Add Clothing</Text>
           <TouchableOpacity style={styles.uploadBox} onPress={pickClosetItemPhoto}>
-            {itemPhoto?.uri ? <Image source={{ uri: itemPhoto.uri }} style={styles.uploadPreview} /> : <Ionicons name="cloud-upload-outline" size={30} color="#0f766e" />}
+            {itemPhoto?.uri ? <ResilientImage source={{ uri: itemPhoto.uri }} style={styles.uploadPreview} resizeMode="cover" fallbackIcon="shirt-outline" /> : <Ionicons name="cloud-upload-outline" size={30} color="#0f766e" />}
             <View style={styles.uploadCopy}>
               <Text style={styles.uploadTitle}>{busy === 'analyze-item' ? 'Analyzing clothing photo' : itemPhoto ? 'Closet photo selected' : 'Upload clothing photo'}</Text>
               <Text style={styles.photoGuideText}>{itemPhoto ? 'Detected details will be filled below for review.' : 'Use one clear item per photo for best combo selection.'}</Text>
@@ -4444,13 +4682,23 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
         ) : null}
         {closetView === 'wardrobe' ? <View style={styles.closetPanel}>
           <View style={styles.panelHeaderRow}>
-            <View>
-              <Text style={styles.sectionTitle}>Your Closet</Text>
-              <Text style={styles.muted}>Browse, save favorites, remove old items, or send selected pieces to combo.</Text>
+            <View style={styles.wardrobeHeaderCopy}>
+              <Text style={styles.sectionTitle}>{wardrobeFilterTitle}</Text>
+              <Text style={styles.muted}>{filter === 'all' && !activeWardrobeTab ? 'Browse, save favorites, remove old items, or send selected pieces to combo.' : `Saved ${wardrobeFilterLabel.toLowerCase()} from your wardrobe.`}</Text>
             </View>
-            {selectedIds.length ? <TouchableOpacity style={styles.smallOutlineButton} onPress={() => setClosetView('combo')}><Text style={styles.smallOutlineText}>Build ({selectedIds.length})</Text></TouchableOpacity> : null}
+            <View style={styles.wardrobeHeaderActions}>
+              {selectedIds.length ? <TouchableOpacity style={styles.smallOutlineButton} onPress={() => setClosetView('combo')}><Text style={styles.smallOutlineText}>Build ({selectedIds.length})</Text></TouchableOpacity> : null}
+            </View>
           </View>
-          <FilterChips selected={filter} options={[['all', 'All'], ...closetCategories.map((item) => [item, titleCase(item)])]} onSelect={setFilter} compact />
+          <FilterChips
+            selected={filter}
+            options={[['all', 'All'], ...closetCategories.map((item) => [item, titleCase(item)])]}
+            onSelect={(nextFilter) => {
+              setFilter(nextFilter);
+              setActiveWardrobeTabKey('');
+            }}
+            compact
+          />
         </View> : null}
         {closetView === 'wardrobe' || closetView === 'combo' ? closet.loading ? <WardrobeGridSkeleton /> : items.length ? (
           <View style={styles.closetGrid}>
@@ -4480,6 +4728,20 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
             ) : null}
           </View>
         ) : null : null}
+        {closetView === 'wardrobe' && items.length ? (
+          <View style={styles.wardrobeGenerateFooter}>
+            <TouchableOpacity
+              style={[styles.wardrobeGenerateLookButton, (!selectedIds.length || busy === 'generate') && styles.disabledButton]}
+              activeOpacity={0.88}
+              disabled={!selectedIds.length || busy === 'generate'}
+              onPress={generateSelectedWardrobeLook}
+            >
+              <Ionicons name="sparkles-outline" size={20} color="#ffffff" />
+              <Text style={styles.wardrobeGenerateLookText}>{busy === 'generate' ? 'GENERATING...' : 'GENERATE LOOK'}</Text>
+              {selectedIds.length ? <Text style={styles.wardrobeGenerateLookCount}>{selectedIds.length}</Text> : null}
+            </TouchableOpacity>
+          </View>
+        ) : null}
         {closetView === 'looks' ? (
           <View style={styles.looksList}>
             {outfits.map((outfit) => (
@@ -7271,6 +7533,7 @@ export default function App() {
   const [token, setToken] = useState(null);
   const [ready, setReady] = useState(false);
   const [wishlistProducts, setWishlistProducts] = useState([]);
+  const [wishlistReady, setWishlistReady] = useState(false);
   const [authPrompt, setAuthPrompt] = useState(null);
   const [onboardingVisible, setOnboardingVisible] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
@@ -7280,7 +7543,15 @@ export default function App() {
   const [aiStudioMessages, setAiStudioMessages] = useState([]);
   const [aiStudioTryOns, setAiStudioTryOns] = useState({});
   const [aiStudioTryOnErrors, setAiStudioTryOnErrors] = useState({});
-  const wishlistIds = useMemo(() => new Set(wishlistProducts.map((product) => product.id)), [wishlistProducts]);
+  const wishlistIds = useMemo(() => {
+    const ids = new Set();
+    wishlistProducts.forEach((product) => {
+      if (product?.id == null) return;
+      ids.add(product.id);
+      ids.add(String(product.id));
+    });
+    return ids;
+  }, [wishlistProducts]);
 
   const currentRoute = normalizeRoute(routeStack[routeStack.length - 1]?.name, routeStack[routeStack.length - 1]?.params);
   const routeParamsKey = JSON.stringify(currentRoute.params || {});
@@ -7355,6 +7626,35 @@ export default function App() {
     });
     return true;
   }, [routeStack.length]);
+  useEffect(() => {
+    let alive = true;
+    if (!user) {
+      setWishlistProducts([]);
+      setWishlistReady(false);
+      return undefined;
+    }
+    setWishlistReady(false);
+    AsyncStorage.getItem(wishlistStorageKey(user))
+      .then((raw) => {
+        if (!alive) return;
+        const parsed = raw ? JSON.parse(raw) : [];
+        const products = Array.isArray(parsed) ? parsed.map((item) => normalizeProduct(item)).filter((item) => item?.id) : [];
+        setWishlistProducts(products);
+        setWishlistReady(true);
+      })
+      .catch(() => {
+        if (alive) setWishlistReady(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [user?.id, user?.phone, user?.email]);
+
+  useEffect(() => {
+    if (!user || !wishlistReady) return;
+    AsyncStorage.setItem(wishlistStorageKey(user), JSON.stringify(wishlistProducts.slice(0, 100))).catch(() => {});
+  }, [user, user?.id, user?.phone, user?.email, wishlistProducts, wishlistReady]);
+
   const addToWishlist = useCallback((product) => {
     if (!product?.id) return;
     if (!user) {
@@ -7362,8 +7662,8 @@ export default function App() {
       return;
     }
     setWishlistProducts((current) => {
-      if (current.some((item) => item.id === product.id)) return current.filter((item) => item.id !== product.id);
-      return [product, ...current];
+      if (current.some((item) => String(item.id) === String(product.id))) return current.filter((item) => String(item.id) !== String(product.id));
+      return [normalizeProduct(product), ...current].slice(0, 100);
     });
   }, [requestAuth, user]);
 
@@ -8986,41 +9286,74 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
     gap: 16
   },
+  wardrobeCategoryRail: {
+    position: 'absolute',
+    top: 22,
+    bottom: 22,
+    justifyContent: 'space-evenly',
+    alignItems: 'center',
+    zIndex: 3
+  },
+  wardrobeCategoryRailLeft: {
+    left: 10
+  },
+  wardrobeCategoryRailRight: {
+    right: 10
+  },
   wardrobeCategoryButton: {
-    width: 64,
+    width: 88,
     alignItems: 'center'
   },
   wardrobeCategoryIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
     borderWidth: 1,
-    borderColor: '#ebe6e3',
-    backgroundColor: '#ffffff',
+    borderColor: 'rgba(255,255,255,0.86)',
+    backgroundColor: 'rgba(255,255,255,0.94)',
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2
   },
   wardrobeCategoryIconActive: {
     borderWidth: 3,
-    borderColor: '#9b5658'
+    borderColor: '#a84f59'
+  },
+  wardrobeCategoryAssetIcon: {
+    width: 30,
+    height: 30
   },
   wardrobeCategoryLabel: {
     ...typography.caption,
-    marginTop: 8,
-    color: '#444140',
+    marginTop: 6,
+    minHeight: 24,
+    maxWidth: 84,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    color: '#292625',
     textAlign: 'center',
     fontSize: 11,
     lineHeight: 14,
-    fontWeight: '500'
+    fontWeight: '700'
   },
   wardrobeCategoryLabelActive: {
-    color: '#111111',
+    color: '#a84f59',
     fontFamily: fontFamilies.bodyBold,
     fontWeight: '700'
   },
   wardrobePreviewWrap: {
     marginHorizontal: 18,
     gap: 16
+  },
+  wardrobePreviewStage: {
+    position: 'relative'
   },
   wardrobePreviewCard: {
     width: '100%',
@@ -9039,13 +9372,13 @@ const styles = StyleSheet.create({
   },
   wardrobeTryButton: {
     alignSelf: 'center',
-    minHeight: 44,
-    minWidth: 164,
-    borderRadius: 22,
+    minHeight: 42,
+    minWidth: 112,
+    borderRadius: 21,
     backgroundColor: '#050505',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 22
+    paddingHorizontal: 20
   },
   wardrobeTryText: {
     ...typography.caption,
@@ -9288,6 +9621,96 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.88)',
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  addStudioSavedSection: {
+    marginHorizontal: 20,
+    marginTop: 18,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#eee5e1'
+  },
+  addStudioSavedHead: {
+    minHeight: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  addStudioSavedTitle: {
+    ...typography.label,
+    color: '#6f3f45',
+    fontSize: 12,
+    lineHeight: 16,
+    textTransform: 'uppercase'
+  },
+  addStudioSavedCount: {
+    minWidth: 26,
+    height: 24,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#f3e4e6',
+    color: '#9b5658',
+    fontSize: 12,
+    lineHeight: 24,
+    textAlign: 'center',
+    fontWeight: '800'
+  },
+  addStudioSavedTrack: {
+    paddingTop: 12,
+    paddingRight: 16,
+    gap: 10
+  },
+  addStudioSavedCard: {
+    width: 116,
+    minHeight: 158,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eaded9',
+    backgroundColor: '#fffdfb',
+    overflow: 'hidden'
+  },
+  addStudioSavedImage: {
+    width: '100%',
+    height: 104,
+    backgroundColor: '#eee7e2'
+  },
+  addStudioSavedName: {
+    ...typography.caption,
+    marginTop: 8,
+    paddingHorizontal: 8,
+    color: '#211c1a',
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '800'
+  },
+  addStudioSavedMeta: {
+    ...typography.caption,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+    color: '#756c68',
+    fontSize: 11,
+    lineHeight: 14
+  },
+  addStudioSavedEmpty: {
+    minHeight: 72,
+    marginTop: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#e2d7d2',
+    backgroundColor: '#fffdfb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12
+  },
+  addStudioSavedEmptyText: {
+    ...typography.caption,
+    marginTop: 6,
+    color: '#756c68',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700'
   },
   itemDetectionCard: {
     marginHorizontal: 20,
@@ -9718,7 +10141,7 @@ const styles = StyleSheet.create({
   },
   productImageWrap: {
     aspectRatio: productImageAspectRatio,
-    backgroundColor: '#f0ece8',
+    backgroundColor: '#ffffff',
     position: 'relative'
   },
   productImage: {
@@ -9727,7 +10150,7 @@ const styles = StyleSheet.create({
   },
   productImageFrame: {
     overflow: 'hidden',
-    backgroundColor: '#f0ece8'
+    backgroundColor: '#ffffff'
   },
   productImageSkeleton: {
     ...StyleSheet.absoluteFillObject,
@@ -10650,6 +11073,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.88)',
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  productFavoriteButtonSaved: {
+    backgroundColor: '#111111'
   },
   productSwipeHint: {
     position: 'absolute',
@@ -15274,6 +15700,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12
   },
+  wardrobeHeaderCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  wardrobeHeaderActions: {
+    alignItems: 'flex-end',
+    gap: 8,
+    flexShrink: 0
+  },
   smallOutlineButton: {
     minHeight: 38,
     paddingHorizontal: 12,
@@ -15768,6 +16203,44 @@ const styles = StyleSheet.create({
   },
   selectTextActive: {
     color: '#0f766e'
+  },
+  wardrobeGenerateFooter: {
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 6
+  },
+  wardrobeGenerateLookButton: {
+    minHeight: 54,
+    borderRadius: 27,
+    backgroundColor: '#111111',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 3
+  },
+  wardrobeGenerateLookText: {
+    color: '#ffffff',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '900',
+    letterSpacing: 0
+  },
+  wardrobeGenerateLookCount: {
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#a84f59',
+    color: '#ffffff',
+    textAlign: 'center',
+    lineHeight: 24,
+    fontSize: 12,
+    fontWeight: '900'
   },
   closetMessage: {
     marginHorizontal: 16,

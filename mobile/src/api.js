@@ -221,7 +221,7 @@ function friendlyHttpError({ status, path, detail }) {
   if (status === 422 && detailText) return detailText;
   if (status === 429) return detailText || 'Too many requests. Wait a moment, then try again.';
   if (status >= 500) {
-    if (/FAL_KEY|OPENAI_API_KEY|PRUNA_API_KEY|PRUNA_KEY|PRUNA_TOKEN|FITROOM_API_KEY|BUNNY|REDIS|MONGODB|storage|missing/i.test(cleanDetail)) {
+    if (/FAL_KEY|OPENAI_API_KEY|PRUNA_API_KEY|PRUNA_KEY|PRUNA_TOKEN|FITROOM_API_KEY|BUNNY|REDIS|MONGODB|storage|not configured|configuration/i.test(cleanDetail)) {
       return `${feature} is not configured on the backend yet. Check the server .env and restart it.`;
     }
     if (/profile photo|body photo|try-on profile|not enough tokens|blocked|safety|too small|upload|unsupported|HEIC|HEIF|AVIF/i.test(cleanDetail)) return detailText;
