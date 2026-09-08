@@ -437,6 +437,43 @@ function initialAiStudioMessages(user) {
   ];
 }
 
+function normalizeAiStudioAction(action) {
+  if (!action) return null;
+  if (typeof action === 'string') return { type: 'message', label: action, prompt: action };
+  const label = String(action.label || action.type || 'Action').replace(/\s+/g, ' ').trim();
+  if (!label) return null;
+  return {
+    type: String(action.type || 'message'),
+    label,
+    prompt: String(action.prompt || label).replace(/\s+/g, ' ').trim(),
+    disabled: Boolean(action.disabled),
+    disabledReason: String(action.disabledReason || '').replace(/\s+/g, ' ').trim()
+  };
+}
+
+function normalizeAiStudioActions(data = {}) {
+  const actions = Array.isArray(data.actions) ? data.actions : [];
+  if (actions.length) return actions.map(normalizeAiStudioAction).filter(Boolean).slice(0, 4);
+  return (Array.isArray(data.suggestions) ? data.suggestions : []).map(normalizeAiStudioAction).filter(Boolean).slice(0, 4);
+}
+
+function normalizeAiStudioOutfits(outfits = []) {
+  return (Array.isArray(outfits) ? outfits : []).map((outfit, index) => ({
+    ...outfit,
+    id: String(outfit.id || outfit.title || `outfit-${index}`),
+    title: String(outfit.title || 'Recommended outfit'),
+    reason: String(outfit.reason || ''),
+    sourceLabel: String(outfit.sourceLabel || (outfit.source === 'hybrid' ? 'Mixed look' : 'Wardrobe item')),
+    items: Array.isArray(outfit.items) ? outfit.items : [],
+    products: Array.isArray(outfit.products) ? outfit.products : []
+  })).filter((outfit) => outfit.id);
+}
+
+function normalizeAiStudioProducts(products = [], outfits = []) {
+  const outfitProducts = outfits.flatMap((outfit) => outfit.products || []);
+  return uniqueProductsById(normalizeProducts([...(Array.isArray(products) ? products : []), ...outfitProducts]));
+}
+
 function recentSearchStorageKey(user) {
   const owner = user?.id || user?._id || user?.phone || user?.username || 'guest';
   return `${recentSearchStoragePrefix}:${owner}`;
@@ -648,6 +685,18 @@ async function fetchProductTryOn(productId, { waitForImage = false } = {}) {
 
 function chatProductKey(product = {}) {
   return String(product?.id || product?.sourceUrl || product?.affiliateLink || product?.name || 'product');
+}
+
+function isOnlineAiStudioProduct(product = {}) {
+  const source = String([product?.source, product?.searchSource, product?.sourceLabel].filter(Boolean).join(' ')).toLowerCase();
+  if (/lookmefy|catalog/.test(source)) return false;
+  return product?.tryOnAvailable === false
+    || product?.aiTryOnAvailable === false
+    || /web|amazon|serpapi|online/.test(source);
+}
+
+function chatTryOnStateKey(messageId, product = {}) {
+  return `${String(messageId || 'message')}:${chatProductKey(product)}`;
 }
 
 function useTourTarget(targetKey, registerTourTarget, options = {}) {
@@ -2012,14 +2061,23 @@ function CompleteLookCard({ product, fallback, onPress, onAddToWishlist, isWishl
   );
 }
 
-function ConciergeSuggestionCard({ product, fallback, featured, onShop, onTryOn, onPreview, tryOn, tryOnLoading, tryOnError, actionLabel = 'Generate Try-On' }) {
+function ConciergeSuggestionCard({ product, fallback, featured, onOpenProduct, onShop, onTryOn, onPreview, tryOn, tryOnLoading, tryOnError, actionLabel = 'Generate Try-On' }) {
   const source = product ? productImageSource(product) : images[fallback.image];
   const price = Number(product?.price);
-  const canPreview = Boolean(tryOn?.imageUrl && onPreview);
-  const handleCardPress = canPreview ? onPreview : (onTryOn || onShop);
+  const handleCardPress = onOpenProduct || onShop;
+  const handleImagePress = onPreview || handleCardPress;
+  const onlineProduct = isOnlineAiStudioProduct(product);
+  const sourceLabel = onlineProduct ? 'Amazon result' : product?.sourceLabel || (product?.source === 'wardrobe' ? 'Wardrobe item' : product?.source ? 'Lookmefy catalog' : '');
+  const externalUrl = product?.affiliateLink || product?.sourceUrl;
   return (
-    <TouchableOpacity style={styles.conciergeSuggestionCard} activeOpacity={0.88} onPress={handleCardPress}>
-      <View style={styles.conciergeSuggestionImageWrap}>
+    <View style={styles.conciergeSuggestionCard}>
+      <TouchableOpacity
+        style={styles.conciergeSuggestionImageWrap}
+        activeOpacity={0.88}
+        accessibilityRole="button"
+        accessibilityLabel={tryOn?.imageUrl ? `View AI preview for ${product?.title || product?.name || 'product'}` : `View product photo for ${product?.title || product?.name || fallback?.name || 'product'}`}
+        onPress={handleImagePress}
+      >
         {product ? <ProductImage product={product} tryOn={tryOn} style={styles.conciergeSuggestionImage} alt={product.title || product.name} /> : <ResilientImage source={source} fallbackSource={images.hero} style={styles.conciergeSuggestionImage} resizeMode="cover" fallbackIcon="shirt-outline" />}
         {tryOn?.imageUrl ? <Text style={styles.badge}>AI Try-On</Text> : null}
         {tryOnLoading ? <TryOnLoading text="Generating" /> : null}
@@ -2028,23 +2086,61 @@ function ConciergeSuggestionCard({ product, fallback, featured, onShop, onTryOn,
             <Ionicons name="sparkles" size={24} color="#050505" />
           </TouchableOpacity>
         ) : null}
-      </View>
+      </TouchableOpacity>
       <View style={styles.conciergeSuggestionBody}>
-        <Text style={styles.conciergeSuggestionBrand} numberOfLines={1}>{product?.displayLabel || fallback?.brand}</Text>
-        <Text style={styles.conciergeSuggestionName} numberOfLines={2}>{product?.title || product?.name || fallback?.name}</Text>
-        <Text style={styles.conciergeSuggestionPrice}>{product ? (Number.isFinite(price) ? formatMoney(price, product.currency) : 'Price unavailable') : fallback?.price}</Text>
+        <TouchableOpacity
+          activeOpacity={0.82}
+          accessibilityRole="button"
+          accessibilityLabel={`Open product details for ${product?.title || product?.name || fallback?.name || 'product'}`}
+          onPress={handleCardPress}
+        >
+          {sourceLabel ? <Text style={styles.conciergeSourceBadge} numberOfLines={1}>{sourceLabel}</Text> : null}
+          <Text style={styles.conciergeSuggestionBrand} numberOfLines={1}>{product?.displayLabel || fallback?.brand}</Text>
+          <Text style={styles.conciergeSuggestionName} numberOfLines={2}>{product?.title || product?.name || fallback?.name}</Text>
+          <Text style={styles.conciergeSuggestionPrice}>{product ? (Number.isFinite(price) ? formatMoney(price, product.currency) : 'Price unavailable') : fallback?.price}</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={[styles.conciergeShopButton, tryOnLoading && styles.disabledButton]} disabled={tryOnLoading} onPress={onTryOn || onShop}>
           <Text style={styles.conciergeShopText}>{tryOnLoading ? 'Generating...' : actionLabel}</Text>
         </TouchableOpacity>
         {tryOn?.imageUrl ? <AiPreviewNote /> : null}
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
-        {product?.affiliateLink && onShop ? (
+        {externalUrl && onShop && onTryOn ? (
           <TouchableOpacity style={styles.conciergeExternalLink} onPress={onShop}>
-            <Text style={styles.conciergeExternalLinkText}>View on Amazon</Text>
+            <Text style={styles.conciergeExternalLinkText}>{product?.searchLink ? 'Open search' : 'View on Amazon'}</Text>
           </TouchableOpacity>
         ) : null}
       </View>
-    </TouchableOpacity>
+    </View>
+  );
+}
+
+function AiStudioOutfitCard({ outfit }) {
+  const items = Array.isArray(outfit?.items) ? outfit.items : [];
+  return (
+    <View style={styles.aiOutfitCard}>
+      <View style={styles.aiOutfitHead}>
+        <Text style={styles.aiOutfitTitle} numberOfLines={2}>{outfit?.title || 'Recommended outfit'}</Text>
+        {outfit?.sourceLabel ? <Text style={styles.aiOutfitSource} numberOfLines={1}>{outfit.sourceLabel}</Text> : null}
+      </View>
+      {outfit?.reason ? <Text style={styles.aiOutfitReason}>{outfit.reason}</Text> : null}
+      {items.length ? (
+        <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.aiOutfitItems}>
+          {items.map((item) => (
+            <View style={styles.aiOutfitItem} key={item.id || item.name}>
+              {item.imageUrl ? (
+                <Image source={{ uri: imageUrl(item.imageUrl) }} style={styles.aiOutfitItemImage} resizeMode="cover" />
+              ) : (
+                <View style={styles.aiOutfitItemFallback}>
+                  <Ionicons name="shirt-outline" size={20} color="#9b5658" />
+                </View>
+              )}
+              <Text style={styles.aiOutfitItemName} numberOfLines={2}>{item.name || 'Wardrobe item'}</Text>
+              <Text style={styles.aiOutfitItemMeta} numberOfLines={1}>{[item.category, item.color].filter(Boolean).join(' · ') || 'Wardrobe'}</Text>
+            </View>
+          ))}
+        </ScrollView>
+      ) : null}
+    </View>
   );
 }
 
@@ -2827,7 +2923,6 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
   const [tryOnVideoLoading, setTryOnVideoLoading] = useState(false);
   const [tryOnError, setTryOnError] = useState('');
   const [tryOnVideoError, setTryOnVideoError] = useState('');
-  const [selectedSize, setSelectedSize] = useState('Medium');
   const [lightbox, setLightbox] = useState(null);
   const mediaScrollRef = useRef(null);
   const detailContentWidth = layout.contentWidth || width;
@@ -2957,8 +3052,6 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
     product.fit || '',
     titleCase(product.gender || '')
   ].filter(Boolean).slice(0, 3);
-  const colorLabel = product.colors?.[0]?.name ? product.colors[0].name.toString().toUpperCase() : '';
-  const sizeOptions = product.sizes?.length ? product.sizes : [];
   const detailRows = ['PRODUCT DETAILS', 'FIT & CARE', 'SHIPPING & RETURNS'];
   const mediaHeight = layout.isTablet
     ? Math.min(600, Math.max(420, Math.round(mediaWidth * 0.62)))
@@ -3035,31 +3128,6 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
             <Text style={styles.productCategoryMetaLabel}>Category</Text>
             <Text style={styles.productCategoryMetaValue}>{titleCase(product.category)}</Text>
           </TouchableOpacity>
-        ) : null}
-
-        {colorLabel ? (
-          <>
-            <Text style={styles.productOptionLabel}>COLOR: <Text style={styles.productOptionValue}>{colorLabel}</Text></Text>
-            <View style={styles.productSwatchRow}>
-              {product.colors.slice(0, 6).map((color, index) => <View key={color.name} style={[styles.productColorSwatch, index === 0 && styles.productColorSwatchActive, { backgroundColor: color.value }]} />)}
-            </View>
-          </>
-        ) : null}
-
-        {sizeOptions.length ? (
-          <>
-            <View style={styles.productSizeHead}>
-              <Text style={styles.productOptionLabel}>SELECT SIZE</Text>
-              <TouchableOpacity><Text style={styles.productSizeGuide}>Size Guide</Text></TouchableOpacity>
-            </View>
-            <View style={styles.productSizeRow}>
-              {sizeOptions.map((size) => (
-                <TouchableOpacity key={size} style={[styles.productSizeButton, selectedSize === size && styles.productSizeButtonActive]} onPress={() => setSelectedSize(size)}>
-                  <Text style={[styles.productSizeText, selectedSize === size && styles.productSizeTextActive]}>{size}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </>
         ) : null}
 
         <View style={styles.productActionRow}>
@@ -5289,6 +5357,8 @@ function StyleBotScreen({
   onNavigate,
   registerTourTarget,
   tourFocusRequest,
+  aiStudioConversationId,
+  setAiStudioConversationId,
   aiStudioMessages,
   setAiStudioMessages,
   aiStudioTryOns,
@@ -5327,13 +5397,27 @@ function StyleBotScreen({
         timeoutMs: 70000,
         body: JSON.stringify({
           message: prompt,
+          conversationId: aiStudioConversationId || '',
           history: messages.slice(-8).map((message) => ({ role: message.role, text: message.text }))
         })
       });
-      const products = normalizeProducts(data.products || []);
+      const outfits = normalizeAiStudioOutfits(data.outfits || []);
+      const products = normalizeAiStudioProducts(data.products || [], outfits);
+      const actions = normalizeAiStudioActions(data);
+      if (data.conversationId) setAiStudioConversationId(data.conversationId);
       setMessages((current) => current.map((message) => (
         message.id === assistantId
-          ? { ...message, text: data.reply || 'I found a few directions for you.', products, suggestions: data.suggestions || [], loading: false }
+          ? {
+            ...message,
+            text: data.reply || 'I found a few directions for you.',
+            products,
+            outfits,
+            actions,
+            suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+            mode: data.mode || '',
+            intent: data.intent || '',
+            loading: false
+          }
           : message
       )));
     } catch (error) {
@@ -5350,9 +5434,9 @@ function StyleBotScreen({
     }
   };
 
-  const generateChatTryOn = async (product) => {
-    const key = chatProductKey(product);
-    if (!product || chatTryOnLoading[key]) return;
+  const generateChatTryOn = async (product, stateKey) => {
+    const key = stateKey || chatProductKey(product);
+    if (!product || product.searchLink || product.tryOnAvailable === false || product.aiTryOnAvailable === false || chatTryOnLoading[key]) return;
     const profileMessage = tryOnProfileBlockMessage(user);
     if (profileMessage) {
       setChatTryOnErrors((current) => ({ ...current, [key]: profileMessage }));
@@ -5361,7 +5445,7 @@ function StyleBotScreen({
     setChatTryOnLoading((current) => ({ ...current, [key]: true }));
     setChatTryOnErrors((current) => ({ ...current, [key]: '' }));
     try {
-      const isExternalProduct = Boolean(product.external || product.sourceUrl || product.affiliateLink);
+      const isExternalProduct = isOnlineAiStudioProduct(product);
       const regenerate = Boolean(chatTryOns[key]?.imageUrl);
       const data = await api(isExternalProduct ? '/tryons/external' : `/tryons/${product.id}`, {
         method: 'POST',
@@ -5409,25 +5493,54 @@ function StyleBotScreen({
                 {message.products?.length ? (
                   <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.aiSuggestionProductsTrack}>
                     {message.products.map((product) => {
-                      const key = chatProductKey(product);
-                      const tryOn = chatTryOns[key];
+                      const key = chatTryOnStateKey(message.id, product);
+                      const onlineProduct = isOnlineAiStudioProduct(product);
+                      const tryOnEnabled = !product.searchLink
+                        && product.tryOnAvailable !== false
+                        && product.aiTryOnAvailable !== false
+                        && Boolean(product.imageUrl || product.remoteImageUrl || product.thumbnail);
+                      const tryOn = tryOnEnabled ? chatTryOns[key] : null;
+                      const previewUri = productImageSource(product, tryOn)?.uri;
                       return (
                         <ConciergeSuggestionCard
                           key={key}
                           product={product}
-                          actionLabel={tryOn?.imageUrl ? 'Generate Again' : 'Generate Try-On'}
+                          actionLabel={tryOnEnabled ? (tryOn?.imageUrl ? 'Generate Again' : 'Generate Try-On') : onlineProduct ? (product.searchLink ? 'Search Amazon' : 'View on Amazon') : 'View product'}
                           tryOn={tryOn}
-                          tryOnLoading={Boolean(chatTryOnLoading[key])}
-                          tryOnError={chatTryOnErrors[key]}
-                          onPreview={tryOn?.imageUrl ? () => setLightbox(imageUrl(tryOn.imageUrl)) : null}
-                          onShop={() => product.affiliateLink ? openExternalWebUrl(product.affiliateLink) : onNavigate('product', { id: product.id })}
-                          onTryOn={() => generateChatTryOn(product)}
+                          tryOnLoading={tryOnEnabled && Boolean(chatTryOnLoading[key])}
+                          tryOnError={tryOnEnabled ? chatTryOnErrors[key] : ''}
+                          onPreview={previewUri ? () => setLightbox(previewUri) : null}
+                          onOpenProduct={() => onlineProduct
+                            ? openExternalWebUrl(product.affiliateLink || product.sourceUrl)
+                            : onNavigate('product', { id: product.id })}
+                          onShop={() => product.affiliateLink || product.sourceUrl ? openExternalWebUrl(product.affiliateLink || product.sourceUrl) : onNavigate('product', { id: product.id })}
+                          onTryOn={tryOnEnabled ? () => generateChatTryOn(product, key) : undefined}
                         />
                       );
                     })}
                   </ScrollView>
                 ) : null}
-                {message.suggestions?.length ? (
+                {message.outfits?.length ? (
+                  <View style={styles.aiOutfitList}>
+                    {message.outfits.map((outfit) => <AiStudioOutfitCard key={outfit.id} outfit={outfit} />)}
+                  </View>
+                ) : null}
+                {message.actions?.length ? (
+                  <View style={styles.aiFollowUpRow}>
+                    {message.actions.map((action) => (
+                      <TouchableOpacity
+                        key={`${message.id}-${action.type}-${action.label}`}
+                        style={[styles.aiFollowUpChip, action.disabled && styles.disabledButton]}
+                        activeOpacity={0.82}
+                        disabled={action.disabled}
+                        onPress={() => submit(action.prompt || action.label)}
+                      >
+                        <Text style={styles.aiFollowUpText}>{action.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ) : null}
+                {!message.actions?.length && message.suggestions?.length ? (
                   <View style={styles.aiFollowUpRow}>
                     {message.suggestions.map((suggestion) => (
                       <TouchableOpacity key={suggestion} style={styles.aiFollowUpChip} activeOpacity={0.82} onPress={() => submit(suggestion)}>
@@ -5586,6 +5699,14 @@ function loadExpoIapModule() {
   }
 }
 
+const STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_IDS = Object.freeze([STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID]);
+
+function useLatestValue(value) {
+  const ref = useRef(value);
+  ref.current = value;
+  return ref;
+}
+
 function storeKitProductPrice(product) {
   return product?.displayPrice || product?.localizedPriceIOS || product?.localizedPrice || '';
 }
@@ -5644,6 +5765,10 @@ function isLookmefyStoreKitPurchase(purchase = {}) {
   return isLookmefyStoreKitProductId(productId);
 }
 
+function storeKitUserIdentity(user = {}) {
+  return String(user?.id || user?._id || '').trim();
+}
+
 function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
   const [state, setState] = useState({
     available: enabled,
@@ -5664,10 +5789,19 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
   });
   const iapRef = useRef(null);
   const processingRef = useRef(new Set());
+  const userRef = useLatestValue(user);
+  const onRequireAuthRef = useLatestValue(onRequireAuth);
+  const userIdentity = storeKitUserIdentity(user);
 
   const updateState = useCallback((patch) => {
     setState((current) => ({ ...current, ...patch }));
   }, []);
+
+  const updateUserFromStoreKit = useCallback((nextUser) => {
+    if (!nextUser) return;
+    userRef.current = nextUser;
+    setUser(nextUser);
+  }, [setUser, userRef]);
 
   const finishStoreKitTransaction = useCallback(async (purchase) => {
     const iap = iapRef.current;
@@ -5697,9 +5831,9 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
     updateState({ loading: true, error: '', unavailableReason: '' });
     try {
       const [subscriptionProducts, consumableProducts, activeSubscriptions] = await Promise.all([
-        iap.fetchProducts({ skus: [STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID], type: 'subs' }),
+        iap.fetchProducts({ skus: STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_IDS, type: 'subs' }),
         iap.fetchProducts({ skus: STOREKIT_CONSUMABLE_PRODUCT_IDS, type: 'in-app' }),
-        iap.getActiveSubscriptions ? iap.getActiveSubscriptions([STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID]).catch(() => []) : []
+        iap.getActiveSubscriptions ? iap.getActiveSubscriptions(STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_IDS).catch(() => []) : []
       ]);
       const subscriptionProduct = findStoreKitProduct(subscriptionProducts, STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID);
       const creditProductsById = storeKitProductsById(consumableProducts);
@@ -5725,7 +5859,8 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
   }, [enabled, updateState]);
 
   const syncCurrentEntitlements = useCallback(async ({ silent = false } = {}) => {
-    if (!enabled || !user) return;
+    const currentUser = userRef.current;
+    if (!enabled || !currentUser) return;
     const iap = iapRef.current;
     if (!iap) return;
 
@@ -5744,7 +5879,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
           method: 'POST',
           body: JSON.stringify({ purchases: relevantPurchases.map(applePurchaseServerPayload) })
         });
-        if (restoreResult.user) setUser(restoreResult.user);
+        if (restoreResult.user) updateUserFromStoreKit(restoreResult.user);
         const verifiedTransactionIds = new Set(
           (Array.isArray(restoreResult.transactions) ? restoreResult.transactions : [])
             .map((transaction) => String(transaction?.transactionId || '').trim())
@@ -5758,7 +5893,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
       }
 
       const statusResult = await api('/payments/apple/status', { noCache: true });
-      if (statusResult.user) setUser(statusResult.user);
+      if (statusResult.user) updateUserFromStoreKit(statusResult.user);
       updateState({
         syncing: false,
         error: '',
@@ -5770,12 +5905,13 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
         error: error.message || 'Could not sync App Store status.'
       });
     }
-  }, [enabled, finishStoreKitTransaction, setUser, updateState, user]);
+  }, [enabled, finishStoreKitTransaction, updateState, updateUserFromStoreKit, userRef]);
 
   const verifyPurchase = useCallback(async (purchase, source = 'purchase') => {
     if (!enabled || !isLookmefyStoreKitPurchase(purchase)) return false;
-    if (!user) {
-      onRequireAuth?.('Log in with your mobile number before completing an App Store purchase.');
+    const currentUser = userRef.current;
+    if (!currentUser) {
+      onRequireAuthRef.current?.('Log in with your mobile number before completing an App Store purchase.');
       updateState({ purchasePending: false, purchasingProductId: '', error: 'Log in before completing this App Store purchase.' });
       return false;
     }
@@ -5799,7 +5935,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
           purchase: applePurchaseServerPayload(purchase)
         })
       });
-      if (result.user) setUser(result.user);
+      if (result.user) updateUserFromStoreKit(result.user);
       await finishStoreKitTransaction(purchase);
       updateState({
         verifying: false,
@@ -5820,7 +5956,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
     } finally {
       if (key) processingRef.current.delete(key);
     }
-  }, [enabled, finishStoreKitTransaction, onRequireAuth, setUser, updateState, user]);
+  }, [enabled, finishStoreKitTransaction, onRequireAuthRef, updateState, updateUserFromStoreKit, userRef]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -5875,15 +6011,16 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
   }, [enabled, refreshProducts, updateState, verifyPurchase]);
 
   useEffect(() => {
-    if (enabled && state.connected && user?.id) {
+    if (enabled && state.connected && userIdentity) {
       syncCurrentEntitlements({ silent: true });
     }
-  }, [enabled, state.connected, syncCurrentEntitlements, user?.id]);
+  }, [enabled, state.connected, syncCurrentEntitlements, userIdentity]);
 
   const requestStoreKitPurchase = useCallback(async ({ productId, type }) => {
     if (!enabled) return;
-    if (!user) {
-      onRequireAuth?.('Log in with your mobile number to buy credits.');
+    const currentUser = userRef.current;
+    if (!currentUser) {
+      onRequireAuthRef.current?.('Log in with your mobile number to buy credits.');
       return;
     }
     const iap = iapRef.current;
@@ -5896,7 +6033,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
       updateState({ error: 'This App Store product is unavailable for the current build or Apple ID.' });
       return;
     }
-    const appAccountToken = storeKitAppAccountTokenForUser(user);
+    const appAccountToken = storeKitAppAccountTokenForUser(currentUser);
     if (!appAccountToken) {
       updateState({ error: 'Could not link this App Store purchase to your Lookmefy account.' });
       return;
@@ -5930,17 +6067,17 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
         error: isStoreKitCancel(error) ? '' : error.message || 'Could not start App Store purchase.'
       });
     }
-  }, [enabled, onRequireAuth, state.connected, state.creditProductsById, state.subscriptionProduct, updateState, user]);
+  }, [enabled, onRequireAuthRef, state.connected, state.creditProductsById, state.subscriptionProduct, updateState, userRef]);
 
   const restorePurchases = useCallback(async () => {
-    if (!enabled || !user) {
-      onRequireAuth?.('Log in with your mobile number to restore App Store purchases.');
+    if (!enabled || !userRef.current) {
+      onRequireAuthRef.current?.('Log in with your mobile number to restore App Store purchases.');
       return;
     }
     updateState({ restoring: true, statusMessage: 'Restoring App Store purchases...', error: '' });
     await syncCurrentEntitlements({ silent: false });
     updateState({ restoring: false });
-  }, [enabled, onRequireAuth, syncCurrentEntitlements, updateState, user]);
+  }, [enabled, onRequireAuthRef, syncCurrentEntitlements, updateState, userRef]);
 
   const manageSubscription = useCallback(async () => {
     const iap = iapRef.current;
@@ -6121,7 +6258,7 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
   const verifyPaymentOrder = useCallback(async (merchantOrderId, silent = false) => {
     if (!user || !merchantOrderId || verifyingOrderRef.current === merchantOrderId) return;
     verifyingOrderRef.current = merchantOrderId;
-    if (!silent) setMessage('Verifying payment with PhonePe...');
+    if (!silent) setMessage('Verifying payment with Razorpay...');
     try {
       const data = await api(`/payments/orders/${encodeURIComponent(merchantOrderId)}/status`, { noCache: true });
       if (data.user) setUser(data.user);
@@ -6129,7 +6266,7 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
       const credits = Number(data.order?.tokens) || Number(selectedPlan.credits) || 0;
       if (state === 'completed') {
         setPendingOrderId('');
-        setMessage(`${data.order?.purchaseType === 'top_up' ? 'Top-up confirmed' : 'Monthly mandate confirmed'}. ${credits} credits have been added.`);
+        setMessage(`${data.order?.purchaseType === 'top_up' ? 'Top-up confirmed' : 'Monthly plan confirmed'}. ${credits} credits have been added.`);
       } else if (state === 'failed') {
         setPendingOrderId('');
         setMessage('Payment was not completed. You can try again when ready.');
@@ -6177,10 +6314,9 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
     if (!selectedPlan?.id) return;
 
     setCheckoutLoading(true);
-    setMessage(mode === 'top_up' ? 'Opening PhonePe checkout...' : 'Opening PhonePe mandate setup...');
+    setMessage(mode === 'top_up' ? 'Opening Razorpay checkout...' : 'Opening Razorpay monthly checkout...');
     try {
-      const endpoint = mode === 'top_up' ? '/payments/phonepe/top-up' : '/payments/phonepe/subscription';
-      const data = await api(endpoint, {
+      const data = await api('/payments/checkout', {
         method: 'POST',
         body: JSON.stringify({
           planId: selectedPlan.id,
@@ -6188,27 +6324,46 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
           redirectUrl: mobilePaymentReturnUrl()
         })
       });
-      const paymentUrl = data.paymentUrl || data.redirectUrl;
-      const merchantOrderId = data.order?.merchantOrderId || '';
+      const paymentUrl = data.paymentUrl || data.redirectUrl || data.razorpay?.paymentUrl || data.razorpay?.checkoutUrl;
+      const merchantOrderId = data.order?.merchantOrderId || data.razorpay?.notes?.merchantOrderId || '';
+      const verifyPath = data.razorpay?.verifyPath || '/payments/razorpay/verify';
       if (merchantOrderId) setPendingOrderId(merchantOrderId);
+      const paymentResult = data.paymentResult || data.razorpay?.paymentResult;
+      if (paymentResult?.razorpay_payment_id && paymentResult?.razorpay_signature) {
+        const verified = await api(verifyPath, {
+          method: 'POST',
+          body: JSON.stringify({
+            merchantOrderId,
+            razorpay_order_id: paymentResult.razorpay_order_id || data.razorpay?.orderId,
+            razorpay_payment_id: paymentResult.razorpay_payment_id,
+            razorpay_signature: paymentResult.razorpay_signature
+          })
+        });
+        if (verified.user) setUser(verified.user);
+        setPendingOrderId('');
+        setMessage(verified.message || 'Payment verified. Credits credited.');
+        return;
+      }
       if (paymentUrl) {
         await Linking.openURL(paymentUrl);
-        setMessage('Complete payment in PhonePe, then return to Lookmefy.');
+        setMessage('Complete payment in Razorpay, then return to Lookmefy.');
+      } else if (data.razorpay?.orderId) {
+        setMessage('Razorpay order is ready. Complete the payment from the secure checkout, then verify here.');
       } else {
-        setMessage('PhonePe did not return a checkout link. Please try again.');
+        setMessage('Razorpay did not return checkout details. Please try again.');
       }
     } catch (error) {
       setMessage(error.message);
     } finally {
       setCheckoutLoading(false);
     }
-  }, [mode, onRequireAuth, selectedPlan?.id, user]);
+  }, [mode, onRequireAuth, selectedPlan?.id, setUser, user]);
 
   const cancelSubscription = useCallback(() => {
     if (!activeMonthly || cancelLoading) return;
     Alert.alert(
       'Cancel monthly billing?',
-      'Your current credits stay available. Future monthly PhonePe debits will be cancelled.',
+      'Your current credits stay available. Future monthly Razorpay billing will be cancelled.',
       [
         { text: 'Keep Plan', style: 'cancel' },
         {
@@ -6322,7 +6477,7 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
             </View>
           )}
           <View>
-            <Text style={styles.paymentMethodText}>{isAppleCheckout ? 'App Store' : 'PhonePe'}</Text>
+            <Text style={styles.paymentMethodText}>{isAppleCheckout ? 'App Store' : 'Razorpay'}</Text>
             <Text style={styles.paymentMethodSubText}>{isAppleCheckout ? 'Apple ID billing' : 'UPI, cards, and net banking'}</Text>
           </View>
         </View>
@@ -6379,14 +6534,14 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
         <AppleStoreKitActions mode={mode} appleStoreKit={appleStoreKit} activeMonthly={activeAppleMonthly} selectedTopUp={selectedTopUp} />
       ) : (
         <TouchableOpacity style={[styles.secureCheckoutButton, checkoutLoading && styles.disabledButton]} activeOpacity={0.88} disabled={checkoutLoading} onPress={startCheckout}>
-          <Text style={styles.secureCheckoutText}>{checkoutLoading ? 'OPENING PHONEPE' : mode === 'top_up' ? 'SECURE CHECKOUT' : 'SET UP MANDATE'}</Text>
+          <Text style={styles.secureCheckoutText}>{checkoutLoading ? 'OPENING RAZORPAY' : mode === 'top_up' ? 'SECURE CHECKOUT' : 'SET UP MONTHLY'}</Text>
         </TouchableOpacity>
       )}
 
       {!isAppleCheckout && pendingOrderId ? (
         <TouchableOpacity style={styles.verifyPaymentButton} activeOpacity={0.82} onPress={() => verifyPaymentOrder(pendingOrderId)}>
           <Ionicons name="refresh" size={16} color="#5e3335" />
-          <Text style={styles.verifyPaymentText}>VERIFY PHONEPE PAYMENT</Text>
+          <Text style={styles.verifyPaymentText}>VERIFY RAZORPAY PAYMENT</Text>
         </TouchableOpacity>
       ) : null}
 
@@ -7229,7 +7384,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
             <Text style={styles.profileVisaText}>PAY</Text>
           </View>
           <View style={styles.profilePaymentCopy}>
-            <Text style={styles.profilePaymentTitle}>PhonePe checkout</Text>
+            <Text style={styles.profilePaymentTitle}>Razorpay checkout</Text>
             <Text style={styles.profilePaymentSub}>{user.subscription?.status === 'active' ? 'Monthly mandate active' : 'Add credits when needed'}</Text>
           </View>
           <Ionicons name="chevron-forward" size={22} color="#55514f" />
@@ -7894,6 +8049,7 @@ export default function App() {
   const [tourTargetRects, setTourTargetRects] = useState({});
   const [tourFocusRequest, setTourFocusRequest] = useState(null);
   const [aiStudioOwnerKey, setAiStudioOwnerKey] = useState('');
+  const [aiStudioConversationId, setAiStudioConversationId] = useState('');
   const [aiStudioMessages, setAiStudioMessages] = useState([]);
   const [aiStudioTryOns, setAiStudioTryOns] = useState({});
   const [aiStudioTryOnErrors, setAiStudioTryOnErrors] = useState({});
@@ -8067,6 +8223,7 @@ export default function App() {
     const nextOwnerKey = user ? String(user.id || user._id || user.phone || user.username || 'user') : '';
     if (!nextOwnerKey) {
       if (aiStudioOwnerKey) setAiStudioOwnerKey('');
+      if (aiStudioConversationId) setAiStudioConversationId('');
       if (aiStudioMessages.length) setAiStudioMessages([]);
       if (Object.keys(aiStudioTryOns).length) setAiStudioTryOns({});
       if (Object.keys(aiStudioTryOnErrors).length) setAiStudioTryOnErrors({});
@@ -8074,10 +8231,11 @@ export default function App() {
     }
     if (nextOwnerKey === aiStudioOwnerKey) return;
     setAiStudioOwnerKey(nextOwnerKey);
+    setAiStudioConversationId('');
     setAiStudioMessages(initialAiStudioMessages(user));
     setAiStudioTryOns({});
     setAiStudioTryOnErrors({});
-  }, [aiStudioMessages.length, aiStudioOwnerKey, aiStudioTryOnErrors, aiStudioTryOns, user?.id, user?._id, user?.phone, user?.username]);
+  }, [aiStudioConversationId, aiStudioMessages.length, aiStudioOwnerKey, aiStudioTryOnErrors, aiStudioTryOns, user?.id, user?._id, user?.phone, user?.username]);
 
   useEffect(() => {
     if (!ready || !user) return undefined;
@@ -8167,13 +8325,13 @@ export default function App() {
       case 'search':
         return <SearchScreen initial={routeParams} user={user} token={token} onNavigate={guardedNavigate} onBack={goBack} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'tryon':
-        return user ? <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onRequireAuth={requestAuth} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} /> : <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onRequireAuth={requestAuth} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} /> : <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'closet':
         return <ClosetScreen initial={routeParams} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
       case 'custom':
         return <CustomTryOnScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} refreshUser={refreshUser} />;
       case 'stylebot':
-        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
+        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
       case 'tokens':
         return <TokensScreen user={user} setUser={setUser} onNavigate={guardedNavigate} onRequireAuth={requestAuth} />;
       case 'profile':
@@ -8197,7 +8355,7 @@ export default function App() {
       default:
         return <InfoScreen page="missing" user={user} onNavigate={navigate} />;
     }
-  }, [currentRoute.name, routeParamsKey, user, token, navigate, guardedNavigate, requestAuth, addToWishlist, wishlistIds, wishlistProducts, registerTourTarget, tourFocusRequest, aiStudioMessages, aiStudioTryOns, aiStudioTryOnErrors, refreshUser]);
+  }, [currentRoute.name, routeParamsKey, user, token, navigate, guardedNavigate, requestAuth, addToWishlist, wishlistIds, wishlistProducts, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioTryOns, aiStudioTryOnErrors, refreshUser]);
 
   if (!ready || (!fontsLoaded && !fontLoadError)) {
     return (
@@ -12156,73 +12314,6 @@ const styles = StyleSheet.create(applyPremiumTheme({
     fontSize: 10,
     fontWeight: '700'
   },
-  productOptionLabel: {
-    marginTop: 25,
-    color: '#423d3a',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0
-  },
-  productOptionValue: {
-    color: '#5c5754',
-    fontWeight: '700'
-  },
-  productSwatchRow: {
-    marginTop: 13,
-    flexDirection: 'row',
-    gap: 14
-  },
-  productColorSwatch: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    borderWidth: 1,
-    borderColor: '#d9d2ce'
-  },
-  productColorSwatchActive: {
-    borderWidth: 2,
-    borderColor: '#050505'
-  },
-  productSizeHead: {
-    marginTop: 21,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between'
-  },
-  productSizeGuide: {
-    color: '#9b5658',
-    fontSize: 11,
-    fontWeight: '700',
-    textDecorationLine: 'underline'
-  },
-  productSizeRow: {
-    marginTop: 12,
-    flexDirection: 'row',
-    gap: 10
-  },
-  productSizeButton: {
-    flex: 1,
-    minHeight: 45,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#eadfdb',
-    backgroundColor: '#fbf7f6',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  productSizeButtonActive: {
-    borderWidth: 2,
-    borderColor: '#171412',
-    backgroundColor: '#ffffff'
-  },
-  productSizeText: {
-    color: '#4f4a48',
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  productSizeTextActive: {
-    color: '#171412'
-  },
   productActionRow: {
     marginTop: 24,
     flexDirection: 'row',
@@ -12674,6 +12765,96 @@ const styles = StyleSheet.create(applyPremiumTheme({
     color: '#9b5658',
     fontWeight: '700'
   },
+  aiOutfitList: {
+    gap: 10
+  },
+  aiOutfitCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#ebe3df',
+    backgroundColor: '#fffdfb',
+    padding: 12,
+    gap: 9
+  },
+  aiOutfitHead: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10
+  },
+  aiOutfitTitle: {
+    ...typography.productTitle,
+    flex: 1,
+    minWidth: 0,
+    color: '#211c1a',
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '800'
+  },
+  aiOutfitSource: {
+    ...typography.caption,
+    maxWidth: 110,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#eadbd6',
+    backgroundColor: '#f8efed',
+    color: '#9b5658',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '800'
+  },
+  aiOutfitReason: {
+    ...typography.caption,
+    color: '#625b57',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600'
+  },
+  aiOutfitItems: {
+    gap: 8,
+    paddingRight: 8
+  },
+  aiOutfitItem: {
+    width: 94,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eee4df',
+    backgroundColor: '#ffffff',
+    overflow: 'hidden'
+  },
+  aiOutfitItemImage: {
+    width: '100%',
+    height: 84,
+    backgroundColor: '#eee8e3'
+  },
+  aiOutfitItemFallback: {
+    height: 84,
+    backgroundColor: '#f5ece9',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  aiOutfitItemName: {
+    ...typography.caption,
+    minHeight: 32,
+    paddingHorizontal: 8,
+    paddingTop: 7,
+    color: '#211c1a',
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '800'
+  },
+  aiOutfitItemMeta: {
+    ...typography.caption,
+    paddingHorizontal: 8,
+    paddingTop: 2,
+    paddingBottom: 8,
+    color: '#817873',
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '700'
+  },
   conciergeSuggestionTrack: {
     paddingTop: 18,
     gap: 12,
@@ -12717,6 +12898,21 @@ const styles = StyleSheet.create(applyPremiumTheme({
     fontSize: 10,
     lineHeight: 13,
     fontWeight: '700'
+  },
+  conciergeSourceBadge: {
+    ...typography.caption,
+    alignSelf: 'flex-start',
+    marginBottom: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#eadbd6',
+    backgroundColor: '#f8efed',
+    color: '#9b5658',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '800'
   },
   conciergeSuggestionName: {
     ...typography.productTitle,
