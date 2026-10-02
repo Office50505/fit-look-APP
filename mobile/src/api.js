@@ -104,7 +104,7 @@ export const API_ORIGIN = preferredApiUrl.replace(/\/api\/?$/, '');
 const TOKEN_KEY = 'lookmefy_token';
 const DEFAULT_TIMEOUT_MS = 15000;
 const FORM_TIMEOUT_MS = 60000;
-const JOB_TIMEOUT_MS = 180000;
+const JOB_TIMEOUT_MS = 420000;
 const JOB_POLL_INTERVAL_MS = 1400;
 
 function shouldBypassCache(path, explicitNoCache) {
@@ -232,7 +232,7 @@ function friendlyHttpError({ status, path, detail }) {
 
 function networkErrorMessage(path, timeoutMs, aborted = false) {
   const feature = featureNameForPath(path);
-  if (aborted) return `${feature} took longer than ${Math.round(timeoutMs / 1000)}s. Try again, or check the backend logs if this keeps happening.`;
+  if (aborted) return `${feature} is still processing. Please try again in a moment.`;
   return `Cannot reach the ${feature} service.${networkHelpSuffix()}`;
 }
 

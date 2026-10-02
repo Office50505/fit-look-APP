@@ -23,7 +23,7 @@
     },
     "android": {
       "package": "com.lookmefy.app",
-      "versionCode": 22,
+      "versionCode": 23,
       "icon": "./assets/icon-android.png",
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
@@ -58,6 +58,12 @@
       ],
       "expo-font",
       "./plugins/withAndroidBuildCompatibility"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "45cb4281-c3a1-4277-b30f-8815df247407"
+      }
+    },
+    "owner": "office50505"
   }
 }
