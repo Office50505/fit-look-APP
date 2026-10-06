@@ -1380,15 +1380,13 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
   const routeName = route?.name || 'home';
   const activeRoute = routeName === 'product' || routeName === 'wishlist' || routeName === 'search'
       ? 'shop'
-      : routeName === 'stylebot'
-        ? 'tryon'
-        : routeName;
+      : routeName;
   const items = [
     ['home', 'home-outline', 'Home'],
     ['shop', 'grid-outline', 'Categories'],
+    ['tryon', 'camera-outline', 'Try-On'],
     ['closet', 'shirt-outline', 'Wardrobe'],
-    ['tryon', 'sparkles-outline', 'AI Studio'],
-    ['custom', 'color-wand-outline', 'Custom']
+    ['stylebot', 'sparkles-outline', 'AI Stylist']
   ];
   return (
     <View style={[styles.bottomNav, layout.isTablet && styles.bottomNavTablet, layout.contentFrameStyle]}>
@@ -1771,28 +1769,46 @@ function ProductRow({ title, state, onNavigate, user, token, onAddToWishlist, wi
 }
 
 const homeCategoryItems = [
-  { label: 'TOPS', image: 'category-generated/tops.png', params: { category: 'tops' } },
-  { label: 'BOTTOMS', image: 'category-generated/bottomwear.png', params: { category: 'bottoms' } },
-  { label: 'T-SHIRTS', image: 'category-generated/tshirts.png', params: { category: 't-shirts' } },
-  { label: 'SHOES', image: 'category-generated/sneakers.png', params: { category: 'shoes' } },
-  { label: 'EYEWEAR', image: 'category-generated/eyewear.png', params: { category: 'eyewear' } }
+  { label: 'Shirts', count: 31, image: 'category-generated/men-shirts.png', params: { category: 'shirts' } },
+  { label: 'T Shirts', count: 95, image: 'category-generated/tshirts.png', params: { category: 't-shirts' } },
+  { label: 'Dresses', count: 110, image: 'category-generated/dresses.png', params: { category: 'dresses' } },
+  { label: 'Pants', count: 79, image: 'category-generated/bottomwear.png', params: { category: 'pants' } },
+  { label: 'Jeans', count: 70, image: 'category-generated/jeans.png', params: { q: 'jeans' } },
+  { label: 'Jackets', count: 68, image: 'category-generated/jackets.png', params: { category: 'jackets' } },
+  { label: 'Shoes', count: 104, image: 'category-generated/sneakers.png', params: { category: 'shoes' } },
+  { label: 'Watches', count: 124, image: 'category-generated/watches.png', params: { category: 'watches' } },
+  { label: 'Accessories', count: 52, image: 'category-generated/accessories.png', params: { category: 'accessories' } },
+  { label: 'Ethnic Wear', count: 136, image: 'category-generated/kurti-dress-material.png', params: { category: 'ethnic wear' } },
+  { label: 'Eyewear', count: 37, image: 'category-generated/eyewear.png', params: { category: 'eyewear' } },
+  { label: 'Innerwear', count: 97, image: 'category-generated/innerwear.png', params: { category: 'innerwear' } },
+  { label: 'Sleepwear', count: 36, image: 'category-generated/sleepwear.png', params: { category: 'sleepwear' } }
 ];
 const homeCategoryItemsByGender = {
   men: [
-    { label: 'SHIRTS', image: 'category-generated/men-shirts.png', params: { category: 'shirts', gender: 'men' } },
-    { label: 'T-SHIRTS', image: 'category-generated/tshirts.png', params: { category: 't-shirts', gender: 'men' } },
-    { label: 'PANTS', image: 'category-generated/bottomwear.png', params: { category: 'pants', gender: 'men' } },
-    { label: 'SHOES', image: 'category-generated/men-footwear.png', params: { category: 'shoes', gender: 'men' } },
-    { label: 'WATCHES', image: 'category-generated/watches.png', params: { category: 'watches', gender: 'men' } },
-    { label: 'EYEWEAR', image: 'category-generated/eyewear.png', params: { category: 'eyewear', gender: 'men' } }
+    { label: 'Shirts', count: 31, image: 'category-generated/men-shirts.png', params: { category: 'shirts', gender: 'men' } },
+    { label: 'T Shirts', count: 95, image: 'category-generated/tshirts.png', params: { category: 't-shirts', gender: 'men' } },
+    { label: 'Pants', count: 79, image: 'category-generated/bottomwear.png', params: { category: 'pants', gender: 'men' } },
+    { label: 'Jeans', count: 70, image: 'category-generated/jeans.png', params: { q: 'jeans', gender: 'men' } },
+    { label: 'Jackets', count: 68, image: 'category-generated/jackets.png', params: { category: 'jackets', gender: 'men' } },
+    { label: 'Shoes', count: 104, image: 'category-generated/men-footwear.png', params: { category: 'shoes', gender: 'men' } },
+    { label: 'Watches', count: 124, image: 'category-generated/watches.png', params: { category: 'watches', gender: 'men' } },
+    { label: 'Accessories', count: 52, image: 'category-generated/accessories.png', params: { category: 'accessories', gender: 'men' } },
+    { label: 'Eyewear', count: 37, image: 'category-generated/eyewear.png', params: { category: 'eyewear', gender: 'men' } }
   ],
   women: [
-    { label: 'TOPS', image: 'category-generated/tops.png', params: { category: 'tops', gender: 'women' } },
-    { label: 'DRESSES', image: 'category-generated/dresses.png', params: { category: 'dresses', gender: 'women' } },
-    { label: 'KURTIS', image: 'category-generated/kurti-dress-material.png', params: { q: 'kurti', gender: 'women' } },
-    { label: 'SAREES', image: 'category-generated/saree.png', params: { q: 'saree', gender: 'women' } },
-    { label: 'SHOES', image: 'category-generated/women-footwear.png', params: { category: 'shoes', gender: 'women' } },
-    { label: 'JEWELLERY', image: 'category-generated/jewellery.png', params: { category: 'accessories', gender: 'women' } }
+    { label: 'Shirts', count: 31, image: 'category-generated/men-shirts.png', params: { category: 'shirts', gender: 'women' } },
+    { label: 'T Shirts', count: 95, image: 'category-generated/tshirts.png', params: { category: 't-shirts', gender: 'women' } },
+    { label: 'Dresses', count: 110, image: 'category-generated/dresses.png', params: { category: 'dresses', gender: 'women' } },
+    { label: 'Pants', count: 79, image: 'category-generated/bottomwear.png', params: { category: 'pants', gender: 'women' } },
+    { label: 'Jeans', count: 70, image: 'category-generated/jeans.png', params: { q: 'jeans', gender: 'women' } },
+    { label: 'Jackets', count: 68, image: 'category-generated/jackets.png', params: { category: 'jackets', gender: 'women' } },
+    { label: 'Shoes', count: 104, image: 'category-generated/women-footwear.png', params: { category: 'shoes', gender: 'women' } },
+    { label: 'Watches', count: 124, image: 'category-generated/watches.png', params: { category: 'watches', gender: 'women' } },
+    { label: 'Accessories', count: 52, image: 'category-generated/accessories.png', params: { category: 'accessories', gender: 'women' } },
+    { label: 'Ethnic Wear', count: 136, image: 'category-generated/kurti-dress-material.png', params: { q: 'ethnic wear', gender: 'women' } },
+    { label: 'Eyewear', count: 37, image: 'category-generated/eyewear.png', params: { category: 'eyewear', gender: 'women' } },
+    { label: 'Innerwear', count: 97, image: 'category-generated/innerwear.png', params: { category: 'innerwear', gender: 'women' } },
+    { label: 'Sleepwear', count: 36, image: 'category-generated/sleepwear.png', params: { category: 'sleepwear', gender: 'women' } }
   ]
 };
 
@@ -1944,8 +1960,24 @@ const homeProductFeedPageSize = 48;
 const shopProductGridLimit = 50;
 const searchQuickSuggestions = ['short kurti', 'saree', 'kurti', 'tshirt', 'earring', 'top for women', 'slipper', 'watch', 'top', 'kurti set', 'shoes', 'eyewear'];
 
-function ShopTopBar({ onNavigate, user }) {
-  return <AppHeader onNavigate={onNavigate} user={user} compact />;
+function PageBackRow({ onBack }) {
+  if (!onBack) return null;
+  return (
+    <View style={styles.pageBackRow}>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Go back" activeOpacity={0.86} style={styles.pageBackButton} onPress={onBack}>
+        <Ionicons name="chevron-back" size={21} color="#111111" />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function ShopTopBar({ onNavigate, user, onBack }) {
+  return (
+    <>
+      <AppHeader onNavigate={onNavigate} user={user} compact />
+      <PageBackRow onBack={onBack} />
+    </>
+  );
 }
 
 function CategoryBubble({ item, size = 'large', active = false }) {
@@ -1965,14 +1997,14 @@ function CategoryBubble({ item, size = 'large', active = false }) {
   );
 }
 
-function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate, user }) {
+function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate, onBack, user }) {
   const layout = useResponsiveLayout();
   const content = categoryPageContent[selectedCategory] || categoryPageContent.popular;
   const openTile = (item) => onNavigate('shop', item.params || { sort: 'newest' });
 
   return (
     <View style={styles.categoryScreen}>
-      <ShopTopBar onNavigate={onNavigate} user={user} />
+      <ShopTopBar onNavigate={onNavigate} user={user} onBack={onBack} />
       <View style={styles.categoryBrowser}>
         <ScrollView style={[styles.categoryRail, layout.isTablet && styles.categoryRailTablet]} contentContainerStyle={[styles.categoryRailContent, layout.isTablet && styles.categoryRailContentTablet]} showsVerticalScrollIndicator={false}>
           {categoryRailItems.map((item) => {
@@ -2114,8 +2146,13 @@ function HomeProductRail({ title, subtitle, products = [], loading, error, viewP
   );
 }
 
-function ProductTopBar({ onNavigate, user }) {
-  return <AppHeader onNavigate={onNavigate} user={user} compact />;
+function ProductTopBar({ onNavigate, user, onBack }) {
+  return (
+    <>
+      <AppHeader onNavigate={onNavigate} user={user} compact />
+      <PageBackRow onBack={onBack} />
+    </>
+  );
 }
 
 function ProductActionButton({ label, icon, active, disabled, onPress }) {
@@ -2395,15 +2432,11 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
         </View>
       </View>
 
-      <View ref={catalogTourTarget.ref} onLayout={catalogTourTarget.onLayout} style={styles.homeSection}>
-        <View style={styles.homeSectionHead}>
-          <Text style={styles.homeSectionTitle}>Categories</Text>
-          <TouchableOpacity onPress={() => onNavigate('shop')}>
-            <Text style={styles.homeViewAll}>VIEW ALL</Text>
-          </TouchableOpacity>
-        </View>
+      <View ref={catalogTourTarget.ref} onLayout={catalogTourTarget.onLayout} style={styles.homeFindStyleSection}>
+        <Text style={styles.homeFindStyleTitle}>Find Your Style</Text>
         <ScrollView
           {...horizontalScrollProps}
+          showsHorizontalScrollIndicator
           contentContainerStyle={[styles.homeCategoryTrack, layout.isTablet && styles.homeCategoryTrackTablet]}
           decelerationRate="fast"
           snapToInterval={homeCategorySnapInterval}
@@ -2412,9 +2445,10 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
           {preferredHomeCategories.map((item) => (
             <TouchableOpacity key={item.label} activeOpacity={0.86} style={[styles.homeCategoryItem, layout.isTablet && styles.homeCategoryItemTablet]} onPress={() => onNavigate('shop', item.params || {})}>
               <View style={[styles.homeCategoryImageFrame, layout.isTablet && styles.homeCategoryImageFrameTablet]}>
-                <Image source={images[item.image]} style={styles.homeCategoryImage} resizeMode="contain" />
+                <Image source={images[item.image]} style={styles.homeCategoryImage} resizeMode="cover" />
               </View>
               <Text style={styles.homeCategoryLabel} numberOfLines={1}>{item.label}</Text>
+              <Text style={styles.homeCategoryCount} numberOfLines={1}>{item.count || 0} ITEMS</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -2770,7 +2804,7 @@ function SearchScreen({ initial = {}, user, token, onNavigate, onBack, onAddToWi
   );
 }
 
-function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate, onRequireAuth, onAddToWishlist, wishlistIds }) {
+function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate, onBack, onRequireAuth, onAddToWishlist, wishlistIds }) {
   if (tryOnMode) {
     return <StyleBotScreen user={user} setUser={setUser} token={token} onNavigate={onNavigate} onRequireAuth={onRequireAuth} />;
   }
@@ -2901,6 +2935,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
         selectedCategory={selectedCategory}
         onSelectCategory={setSelectedCategory}
         onNavigate={onNavigate}
+        onBack={onBack}
         user={user}
       />
     );
@@ -2908,7 +2943,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
 
   return (
     <View style={styles.shopScreen}>
-      <ShopTopBar onNavigate={onNavigate} user={user} />
+      <ShopTopBar onNavigate={onNavigate} user={user} onBack={onBack} />
       <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
       <View style={styles.searchPanel}>
         <View style={styles.searchRow}>
@@ -2976,7 +3011,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
   );
 }
 
-function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, onAddToWishlist, wishlistIds }) {
+function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequireAuth, onAddToWishlist, wishlistIds }) {
   const { width } = useWindowDimensions();
   const layout = useResponsiveLayout();
   const [state, setState] = useState({ product: null, loading: true, error: '' });
@@ -3093,7 +3128,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
   if (state.loading || state.error || !state.product) {
     return (
       <View style={styles.productDetailScreen}>
-        <ProductTopBar onNavigate={onNavigate} user={user} />
+        <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack} />
         <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
           <StatusPanel loading={state.loading} error={state.error} empty={!state.loading && !state.product} text="This item may have been removed from the catalog." />
         </ScrollView>
@@ -3131,7 +3166,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onRequireAuth, on
 
   return (
     <View style={styles.productDetailScreen}>
-      <ProductTopBar onNavigate={onNavigate} user={user} />
+      <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack} />
       <ScrollView contentContainerStyle={styles.productDetailContent} {...screenScrollProps}>
       <View style={[styles.productHeroMedia, { height: mediaHeight, width: mediaWidth }]}>
         <ScrollView ref={mediaScrollRef} {...horizontalScrollProps} pagingEnabled contentContainerStyle={styles.productMediaTrack}>
@@ -4003,8 +4038,13 @@ const wardrobeFallbackRecommendations = [
   { title: 'Soft Gallery Fit', images: ['arrival-4.jpg', 'category-4.jpg', 'category-6.jpg'] }
 ];
 
-function WardrobeTopBar({ user, onNavigate }) {
-  return <AppHeader onNavigate={onNavigate} user={user} compact />;
+function WardrobeTopBar({ user, onNavigate, onBack }) {
+  return (
+    <>
+      <AppHeader onNavigate={onNavigate} user={user} compact />
+      <PageBackRow onBack={onBack} />
+    </>
+  );
 }
 
 function WardrobeRecommendationCard({ suggestion, fallback, onPress }) {
@@ -4175,7 +4215,7 @@ function ClosetDetectionCard({ detection, fields, compact = false }) {
   );
 }
 
-function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}, registerTourTarget, tourFocusRequest }) {
+function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, initial = {}, registerTourTarget, tourFocusRequest }) {
   const { height } = useWindowDimensions();
   const layout = useResponsiveLayout();
   const addStudioScrollRef = useRef(null);
@@ -4899,7 +4939,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.wardrobeScreen}>
       <ScrollView contentContainerStyle={styles.wardrobeContent} {...screenScrollProps}>
-        <WardrobeTopBar user={user} onNavigate={onNavigate} />
+        <WardrobeTopBar user={user} onNavigate={onNavigate} onBack={onBack} />
 
         <View style={styles.wardrobeHeroHead}>
           <View>
@@ -5231,7 +5271,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, initial = {}
   );
 }
 
-function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, refreshUser }) {
+function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack, refreshUser }) {
   const layout = useResponsiveLayout();
   const [garment, setGarment] = useState(null);
   const [result, setResult] = useState(null);
@@ -5401,6 +5441,7 @@ function StyleBotScreen({
   setToken,
   token,
   onNavigate,
+  onBack,
   registerTourTarget,
   tourFocusRequest,
   aiStudioConversationId,
@@ -5526,7 +5567,7 @@ function StyleBotScreen({
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.aiStudioScreen}>
-      <ProductTopBar onNavigate={onNavigate} user={user} />
+      <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack} />
       <ScrollView ref={scrollRef} contentContainerStyle={styles.aiStudioContent} {...screenScrollProps}>
         <View style={styles.aiChatThread}>
           {messages.map((message) => {
@@ -6227,7 +6268,7 @@ function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly, selectedTopU
   );
 }
 
-function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
+function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
   const layout = useResponsiveLayout();
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
@@ -6437,6 +6478,7 @@ function TokensScreen({ user, setUser, onNavigate, onRequireAuth }) {
   return (
     <ScrollView style={styles.creditsScreen} contentContainerStyle={styles.creditsContent} {...screenScrollProps}>
       <AppHeader onNavigate={onNavigate} user={user} compact />
+      <PageBackRow onBack={onBack} />
 
       <View style={styles.creditsHero}>
         <View style={styles.creditsHeroCopy}>
@@ -6621,11 +6663,12 @@ function formatFileSize(value) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function WishlistScreen({ onNavigate, token, wishlistProducts = [], user }) {
+function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], user }) {
   const recommended = useProducts({ sort: 'newest', limit: 6 }, token);
   return (
     <ScrollView style={styles.wishlistScreen} contentContainerStyle={styles.wishlistContent} {...screenScrollProps}>
       <AppHeader onNavigate={onNavigate} user={user} compact />
+      <PageBackRow onBack={onBack} />
 
       <View style={styles.wishlistBody}>
         <Text style={styles.wishlistTitle}>My Wishlist <Text style={styles.wishlistCount}>({wishlistProducts.length})</Text></Text>
@@ -6729,13 +6772,14 @@ function WishlistProductCard({ product, onPress }) {
   );
 }
 
-function OrdersScreen({ onNavigate, token, user }) {
+function OrdersScreen({ onNavigate, onBack, token, user }) {
   const popular = useProducts({ limit: 4, sort: 'newest' }, token);
   const popularProducts = popular.products.slice(0, 4);
 
   return (
     <ScrollView style={styles.ordersScreen} contentContainerStyle={styles.ordersContent} {...screenScrollProps}>
       <AppHeader onNavigate={onNavigate} user={user} compact />
+      <PageBackRow onBack={onBack} />
       <View style={styles.ordersBody}>
         <Text style={styles.wishlistTitle}>My Orders</Text>
         <EmptyStateCard
@@ -6832,7 +6876,7 @@ function GenerationHistoryPreview({ items = [], total = 0, loading, error, onNav
   );
 }
 
-function GenerationHistoryScreen({ user, setUser, setToken, token, onNavigate }) {
+function GenerationHistoryScreen({ user, setUser, setToken, token, onNavigate, onBack }) {
   const history = useApiState('/tryons/history?limit=60', token, Boolean(user), { items: [], total: 0 });
   const [lightbox, setLightbox] = useState(null);
 
@@ -6878,6 +6922,7 @@ function GenerationHistoryScreen({ user, setUser, setToken, token, onNavigate })
   return (
     <View style={styles.generationHistoryScreen}>
       <AppHeader onNavigate={onNavigate} user={user} compact />
+      <PageBackRow onBack={onBack} />
       <FlatList
         data={items}
         keyExtractor={(item) => item.id}
@@ -6926,7 +6971,7 @@ function GenerationHistoryScreen({ user, setUser, setToken, token, onNavigate })
   );
 }
 
-function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, registerTourTarget, tourFocusRequest }) {
+function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onLogout, registerTourTarget, tourFocusRequest }) {
   const [photo, setPhoto] = useState(null);
   const [profilePhotoMode, setProfilePhotoMode] = useState('ai-full-body');
   const [message, setMessage] = useState('');
@@ -7309,6 +7354,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onLogout, r
   return (
     <ScrollView ref={profileScrollRef} style={styles.profileScreen} contentContainerStyle={styles.profileContent} {...screenScrollProps}>
       <AppHeader onNavigate={onNavigate} user={user} compact />
+      <PageBackRow onBack={onBack} />
 
       <View style={styles.profileHero}>
         <TouchableOpacity ref={profileAvatarTourTarget.ref} onLayout={profileAvatarTourTarget.onLayout} style={styles.profilePhotoWrap} onPress={openAvatarAdjuster}>
@@ -8461,29 +8507,29 @@ export default function App() {
       case 'home':
         return <HomeScreen onNavigate={guardedNavigate} user={user} token={token} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
       case 'shop':
-        return <ShopScreen initial={routeParams} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onRequireAuth={requestAuth} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
+        return <ShopScreen initial={routeParams} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'search':
         return <SearchScreen initial={routeParams} user={user} token={token} onNavigate={guardedNavigate} onBack={goBack} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'tryon':
-        return user ? <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onRequireAuth={requestAuth} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} /> : <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} /> : <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'closet':
-        return <ClosetScreen initial={routeParams} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
+        return <ClosetScreen initial={routeParams} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
       case 'custom':
-        return <CustomTryOnScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} refreshUser={refreshUser} />;
+        return <CustomTryOnScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} refreshUser={refreshUser} />;
       case 'stylebot':
-        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
+        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
       case 'tokens':
-        return <TokensScreen user={user} setUser={setUser} onNavigate={guardedNavigate} onRequireAuth={requestAuth} />;
+        return <TokensScreen user={user} setUser={setUser} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} />;
       case 'profile':
-        return <ProfileScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onLogout={logout} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
+        return <ProfileScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onLogout={logout} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
       case 'generation-history':
-        return user ? <GenerationHistoryScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <GenerationHistoryScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'wishlist':
-        return user ? <WishlistScreen onNavigate={guardedNavigate} token={token} wishlistProducts={wishlistProducts} user={user} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <WishlistScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} token={token} wishlistProducts={wishlistProducts} user={user} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'orders':
-        return user ? <OrdersScreen onNavigate={guardedNavigate} token={token} user={user} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <OrdersScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} token={token} user={user} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'product':
-        return routeParams.id ? <ProductScreen id={routeParams.id} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onRequireAuth={requestAuth} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onRequireAuth={requestAuth} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
+        return routeParams.id ? <ProductScreen id={routeParams.id} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'signup':
         return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'login':
@@ -8495,7 +8541,7 @@ export default function App() {
       default:
         return <InfoScreen page="missing" user={user} onNavigate={navigate} />;
     }
-  }, [currentRoute.name, routeParamsKey, user, token, navigate, guardedNavigate, requestAuth, addToWishlist, wishlistIds, wishlistProducts, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioTryOns, aiStudioTryOnErrors, refreshUser]);
+  }, [currentRoute.name, routeParamsKey, user, token, navigate, guardedNavigate, requestAuth, addToWishlist, wishlistIds, wishlistProducts, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioTryOns, aiStudioTryOnErrors, refreshUser, routeStack.length, goBack]);
 
   if (!ready || (!fontsLoaded && !fontLoadError)) {
     return (
@@ -8638,6 +8684,30 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
     backgroundColor: '#fbf7f6'
+  },
+  pageBackRow: {
+    width: '100%',
+    paddingHorizontal: 12,
+    paddingTop: 5,
+    paddingBottom: 6,
+    backgroundColor: '#fbf7f6',
+    alignItems: 'flex-start',
+    justifyContent: 'center'
+  },
+  pageBackButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#ece5e1',
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#1f1714',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8
   },
   scrollContent: {
     paddingBottom: Platform.OS === 'android' ? 118 : 132,
@@ -8977,6 +9047,21 @@ const styles = StyleSheet.create({
     marginTop: 26,
     paddingHorizontal: 18
   },
+  homeFindStyleSection: {
+    marginTop: 26,
+    paddingTop: 4,
+    paddingBottom: 4,
+    backgroundColor: '#fffafa'
+  },
+  homeFindStyleTitle: {
+    fontFamily: fontFamilies.logo,
+    color: '#15110f',
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: '400',
+    letterSpacing: 0,
+    textAlign: 'center'
+  },
   homeSectionHead: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -8997,33 +9082,35 @@ const styles = StyleSheet.create({
     letterSpacing: 0
   },
   homeCategoryTrack: {
-    paddingTop: 20,
-    gap: 10,
-    paddingRight: 2
+    paddingTop: 16,
+    paddingBottom: 12,
+    paddingLeft: 16,
+    paddingRight: 22,
+    gap: 14
   },
   homeCategoryTrackTablet: {
     gap: 18,
     paddingRight: 8
   },
   homeCategoryItem: {
-    width: 60,
+    width: 78,
     alignItems: 'center'
   },
   homeCategoryItemTablet: {
     width: 76
   },
   homeCategoryImageFrame: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    padding: 2,
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    padding: 3,
     borderWidth: 1,
-    borderColor: '#eee3dc',
-    backgroundColor: '#fffdfb',
+    borderColor: '#e8ded9',
+    backgroundColor: '#fffdfc',
     shadowColor: '#2a211d',
-    shadowOpacity: 0.1,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 7 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
     elevation: 3
   },
   homeCategoryImageFrameTablet: {
@@ -9040,18 +9127,29 @@ const styles = StyleSheet.create({
   homeCategoryImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 27,
+    borderRadius: 34,
     backgroundColor: '#f3eee9'
   },
   homeCategoryLabel: {
     ...typography.caption,
     width: '100%',
-    marginTop: 11,
-    color: '#25201d',
+    marginTop: 9,
+    color: '#1f1b19',
     fontSize: 10,
-    lineHeight: 13,
+    lineHeight: 12,
     fontWeight: '700',
     textAlign: 'center'
+  },
+  homeCategoryCount: {
+    ...typography.caption,
+    width: '100%',
+    marginTop: 4,
+    color: '#3e3936',
+    fontSize: 9,
+    lineHeight: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: 0.6
   },
   homeCategoryLabelActive: {
     color: '#9b5658'
