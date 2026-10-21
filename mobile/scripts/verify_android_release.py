@@ -14,7 +14,7 @@ import zipfile
 
 APPS = {
     "skillomate": ("com.skillomate.app", "56992ecb073a283c9d34128eeec4bda5c16fe45c"),
-    "lookmefy": ("com.lookmefy.app", "4c279ba50b3a851182f5da1b8cbbb7146056cb75"),
+    "lookmefy": ("com.lookmefy.app", "e047a98f96b23a0fd32232759759603d5105b0eb"),
 }
 
 
@@ -75,6 +75,12 @@ def main():
     actual_package, code, name = match.groups()
     if (actual_package, int(code), name) != (package, args.version_code, args.version_name):
         raise RuntimeError(f"APK identity mismatch: {actual_package} / {name} / {code}")
+
+    # Android checkout does not use Play Billing; expo-iap is iOS-only. A stale
+    # BILLING permission makes Play classify the bundle as obsolete AIDL billing.
+    permissions = re.findall(r"uses-permission: name='([^']+)'", badging)
+    if args.app == "lookmefy" and "com.android.vending.BILLING" in permissions:
+        raise RuntimeError("Lookmefy Android must not declare unused Play BILLING permission")
 
     apk_signing = run(sdk_tool("apksigner"), "verify", "--print-certs", str(args.apk))
     apk_sha1 = re.findall(r"(?:Signer #\d+|V\d+(?:\.\d+)? Signer):? certificate SHA-1 digest: ([0-9a-f]+)", apk_signing)

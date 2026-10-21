@@ -44,6 +44,8 @@
 	<string>Lookmefy needs camera access so you can take profile photos for virtual try-ons.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Lookmefy needs photo access so you can upload profile and clothing images for try-ons.</string>
+	<key>RCTNewArchEnabled</key>
+	<true/>
 	<key>UILaunchStoryboardName</key>
 	<string>SplashScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

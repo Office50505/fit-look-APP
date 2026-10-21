@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeModules, Platform } from 'react-native';
 
 const defaultProductionApi = 'https://api.lookmefy.in/api';
-const developmentApi = Platform.OS === 'android' ? 'http://10.0.2.2:5050/api' : 'http://localhost:5050/api';
 const isDevelopmentRuntime = typeof __DEV__ !== 'undefined' && __DEV__;
 function normalizeApiUrl(url) {
   return String(url || '').trim().replace(/\/$/, '');
@@ -88,14 +87,14 @@ const productionConfiguredApiUrl = configuredApiUrl && !isLocalApiUrl(configured
 const productionConfiguredFallbackApiUrls = configuredFallbackApiUrls.filter((url) => !isLocalApiUrl(url));
 
 export const API_URL = isDevelopmentRuntime
-  ? platformApiUrl(productionConfiguredApiUrl || localRuntimeApiUrl(configuredApiUrl) || developmentApi)
+  ? platformApiUrl(productionConfiguredApiUrl || localRuntimeApiUrl(configuredApiUrl) || defaultProductionApi)
   : platformApiUrl(requireSecureProductionApiUrl(productionConfiguredApiUrl || defaultProductionApi));
 const runtimeApiUrl = isDevelopmentRuntime
-  ? (productionConfiguredApiUrl ? '' : localRuntimeApiUrl(configuredApiUrl || developmentApi))
+  ? (productionConfiguredApiUrl ? '' : localRuntimeApiUrl(configuredApiUrl))
   : '';
 const fallbackApiUrls = isDevelopmentRuntime
   ? configuredFallbackApiUrls.map((url) => (isLocalApiUrl(url) ? localRuntimeApiUrl(url) : platformApiUrl(url))).filter(Boolean)
-  : productionConfiguredFallbackApiUrls.map(platformApiUrl).filter(Boolean);
+  : productionConfiguredFallbackApiUrls.map(requireSecureProductionApiUrl).map(platformApiUrl).filter(Boolean);
 const preferredApiUrl = runtimeApiUrl || API_URL;
 const apiUrls = [...new Set([preferredApiUrl, API_URL, runtimeApiUrl, ...fallbackApiUrls].map(normalizeApiUrl).filter(Boolean))];
 let activeApiUrl = preferredApiUrl;

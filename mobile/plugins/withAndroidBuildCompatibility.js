@@ -1,4 +1,4 @@
-const { withAppBuildGradle, withProjectBuildGradle } = require('expo/config-plugins');
+const { withAndroidManifest, withAppBuildGradle, withProjectBuildGradle } = require('expo/config-plugins');
 
 const ANDROIDX_MARKER = 'LOOKMEFY_ANDROIDX_CORE_PIN';
 const KOTLIN_MARKER = 'LOOKMEFY_KOTLIN_METADATA_COMPAT';
@@ -54,6 +54,20 @@ module.exports = function withAndroidBuildCompatibility(config) {
     ) {
       buildGradle.contents = `${buildGradle.contents.trimEnd()}\n${kotlinMetadataCompatibility}`;
     }
+    return modConfig;
+  });
+
+  // expo-iap is iOS-only in this app. Its plugin still adds the Android billing
+  // permission; remove it so Play does not classify this as legacy AIDL billing.
+  config = withAndroidManifest(config, (modConfig) => {
+    const manifest = modConfig.modResults.manifest;
+    manifest.$ = { ...manifest.$, 'xmlns:tools': 'http://schemas.android.com/tools' };
+    manifest['uses-permission'] = (manifest['uses-permission'] || []).filter(
+      (permission) => permission.$?.['android:name'] !== 'com.android.vending.BILLING'
+    );
+    manifest['uses-permission'].push({
+      $: { 'android:name': 'com.android.vending.BILLING', 'tools:node': 'remove' }
+    });
     return modConfig;
   });
 

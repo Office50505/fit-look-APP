@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "CFBundleIdentifier": "com.kratikdhote.lookmefy",
+    "CFBundleVersion": "26",
+    "CFBundleShortVersionString": "1.0.1",
+    "MinimumOSVersion": "15.1",
+    "DTSDKName": "iphoneos26.5",
+    "DTXcode": "2660",
+    "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
+    "NSPhotoLibraryUsageDescription": "Lookmefy needs photo access so you can upload profile and clothing images for try-ons.",
+    "NSMicrophoneUsageDescription": null
+  },
+  "artifacts": {
+    "lookmefy-ios-1.0.1-26.ipa": {
+      "bytes": 38184781,
+      "sha256": "72f10b2684e797ca968f578aaa81d31206cc66284e45f5c8ac867e3fdb11c432",
+      "zip_verified": true
+    },
+    "lookmefy-ios-1.0.1-build26.xcarchive.zip": {
+      "bytes": 63182215,
+      "sha256": "22b1d2317253c56ce3c66b7aac002babc5270cec18cee888462d615d7a868bf4",
+      "zip_verified": true
+    }
+  },
+  "baseline": {
+    "CFBundleIdentifier": "com.kratikdhote.lookmefy",
+    "CFBundleVersion": "25",
+    "CFBundleShortVersionString": "1.0.1",
+    "MinimumOSVersion": "15.1",
+    "DTSDKName": "iphoneos26.5",
+    "DTXcode": "2660",
+    "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
+    "NSPhotoLibraryUsageDescription": "Lookmefy needs photo access so you can upload profile and clothing images for try-ons.",
+    "NSMicrophoneUsageDescription": null
+  },
+  "archive_bytes": 157258770,
+  "baseline_archive_bytes": 157165776,
+  "archive_signing": "Apple Development: Ali Hussain Khan (JGXF4R39DG)",
+  "ipa_signing": "Apple Distribution: Ali Hussain Khan (LJ48CVC23W)",
+  "team": "LJ48CVC23W",
+  "signature_verification": "Archive and IPA: codesign --verify --deep --strict PASS with system trust services",
+  "export": "Local app-store-connect export; no upload"
+}

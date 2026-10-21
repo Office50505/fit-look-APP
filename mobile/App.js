@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BlurView } from 'expo-blur';
 import { useFonts } from 'expo-font';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { SafeAreaProvider, SafeAreaView as InsetSafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Component, createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -16,8 +18,8 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Linking,
+  LogBox,
   Modal,
-  NativeModules,
   PanResponder,
   Platform,
   Pressable,
@@ -32,9 +34,16 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
-import { api, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
+import { api as sendApi, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
+import { authenticatedMediaSource, privateMediaPath, renewPrivateImageUrl } from './src/privateMediaRecovery';
+import { accountDeletionOutcome, createPhotoConsentGate, guardAiPhotoSubmission, requireGeneratedImage, contentReportReasons, createContentReportClient, reportContentReference } from './src/frontendReleaseSafety';
+import { creditPackageDescription, creditPackageDisplayPrice, creditPurchaseAvailability, creditSubscriptionStatus, knownCreditBalance, paymentCatalogAvailable, recurringPeriodLabel, showMandateTermsForPlatform } from './src/creditPresentation';
+import { persistWishlistProducts, removeWishlistProduct, wishlistFilterTabMinWidth, wishlistGridColumnsForWidth, wishlistPriceValue } from './src/wishlistPresentation';
+import { beginGooglePlayPurchase, googlePlayPurchaseCancelled, initGooglePlayCatalog } from './src/googlePlayClient';
+import { subscriptionTerms } from './src/paymentTerms';
 import { categories, images, infoPages, policyPages } from './src/assets';
-import { calculateCreditPercentage, normalizeProduct, normalizeProducts, resolveImageUrl } from './src/products';
+import { calculateCreditPercentage, normalizeProduct, normalizeProducts, productCategoryPresentation, productMerchantUrl, resolveImageUrl, verifiedProductBrand, verifiedProductRating } from './src/products';
+import { shouldFinishBackSwipe, shouldStartBackSwipe } from './src/gestureNavigation';
 import {
   STOREKIT_CONSUMABLE_PRODUCT_IDS,
   STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID,
@@ -51,6 +60,23 @@ const wardrobeFootwearIcon = require('./assets/wardrobe-footwear-icon.png');
 
 const USER_PASSWORD_MIN_LENGTH = 6;
 const USER_PASSWORD_MAX_BYTES = 72;
+
+const photoConsentGate = createPhotoConsentGate();
+const ContentReportingContext = createContext('');
+const PrivateMediaSessionContext = createContext('');
+async function refreshPrivateImage(uri) {
+  return renewPrivateImageUrl(uri, {
+    apiOrigin: imageUrl('/api/health'), request: sendApi, resolveUrl: imageUrl, getSessionToken: getToken
+  });
+}
+async function api(path, options = {}) {
+  return guardAiPhotoSubmission(sendApi, path, options, photoConsentGate.request);
+}
+
+if (typeof __DEV__ !== 'undefined' && __DEV__) {
+  LogBox.ignoreLogs(['SafeAreaView has been deprecated and will be removed in a future release.']);
+}
+
 const genders = ['men', 'women', 'unisex'];
 const profileGenderOptions = [
   { value: 'female', label: 'Female', icon: 'female-outline' },
@@ -110,6 +136,7 @@ const homeCategorySnapInterval = 70;
 const productImageAspectRatio = 0.72;
 const aiTryOnRequestTimeoutMs = 420000;
 const aiTryOnJobTimeoutMs = 420000;
+const defaultTryOnCreditCost = 1;
 const avatarCropReferenceSize = 132;
 const wishlistStorageVersion = 'v1';
 const collectionStorageVersion = 'v1';
@@ -197,24 +224,9 @@ const missionProductPresets = {
     ]
   }
 };
-const homeMissionTiles = [
-  { label: 'College', mission: 'college', image: 'lookmefy_model_07.png', tileStyle: { backgroundColor: '#ddd4ca' }, imageStyle: { top: -5, height: 142 } },
-  { label: 'Office', mission: 'office', image: 'lookmefy_model_06.png', tileStyle: { backgroundColor: '#d8d2ca' }, imageStyle: { top: -6, height: 145 } },
-  { label: 'Date', mission: 'date', image: 'lookmefy_model_02.png', tileStyle: { backgroundColor: '#d6cfc8' }, imageStyle: { top: -4, height: 142 } },
-  { label: 'Wedding', mission: 'wedding', image: 'lookmefy_model_03.png', tileStyle: { backgroundColor: '#d8cec3' }, imageStyle: { top: -6, height: 146 } },
-  { label: 'Travel', mission: 'travel', image: 'lookmefy_model_01.png', tileStyle: { backgroundColor: '#ded7ce' }, imageStyle: { top: -8, height: 148 } },
-  { label: 'Festive', mission: 'festive', image: 'lookmefy_model_08.png', tileStyle: { backgroundColor: '#d2cbc3' }, imageStyle: { top: -4, height: 142 } }
-];
-const homeMissionCopy = {
-  title: 'Choose your\noutfit mission',
-  subtitle: 'Same you. New looks.\nFor every part of your life.'
-};
-const homeMissionModel = {
-  image: 'lookmefyStaticHeroModel',
-  modelStyle: { right: -30, top: -18, width: 236, height: 278 }
-};
 const fontAssets = {
   BodoniModa_400Regular: require('@expo-google-fonts/bodoni-moda/400Regular/BodoniModa_400Regular.ttf'),
+  BodoniModa_600SemiBold: require('@expo-google-fonts/bodoni-moda/600SemiBold/BodoniModa_600SemiBold.ttf'),
   PlusJakartaSans_600SemiBold: require('@expo-google-fonts/plus-jakarta-sans/600SemiBold/PlusJakartaSans_600SemiBold.ttf'),
   PlusJakartaSans_700Bold: require('@expo-google-fonts/plus-jakarta-sans/700Bold/PlusJakartaSans_700Bold.ttf'),
   Manrope_400Regular: require('@expo-google-fonts/manrope/400Regular/Manrope_400Regular.ttf'),
@@ -224,6 +236,7 @@ const fontAssets = {
 };
 const fontFamilies = {
   logo: 'BodoniModa_400Regular',
+  hero: 'BodoniModa_600SemiBold',
   headingSemiBold: 'PlusJakartaSans_600SemiBold',
   headingBold: 'PlusJakartaSans_700Bold',
   bodyRegular: 'Manrope_400Regular',
@@ -282,11 +295,11 @@ const onboardingSeenStoragePrefix = 'lookmefy_onboarding_seen';
 const onboardingTourSteps = [
   {
     key: 'intro',
-    eyebrow: 'WELCOME',
-    title: "Let's take a quick tour",
-    text: "It takes a few seconds to show where your profile, AI Studio, wardrobe, and shopping tools live.",
+    eyebrow: 'YOUR STYLE, YOUR STUDIO',
+    title: 'Welcome to Lookmefy',
+    text: 'Try clothing virtually, build your wardrobe, and find inspiration with your personal AI stylist.',
     icon: 'sparkles-outline',
-    primary: 'Take a tour'
+    primary: 'Start the tour'
   },
   {
     key: 'shop',
@@ -306,12 +319,12 @@ const onboardingTourSteps = [
   },
   {
     key: 'stylist',
-    eyebrow: 'AI STUDIO',
-    title: 'Ask for fashion',
-    text: 'Tell Lookmefy the item, occasion, budget, colour, fabric, or vibe. AI Studio searches wearable fashion.',
+    eyebrow: 'AI STYLIST',
+    title: 'Style starts with you',
+    text: 'Ask for an outfit, a particular piece, or a little inspiration tailored to the moment.',
     icon: 'sparkles-outline',
     targetKey: 'ai-studio-composer',
-    route: { name: 'tryon' },
+    route: { name: 'stylebot' },
     placement: 'above',
     target: ({ width, height }) => ({
       x: 20,
@@ -323,12 +336,22 @@ const onboardingTourSteps = [
   {
     key: 'wardrobe',
     eyebrow: 'WARDROBE',
-    title: 'Add your clothes',
-    text: 'Upload an item and Lookmefy can read its type, colour, fabric, pattern, and tags for review.',
+    title: 'Your wardrobe, reimagined',
+    text: 'Save the clothes you own and discover new ways to style them.',
     icon: 'shirt-outline',
     targetKey: 'wardrobe-upload',
     route: { name: 'closet', params: { view: 'add' } },
     placement: 'below',
+    focusTarget: (target) => {
+      const focusHeight = Math.min(132, target.height);
+      const horizontalInset = Math.min(12, Math.max(0, (target.width - 48) / 2));
+      return {
+        x: target.x + horizontalInset,
+        y: target.y + Math.max(0, (target.height - focusHeight) / 2),
+        width: target.width - horizontalInset * 2,
+        height: focusHeight
+      };
+    },
     target: ({ width, height }) => ({
       x: 20,
       y: Math.min(292, Math.max(210, height * 0.24)),
@@ -587,13 +610,17 @@ function friendlyFirstName(user) {
   return name && !suspicious ? titleCase(name) : '';
 }
 
-function initialAiStudioMessages(user) {
+function aiStudioWelcomeText(user) {
   const firstName = friendlyFirstName(user);
+  return `${firstName ? `Hi ${firstName}. ` : ''}Tell me what you're looking for — an outfit, a particular piece, or a little inspiration.`;
+}
+
+function initialAiStudioMessages(user) {
   return [
     {
       id: `welcome-${user?.id || user?._id || user?.phone || 'guest'}`,
       role: 'assistant',
-      text: `Hi${firstName ? ` ${firstName}` : ''}. Tell me what fashion item you want: shirts, dresses, pants, shoes, accessories, budget, colour, fabric, or vibe.`
+      text: aiStudioWelcomeText(user)
     }
   ];
 }
@@ -723,8 +750,33 @@ function tryOnProfileBlockMessage(user) {
 function aiFeatureErrorMessage(error, fallback = 'AI request could not be completed. Try again in a moment.') {
   const message = String(error?.message || '').trim();
   if (!message) return fallback;
-  if (isMissingRouteError(message)) return 'This AI feature is not active on the running backend. Restart the backend with the latest code, then try again.';
+  if (isMissingRouteError(message)) return 'This AI feature is unavailable right now. Please try again later.';
   return message;
+}
+
+function aiStudioErrorMessage(error) {
+  const status = Number(error?.status) || 0;
+  const code = String(error?.code || '').toLowerCase();
+  const message = String(error?.message || '').trim();
+  const detail = String(error?.detail || '').trim();
+  const combined = `${message} ${detail}`;
+  if (status === 401) return 'Your session expired. Please log in again.';
+  if (status === 429) return 'Your stylist is receiving a lot of requests. Please wait a moment and try again.';
+  if (code === 'timeout' || /timed out|still processing/i.test(combined)) return 'Your stylist is taking longer than expected. Please try again.';
+  if (code === 'network_unreachable' || /cannot reach|network request failed|failed to fetch|connection refused/i.test(combined)) {
+    return 'Your stylist could not connect. Check your connection and try again.';
+  }
+  if (/not enough (?:tokens|credits)|insufficient (?:tokens|credits)/i.test(combined)) {
+    return 'You do not have enough credits for this request.';
+  }
+  if (isMissingRouteError(message)) return 'Your stylist is unavailable on the running backend. Please try again later.';
+  return "Your stylist couldn't respond. Please try again.";
+}
+
+function customGarmentErrorMessage(error) {
+  const message = aiFeatureErrorMessage(error, 'Could not generate custom try-on. Try again in a moment.');
+  const garmentIssue = /(?:garment|cloth(?:ing)?).*(?:invalid|unsupported|unclear|unreadable|not detected|could not detect)|(?:invalid|unsupported|unclear|unreadable|not detected|could not detect).*(?:garment|cloth(?:ing)?)/i;
+  return garmentIssue.test(message) ? 'Please choose a clearer clothing photo.' : message;
 }
 
 function isAuthExpiredError(error) {
@@ -756,14 +808,14 @@ function clampAvatarNumber(value, min, max, fallback) {
 
 function defaultAvatarCrop(user) {
   return isGeneratedFullBodyAvatar(user)
-    ? { scale: 2.35, translateX: 0, translateY: 0 }
+    ? { scale: 4.2, translateX: 0, translateY: 0 }
     : { scale: 1.04, translateX: 0, translateY: 0 };
 }
 
 function avatarCropForUser(user, override) {
   const defaults = defaultAvatarCrop(user);
-  const source = override || user?.avatarCrop || {};
-  const minScale = isGeneratedFullBodyAvatar(user) ? 1.4 : 1;
+  const source = override || (isGeneratedFullBodyAvatar(user) ? {} : user?.avatarCrop) || {};
+  const minScale = isGeneratedFullBodyAvatar(user) ? 4.2 : 1;
   return {
     scale: clampAvatarNumber(source.scale, minScale, 5, defaults.scale),
     translateX: clampAvatarNumber(source.translateX ?? source.x, -160, 160, defaults.translateX),
@@ -999,9 +1051,13 @@ function collectionStorageKey(user) {
 }
 
 const ResilientImage = memo(function ResilientImage({ source, fallbackSource, style, imageStyle, imageBaseStyle, resizeMode = 'cover', alt, fallbackIcon = 'image-outline', fallbackText }) {
+  const privateMediaSession = useContext(PrivateMediaSessionContext);
   const [sourceIndex, setSourceIndex] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [renewedSource, setRenewedSource] = useState(null);
+  const renewalAttempted = useRef('');
+  const sourceEpoch = useRef(0);
   const sources = useMemo(() => {
     const entries = [source, fallbackSource].filter(Boolean);
     const seen = new Set();
@@ -1013,15 +1069,21 @@ const ResilientImage = memo(function ResilientImage({ source, fallbackSource, st
     });
   }, [source, fallbackSource]);
   const signature = sources.map(sourceSignature).join('|');
-  const activeSource = sources[sourceIndex];
+  const activeSource = renewedSource || sources[sourceIndex];
+  const renderSource = authenticatedMediaSource(activeSource, { apiOrigin: imageUrl('/api/health'), sessionToken: privateMediaSession });
+  const fallbackLayerSource = authenticatedMediaSource(fallbackSource, { apiOrigin: imageUrl('/api/health'), sessionToken: privateMediaSession });
 
   useEffect(() => {
+    sourceEpoch.current += 1;
+    renewalAttempted.current = '';
+    setRenewedSource(null);
     setSourceIndex(0);
     setLoaded(false);
     setFailed(false);
-  }, [signature]);
+    return () => { sourceEpoch.current += 1; };
+  }, [signature, privateMediaSession]);
 
-  if (!activeSource || failed) {
+  if (!renderSource || failed) {
     return (
       <View style={[style, styles.resilientImageFrame, styles.resilientImageFallback]} accessibilityLabel={alt || 'Image unavailable'}>
         <Ionicons name={fallbackIcon} size={22} color="#9b8f89" />
@@ -1030,21 +1092,40 @@ const ResilientImage = memo(function ResilientImage({ source, fallbackSource, st
     );
   }
 
-  const hasFallbackLayer = fallbackSource && sourceSignature(fallbackSource) !== sourceSignature(activeSource);
+  const hasFallbackLayer = fallbackLayerSource && sourceSignature(fallbackSource) !== sourceSignature(activeSource);
 
   return (
     <View style={[style, styles.resilientImageFrame]}>
-      {hasFallbackLayer ? <Image source={fallbackSource} style={[imageBaseStyle || styles.resilientImage, imageStyle]} resizeMode={resizeMode} /> : null}
+      {hasFallbackLayer ? <Image source={fallbackLayerSource} style={[imageBaseStyle || styles.resilientImage, imageStyle]} resizeMode={resizeMode} /> : null}
       {!loaded && !hasFallbackLayer ? <View style={styles.resilientImageSkeleton} /> : null}
       <Image
         accessibilityLabel={alt}
-        source={activeSource}
+        source={renderSource}
         style={[imageBaseStyle || styles.resilientImage, imageStyle]}
         resizeMode={resizeMode}
         fadeDuration={160}
         onLoad={() => setLoaded(true)}
         onError={() => {
+          const uri = activeSource?.uri;
+          if (uri && renewalAttempted.current !== signature && privateMediaPath(uri, imageUrl('/api/health'))) {
+            renewalAttempted.current = signature;
+            const epoch = sourceEpoch.current;
+            refreshPrivateImage(uri)
+              .then((renewed) => {
+                if (epoch !== sourceEpoch.current) return;
+                if (renewed) { setRenewedSource({ uri: renewed }); setLoaded(false); return; }
+                if (sourceIndex < sources.length - 1) { setSourceIndex((current) => current + 1); setRenewedSource(null); }
+                else { setLoaded(true); setFailed(true); }
+              })
+              .catch(() => {
+                if (epoch !== sourceEpoch.current) return;
+                if (sourceIndex < sources.length - 1) { setSourceIndex((current) => current + 1); setRenewedSource(null); }
+                else { setLoaded(true); setFailed(true); }
+              });
+            return;
+          }
           if (sourceIndex < sources.length - 1) {
+            setRenewedSource(null);
             setLoaded(false);
             setSourceIndex((current) => current + 1);
           } else {
@@ -1058,21 +1139,32 @@ const ResilientImage = memo(function ResilientImage({ source, fallbackSource, st
 });
 
 const ProductImage = memo(function ProductImage({ product, tryOn, style, resizeMode, alt, fallbackIcon = 'image-outline' }) {
+  const privateMediaSession = useContext(PrivateMediaSessionContext);
   const [imageIndex, setImageIndex] = useState(0);
   const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [renewedUri, setRenewedUri] = useState('');
+  const renewalAttempted = useRef('');
+  const sourceEpoch = useRef(0);
   const tryOnUrl = tryOnImageUrl(tryOn);
   const imageUrls = useMemo(() => (
     tryOnUrl ? [tryOnUrl] : (product?.imageUrls?.length ? product.imageUrls : [product?.imageUrl]).filter(Boolean)
   ), [tryOnUrl, product?.imageUrl, product?.imageUrls]);
   const imageSignature = imageUrls.join('|');
-  const source = useMemo(() => (imageUrls[imageIndex] ? { uri: imageUrls[imageIndex] } : null), [imageUrls, imageIndex]);
+  const source = useMemo(() => (renewedUri || imageUrls[imageIndex] ? { uri: renewedUri || imageUrls[imageIndex] } : null), [renewedUri, imageUrls, imageIndex]);
+  const renderSource = authenticatedMediaSource(source, { apiOrigin: imageUrl('/api/health'), sessionToken: privateMediaSession });
 
   useEffect(() => {
+    sourceEpoch.current += 1;
+    renewalAttempted.current = '';
+    setRenewedUri('');
     setImageIndex(0);
     setLoaded(false);
-  }, [product?.id, tryOnUrl, imageSignature]);
+    setFailed(false);
+    return () => { sourceEpoch.current += 1; };
+  }, [product?.id, tryOnUrl, imageSignature, privateMediaSession]);
 
-  if (!source) {
+  if (!renderSource || failed) {
     return (
       <View style={[style, styles.productImageFallback]} accessibilityLabel={alt || product?.title || product?.name || 'Product image unavailable'}>
         <Ionicons name={fallbackIcon} size={26} color="#9b8f89" />
@@ -1086,14 +1178,37 @@ const ProductImage = memo(function ProductImage({ product, tryOn, style, resizeM
       {!loaded ? <View style={styles.productImageSkeleton} /> : null}
       <Image
         accessibilityLabel={alt || product?.title || product?.name || 'Product image'}
-        source={source}
+        source={renderSource}
         style={[StyleSheet.absoluteFillObject, styles.productImage]}
         resizeMode={resizeMode || productImageResizeMode(tryOn)}
         fadeDuration={160}
         onLoad={() => setLoaded(true)}
         onError={() => {
-          if (imageIndex < imageUrls.length - 1) setImageIndex((current) => current + 1);
-          else setLoaded(true);
+          if (source?.uri && renewalAttempted.current !== imageSignature && privateMediaPath(source.uri, imageUrl('/api/health'))) {
+            renewalAttempted.current = imageSignature;
+            const epoch = sourceEpoch.current;
+            refreshPrivateImage(source.uri)
+              .then((renewed) => {
+                if (epoch !== sourceEpoch.current) return;
+                if (renewed) { setRenewedUri(renewed); setLoaded(false); return; }
+                if (imageIndex < imageUrls.length - 1) { setImageIndex((current) => current + 1); setRenewedUri(''); setLoaded(false); }
+                else { setLoaded(true); setFailed(true); }
+              })
+              .catch(() => {
+                if (epoch !== sourceEpoch.current) return;
+                if (imageIndex < imageUrls.length - 1) { setImageIndex((current) => current + 1); setRenewedUri(''); setLoaded(false); }
+                else { setLoaded(true); setFailed(true); }
+              });
+            return;
+          }
+          if (imageIndex < imageUrls.length - 1) {
+            setRenewedUri('');
+            setLoaded(false);
+            setImageIndex((current) => current + 1);
+          } else {
+            setLoaded(true);
+            setFailed(true);
+          }
         }}
       />
     </View>
@@ -1196,6 +1311,26 @@ function homeProductGroup(product = {}) {
   if (/jacket|blazer|coat|hoodie|sweater|sweatshirt/.test(text)) return 'layers';
   if (/beauty|makeup|cream|serum|lipstick|skin|hair|perfume/.test(text)) return 'beauty';
   return String(product.category || product.displayLabel || 'other').toLowerCase() || 'other';
+}
+
+function fashionFirstHomeProducts(products = []) {
+  const priority = {
+    dresses: 0,
+    ethnic: 0,
+    tops: 0,
+    bottoms: 0,
+    layers: 0,
+    footwear: 1,
+    accessories: 2,
+    eyewear: 2,
+    watches: 4,
+    beauty: 4,
+    other: 3
+  };
+  return uniqueProductsWithImages(products)
+    .map((product, index) => ({ product, index, rank: priority[homeProductGroup(product)] ?? 3 }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(({ product }) => product);
 }
 
 function diversifyHomeProducts(products = [], fallbackProducts = [], minimum = 8) {
@@ -1431,6 +1566,72 @@ function useProducts(params, token) {
   return { ...state, reload: load };
 }
 
+function usePagedShopProducts(filters, token, missionPreset, pageSize = shopProductPageSize) {
+  const query = useMemo(() => {
+    const search = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') search.set(key, value);
+    });
+    return search.toString();
+  }, [JSON.stringify(filters)]);
+  const [state, setState] = useState({ products: [], total: 0, loading: true, loadingMore: false, error: '', loadMoreError: '', hasMore: false });
+  const pageRef = useRef(null);
+
+  useEffect(() => {
+    const page = { alive: true, inFlight: false, failed: false, skip: 0, total: Infinity, hasMore: true, ids: new Set(), load: null };
+    pageRef.current = page;
+    setState({ products: [], total: 0, loading: true, loadingMore: false, error: '', loadMoreError: '', hasMore: false });
+
+    page.load = async (retry = false) => {
+      if (!page.alive || page.inFlight || !page.hasMore || (page.failed && !retry)) return;
+      page.failed = false;
+      page.inFlight = true;
+      const firstPage = page.skip === 0;
+      if (!firstPage) setState((current) => ({ ...current, loadingMore: true, loadMoreError: '' }));
+      try {
+        const data = await api(productListPath(query, { limit: pageSize, skip: page.skip, includeTotal: 'true' }));
+        if (!page.alive) return;
+        const records = Array.isArray(data.products) ? data.products : [];
+        const incoming = orderProductsForMission(uniqueProductsById(normalizeProducts(records)), missionPreset);
+        if (!firstPage && incoming.length && incoming.every((product) => page.ids.has(product.id))) {
+          page.failed = true;
+          setState((current) => ({ ...current, loadingMore: false, loadMoreError: 'More products are unavailable from the catalog service right now.' }));
+          return;
+        }
+        incoming.forEach((product) => page.ids.add(product.id));
+        page.skip += records.length;
+        page.total = Number.isFinite(Number(data.total)) ? Number(data.total) : page.skip;
+        page.hasMore = records.length > 0 && page.skip < page.total;
+        setState((current) => ({
+          products: uniqueProductsById(firstPage ? incoming : [...current.products, ...incoming]),
+          total: page.total,
+          loading: false,
+          loadingMore: false,
+          error: '',
+          loadMoreError: '',
+          hasMore: page.hasMore
+        }));
+      } catch (error) {
+        if (!page.alive) return;
+        page.failed = true;
+        setState((current) => ({ ...current, loading: false, loadingMore: false, error: firstPage ? error.message : '', loadMoreError: firstPage ? '' : error.message }));
+      } finally {
+        page.inFlight = false;
+      }
+    };
+
+    page.load();
+    return () => {
+      page.alive = false;
+      if (pageRef.current === page) pageRef.current = null;
+    };
+  }, [query, token, missionPreset?.id, pageSize]);
+
+  const loadMore = useCallback(() => pageRef.current?.load(), []);
+  const retryLoadMore = useCallback(() => pageRef.current?.load(true), []);
+  return { ...state, loadMore, retryLoadMore };
+}
+
 function useRecommendedProducts(user, token, limit = 8, refreshKey = 0) {
   const [state, setState] = useState({
     products: [],
@@ -1567,21 +1768,22 @@ async function openExternalWebUrl(value) {
 }
 
 async function pickImage() {
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) {
-    showMediaPermissionAlert(
-      'Photo access needed',
-      'Allow photo access to upload images for Lookmefy try-ons.',
-      permission,
-    );
+  // The image-only system picker grants access to the selected photo; broad library access is unnecessary.
+  try {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.9
+    });
+    if (result.canceled) return null;
+    return result.assets?.[0] || null;
+  } catch (error) {
+    if (/permission|denied/i.test(error?.message || '')) {
+      showMediaPermissionAlert('Photo access needed', 'Choose a photo or enable photo access for Lookmefy in Settings.', { canAskAgain: false });
+    } else {
+      Alert.alert('Photos unavailable', 'Your photos could not be opened. Please try again.');
+    }
     return null;
   }
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    quality: 0.9
-  });
-  if (result.canceled) return null;
-  return result.assets?.[0] || null;
 }
 
 async function takePhoto() {
@@ -1602,7 +1804,7 @@ async function takePhoto() {
   return result.assets?.[0] || null;
 }
 
-function AppButton({ label, icon, variant = 'primary', disabled, onPress, style }) {
+function AppButton({ label, icon, variant = 'primary', disabled, onPress, style, labelProps }) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -1619,12 +1821,12 @@ function AppButton({ label, icon, variant = 'primary', disabled, onPress, style 
       ]}
     >
       {icon ? <Ionicons name={icon} size={17} color={variant === 'primary' ? '#fff' : '#111827'} /> : null}
-      <Text style={[styles.buttonText, variant !== 'primary' && styles.secondaryButtonText]}>{label}</Text>
+      <Text style={[styles.buttonText, variant !== 'primary' && styles.secondaryButtonText]} {...labelProps}>{label}</Text>
     </Pressable>
   );
 }
 
-function BrandLogo({ compact = false, light = false, style, textStyle, symbolStyle, dividerStyle }) {
+function BrandLogo({ compact = false, light = false, style, textStyle, textProps, symbolStyle, dividerStyle }) {
   return (
     <View style={[styles.brandLogo, compact && styles.brandLogoCompact, style]}>
       <Image
@@ -1638,7 +1840,7 @@ function BrandLogo({ compact = false, light = false, style, textStyle, symbolSty
         resizeMode="contain"
       />
       <View style={[styles.brandLogoDivider, compact && styles.brandLogoDividerCompact, light && styles.brandLogoDividerLight, dividerStyle]} />
-      <Text style={[styles.brandLogoText, compact && styles.brandLogoTextCompact, light && styles.brandLogoTextLight, textStyle]} numberOfLines={1}>
+      <Text style={[styles.brandLogoText, compact && styles.brandLogoTextCompact, light && styles.brandLogoTextLight, textStyle]} numberOfLines={1} {...textProps}>
         Lookmefy
       </Text>
     </View>
@@ -1708,7 +1910,11 @@ function headerCreditLabel(user) {
   return rawCredits.toLocaleString('en-IN');
 }
 
-function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', leftRoute = 'profile', rightIcon = 'receipt-outline', rightRoute = 'orders', user, showAvatar = false, hideLeft = true, brandAlign = 'left', compact = false, showWishlist = true, showSearch = true, registerTourTarget, tourTargetKeys = {} }) {
+function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', leftRoute = 'profile', rightIcon = 'receipt-outline', rightRoute = 'orders', user, showAvatar = false, hideLeft = true, brandAlign = 'left', compact = false, showWishlist = true, showSearch = true, preserveWordmarkOnNarrow = false, registerTourTarget, tourTargetKeys = {} }) {
+  const { width, fontScale } = useWindowDimensions();
+  const narrowHeader = width < 360;
+  const iconOnlyCredit = width < 350 && fontScale > 1.15;
+  const compactToSymbol = narrowHeader && !preserveWordmarkOnNarrow;
   const openLeft = () => leftRoute && onNavigate(leftRoute);
   const openRight = () => rightRoute && onNavigate(rightRoute);
   const showWishlistAction = showWishlist && !showAvatar;
@@ -1722,7 +1928,8 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
   const creditLabel = headerCreditLabel(user);
   const creditAccessibilityLabel = `Open credits, ${creditLabel} credits available`;
   return (
-    <View style={[styles.appHeader, compact && styles.appHeaderCompact]}>
+    <View style={[styles.appHeader, compact && styles.appHeaderCompact, narrowHeader && styles.appHeaderNarrow]}>
+      <IosGlassBackdrop />
       {!brandLeft ? (
         <View style={[styles.appHeaderSide, styles.appHeaderLeftSide]}>
           {hideLeft ? null : (
@@ -1732,10 +1939,14 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
           )}
         </View>
       ) : null}
-      <Pressable accessibilityRole="button" accessibilityLabel="Go to feed" onPress={() => onNavigate('home')} style={[styles.appHeaderBrandWrap, brandLeft && styles.appHeaderBrandWrapLeft]}>
-        {title === 'Lookmefy' ? <BrandLogo compact={compact} /> : <Text style={styles.appHeaderBrand} numberOfLines={1}>{title}</Text>}
+      <Pressable accessibilityRole="button" accessibilityLabel="Go to feed" onPress={() => onNavigate('home')} style={[styles.appHeaderBrandWrap, brandLeft && styles.appHeaderBrandWrapLeft, compactToSymbol && styles.appHeaderBrandWrapNarrow]}>
+        {title === 'Lookmefy' ? (
+          compactToSymbol
+            ? <Image source={logoSymbol} style={styles.appHeaderNarrowLogo} resizeMode="contain" />
+            : <BrandLogo compact={compact} style={preserveWordmarkOnNarrow && narrowHeader ? styles.aiStudioHeaderBrandLogo : null} textStyle={preserveWordmarkOnNarrow && narrowHeader ? styles.aiStudioHeaderBrandText : null} textProps={preserveWordmarkOnNarrow && narrowHeader ? { maxFontSizeMultiplier: 1 } : undefined} />
+        ) : <Text style={styles.appHeaderBrand} numberOfLines={1}>{title}</Text>}
       </Pressable>
-      <View style={[styles.appHeaderSide, styles.appHeaderRightSide]}>
+      <View style={[styles.appHeaderSide, styles.appHeaderRightSide, narrowHeader && styles.appHeaderRightSideNarrow]}>
         {showWishlistAction ? (
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open wishlist" style={styles.appHeaderAction} onPress={() => onNavigate('wishlist')}>
             <Ionicons name="heart-outline" size={21} color="#171412" />
@@ -1744,7 +1955,7 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
         {!showAvatar ? (
           <TouchableOpacity accessibilityRole="button" accessibilityLabel={creditAccessibilityLabel} style={[styles.appHeaderAction, styles.appHeaderCreditAction]} onPress={() => onNavigate('tokens')}>
             <Ionicons name="sparkles-outline" size={11} color="#171412" />
-            <Text style={styles.appHeaderCreditText} numberOfLines={1}>{creditLabel}</Text>
+            {!iconOnlyCredit ? <Text style={styles.appHeaderCreditText} numberOfLines={1}>{creditLabel}</Text> : null}
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity ref={avatarTourTarget.ref} onLayout={avatarTourTarget.onLayout} accessibilityRole="button" accessibilityLabel={rightRoute === 'orders' ? 'Open orders' : 'Open bag'} style={styles.appHeaderAction} onPress={openRight}>
@@ -1762,28 +1973,38 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
   );
 }
 
+function IosGlassBackdrop({ intensity = 34 }) {
+  return Platform.OS === 'ios' ? (
+    <BlurView pointerEvents="none" intensity={intensity} tint="systemUltraThinMaterialLight" style={[StyleSheet.absoluteFillObject, styles.iosGlassBackdrop]} />
+  ) : null;
+}
+
 function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
   const layout = useResponsiveLayout();
+  const { width, fontScale } = useWindowDimensions();
+  const compactNav = width < 360 || (width < 390 && fontScale > 1.15);
   const routeName = route?.name || 'home';
   const activeRoute = routeName === 'product' || routeName === 'wishlist' || routeName === 'search'
       ? 'shop'
       : routeName;
   const items = [
-    ['home', 'home-outline', 'Home'],
-    ['shop', 'search-outline', 'Categories'],
-    ['tryon', 'camera-outline', 'Try-On'],
-    ['closet', 'shirt-outline', 'Wardrobe'],
-    ['stylebot', 'sparkles-outline', 'AI Styles']
+    ['home', 'home-outline', 'home', 'Home'],
+    ['shop', 'grid-outline', 'grid', 'Categories'],
+    ['tryon', 'scan-outline', 'scan', 'Try-On'],
+    ['closet', 'shirt-outline', 'shirt', 'Wardrobe'],
+    ['stylebot', 'sparkles-outline', 'sparkles', 'AI Stylist']
   ];
   return (
-    <View style={[styles.bottomNav, layout.isTablet && styles.bottomNavTablet]}>
-      {items.map(([name, icon, label]) => {
+    <View style={[styles.bottomNav, compactNav && styles.bottomNavCompact, layout.isTablet && styles.bottomNavTablet]}>
+      {items.map(([name, icon, activeIcon, label]) => {
         const active = activeRoute === name;
+        const displayLabel = compactNav ? ({ shop: 'Shop', closet: 'Closet', stylebot: 'Stylist' }[name] || label) : label;
         return (
           <TouchableOpacity
             key={name}
             activeOpacity={0.82}
             accessibilityRole="tab"
+            accessibilityLabel={label}
             accessibilityState={{ selected: active }}
             style={styles.navItem}
             onPress={() => {
@@ -1792,9 +2013,9 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
             }}
           >
             <View style={[styles.navIconWrap, active && styles.navIconWrapCenter]}>
-              <Ionicons name={icon} size={active ? 22 : 20} color={active ? '#050505' : '#4d4a48'} />
+              <Ionicons name={active ? activeIcon : icon} size={active ? 21 : 20} color={active ? '#171412' : '#66605c'} />
             </View>
-            <Text style={[styles.navText, active && styles.navTextActive]}>{label}</Text>
+            <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82} style={[styles.navText, compactNav && styles.navTextCompact, active && styles.navTextActive]}>{displayLabel}</Text>
             <View style={[styles.navActiveUnderline, active && styles.navActiveUnderlineVisible]} />
           </TouchableOpacity>
         );
@@ -1821,7 +2042,8 @@ function Hero({ compact, onNavigate }) {
 function StatusPanel({ loading, error, empty, text }) {
   if (loading) {
     return (
-      <View style={[styles.statusPanel, styles.loadingPanel]}>
+      <View style={[styles.statusPanel, Platform.OS === 'ios' && styles.iosGlassCard, styles.loadingPanel]}>
+        <IosGlassBackdrop />
         <View style={styles.skeletonIcon} />
         <View style={styles.skeletonLineWide} />
         <View style={styles.skeletonLine} />
@@ -1831,7 +2053,8 @@ function StatusPanel({ loading, error, empty, text }) {
   }
   if (error || empty) {
     return (
-      <View style={styles.statusPanel}>
+      <View style={[styles.statusPanel, Platform.OS === 'ios' && styles.iosGlassCard]}>
+        <IosGlassBackdrop />
         <View style={[styles.statusIcon, error ? styles.statusIconError : styles.statusIconEmpty]}>
           <Ionicons name={error ? 'alert-circle-outline' : 'sparkles-outline'} size={22} color={error ? '#9b5658' : '#0f766e'} />
         </View>
@@ -1845,7 +2068,8 @@ function StatusPanel({ loading, error, empty, text }) {
 
 function EmptyStateCard({ icon = 'sparkles-outline', title = 'Nothing here yet', text, actionLabel, actionIcon = 'arrow-forward', onAction, compact }) {
   return (
-    <View style={[styles.emptyStateCard, compact && styles.emptyStateCardCompact]}>
+    <View style={[styles.emptyStateCard, Platform.OS === 'ios' && styles.iosGlassCard, compact && styles.emptyStateCardCompact]}>
+      <IosGlassBackdrop />
       <View style={styles.emptyStateIcon}>
         <Ionicons name={icon} size={24} color="#9b5658" />
       </View>
@@ -1967,10 +2191,11 @@ function WardrobeGridSkeleton({ count }) {
 function CreditHistorySkeleton({ rows = 3 }) {
   return Array.from({ length: rows }).map((_, index) => (
     <View key={`credit-history-skeleton-${index}`} style={styles.profileCreditHistoryRow}>
-      <SkeletonBlock style={[styles.profileCreditSkeletonCell, styles.profileCreditActionColumn]} />
-      <SkeletonBlock style={[styles.profileCreditSkeletonCell, styles.profileCreditProductColumn]} />
-      <SkeletonBlock style={[styles.profileCreditSkeletonCell, styles.profileCreditDateColumn]} />
-      <SkeletonBlock style={[styles.profileCreditSkeletonCell, styles.profileCreditTokenColumn]} />
+      <View style={styles.profileCreditEventCopy}>
+        <SkeletonBlock style={[styles.profileCreditSkeletonCell, { width: '65%' }]} />
+        <SkeletonBlock style={[styles.profileCreditSkeletonCell, { width: '85%', marginTop: 7 }]} />
+      </View>
+      <SkeletonBlock style={[styles.profileCreditSkeletonCell, { width: 36 }]} />
     </View>
   ));
 }
@@ -1989,12 +2214,6 @@ function creditHistoryAmountLabel(event = {}) {
   const amount = Math.abs(Number(event.tokens) || 0);
   if (!amount) return '0';
   return event.direction === 'credit' ? `+${amount}` : `-${amount}`;
-}
-
-function addDays(date, count) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + count);
-  return next;
 }
 
 function formatCreditRate(plan = {}) {
@@ -2029,17 +2248,136 @@ function mobileRouteFromUrl(value = '') {
   return null;
 }
 
-function AiPreviewNote({ style }) {
+function openLegalPolicy(page) {
+  const path = ({ terms: 'terms', privacy: 'privacy', deletion: 'data-deletion', support: 'contact' })[page] || 'privacy';
+  return Linking.openURL(`https://lookmefy.in/${path}`).catch(() => {
+    Alert.alert('Policy unavailable', 'The policy could not be opened. Please try again before continuing.');
+  });
+}
+
+function ReportContentAction({ content }) {
+  const owner = useContext(ContentReportingContext);
+  const ownerRef = useRef(owner);
+  ownerRef.current = owner;
+  const client = useRef(null);
+  if (!client.current) client.current = createContentReportClient(api, () => ownerRef.current);
+  const generation = useRef(0);
+  const submitting = useRef(false);
+  const [visible, setVisible] = useState(false);
+  const [state, setState] = useState('idle');
+  const [reason, setReason] = useState('other');
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    generation.current += 1;
+    submitting.current = false;
+    client.current = createContentReportClient(api, () => ownerRef.current);
+    setVisible(false); setState('idle'); setMessage('');
+    return () => { generation.current += 1; };
+  }, [owner, content?.type, content?.id]);
+  const open = async () => {
+    const request = ++generation.current;
+    setVisible(true); setState('checking'); setReason('other'); setMessage('Checking reporting availability…');
+    if (!owner || !content) {
+      setState('unavailable');
+      setMessage(!owner ? 'Sign in to report AI content. No report has been submitted.' : 'This result has no server reporting identifier. No report has been submitted. Contact support.');
+      return;
+    }
+    try {
+      const available = await client.current.availability(owner, content);
+      if (request !== generation.current) return;
+      setState(available ? 'ready' : 'unavailable');
+      setMessage(available ? 'Choose a reason. Only the content identifier and reason are sent, not your photos.' : 'In-app reporting is unavailable. No report has been submitted. Contact support for help.');
+    } catch {
+      if (request !== generation.current) return;
+      setState('unavailable'); setMessage('In-app reporting could not be reached. No report has been submitted. Try reopening or contact support.');
+    }
+  };
+  const close = () => { if (submitting.current) return; generation.current += 1; setVisible(false); };
+  const submit = async () => {
+    if (submitting.current || !['ready', 'error'].includes(state)) return;
+    submitting.current = true;
+    const request = generation.current;
+    setState('submitting'); setMessage('Submitting your report… Receipt is not confirmed yet.');
+    try {
+      await client.current.submit(owner, content, reason);
+      if (request !== generation.current) return;
+      setState('received'); setMessage('Report received for review. This does not confirm that the content has been removed.');
+    } catch (error) {
+      if (request !== generation.current) return;
+      setState('error'); setMessage(error.message || 'Report receipt could not be confirmed. Retry or contact support.');
+    } finally { if (request === generation.current) submitting.current = false; }
+  };
+  const canSubmit = ['ready', 'error'].includes(state) && Boolean(owner && content);
   return (
+    <View>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Report AI content" style={styles.releaseReportAction} onPress={open}>
+        <Ionicons name="flag-outline" size={16} color="#8c4d50" />
+        <Text style={styles.releaseReportText}>Report content</Text>
+      </TouchableOpacity>
+      <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+        <SafeAreaView style={styles.releaseConsentOverlay}>
+          <View style={styles.releaseConsentCard} accessibilityViewIsModal>
+            <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={styles.releaseConsentBody}>
+              <Text accessibilityRole="header" style={styles.releaseConsentTitle}>Report AI content</Text>
+              <Text accessibilityLiveRegion="polite" style={styles.releaseConsentCopy}>{message}</Text>
+              {['ready', 'error'].includes(state) ? contentReportReasons.map(value => (
+                <TouchableOpacity key={value} accessibilityRole="radio" accessibilityState={{ checked: reason === value }} accessibilityLabel={`Report reason: ${value}`} style={styles.releaseLegalAction} onPress={() => setReason(value)}>
+                  <Text style={styles.releaseConsentCopy}>{reason === value ? '●' : '○'} {titleCase(value)}</Text>
+                </TouchableOpacity>
+              )) : null}
+            </ScrollView>
+            <View style={styles.releaseConsentActions}>
+              <AppButton label={state === 'submitting' ? 'Submitting…' : state === 'received' ? 'Report received' : 'Submit report'} disabled={!canSubmit} onPress={submit} style={styles.releaseConsentButton} />
+              <AppButton label="Contact support" variant="secondary" disabled={state === 'submitting'} onPress={() => openSupportEmail('AI content reporting help')} style={styles.releaseConsentButton} />
+              <AppButton label="Close reporting" variant="secondary" disabled={state === 'submitting'} onPress={close} style={styles.releaseConsentButton} />
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+    </View>
+  );
+}
+
+function PhotoConsentModal({ notice, onAllow, onCancel, onPrivacy }) {
+  if (!notice) return null;
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
+      <SafeAreaView style={styles.releaseConsentOverlay}>
+        <View style={styles.releaseConsentCard} accessibilityViewIsModal>
+          <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={styles.releaseConsentBody} keyboardShouldPersistTaps="handled">
+            <Text accessibilityRole="header" style={styles.releaseConsentTitle}>Allow AI photo processing?</Text>
+            <Text style={styles.releaseConsentCopy}>To {notice.purpose}, Lookmefy will upload or use {notice.data} through its backend and share them with external AI services.</Text>
+            <Text style={styles.releaseConsentCopy}>AI processors may include {notice.providers}.</Text>
+            <Text style={styles.releaseConsentCopy}>Only continue if you allow this sharing. Your choice applies to this request only; you will be asked again next time. Review the Privacy Policy before continuing. The app cannot verify the providers' retention periods.</Text>
+            <TouchableOpacity accessibilityRole="link" style={styles.releaseLegalAction} onPress={onPrivacy}>
+              <Text style={styles.releaseReportText}>Read Privacy Policy</Text>
+            </TouchableOpacity>
+          </ScrollView>
+          <View style={styles.releaseConsentActions}>
+            <AppButton label="Not now" variant="secondary" onPress={onCancel} style={styles.releaseConsentButton} />
+            <AppButton label="Allow this request" onPress={onAllow} style={styles.releaseConsentButton} />
+          </View>
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function AiPreviewNote({ style, content }) {
+  return (
+    <View>
     <View style={[styles.aiPreviewNote, style]}>
       <Ionicons name="information-circle-outline" size={16} color="#8c4d50" />
       <Text style={styles.aiPreviewNoteText}>{aiPreviewDisclaimer}</Text>
+    </View>
+    <ReportContentAction content={content} />
     </View>
   );
 }
 
 const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLoading, error, videoError, locked, onPress, onTryOn, onTryOnVideo, onAddToWishlist, isWishlisted, variant = 'grid' }) {
   const layout = useResponsiveLayout();
+  const verifiedRating = verifiedProductRating(product);
   const price = Number(product?.price);
   const hasPrice = Number.isFinite(price);
   const hasDiscount = hasPrice && product?.compareAtPrice && product.compareAtPrice > product.price;
@@ -2054,7 +2392,7 @@ const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLo
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={product?.title || product?.name || 'Open product'}
-      style={({ pressed }) => [styles.productCard, useHomeImageFrame && styles.productCardHomeFrame, responsiveCardStyle, variant === 'carousel' && styles.productCardCarousel, pressed && !locked && styles.productCardPressed, locked && styles.lockedCard]}
+      style={({ pressed }) => [styles.productCard, Platform.OS === 'ios' && styles.iosGlassCard, useHomeImageFrame && styles.productCardHomeFrame, responsiveCardStyle, variant === 'carousel' && styles.productCardCarousel, pressed && !locked && styles.productCardPressed, locked && styles.lockedCard]}
       onPress={locked ? undefined : onPress}
     >
       <View style={[styles.productImageWrap, useHomeImageFrame && styles.homeProductImageWrap]}>
@@ -2071,10 +2409,10 @@ const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLo
       <View style={[styles.productBody, useStableGridBody && styles.productGridCardBody]}>
         <Text style={styles.productTitle} numberOfLines={2}>{product?.title || product?.name || 'Untitled product'}</Text>
         <Text style={styles.productBrand} numberOfLines={1}>{product?.displayLabel || titleCase(product?.category || 'Catalog')}</Text>
-        <View style={styles.ratingRow}>
+        {verifiedRating ? <View style={styles.ratingRow}>
           <Ionicons name="star" size={13} color="#f59e0b" />
-          <Text style={styles.ratingText}>{Number(product?.rating || 0).toFixed(1)} {product?.ratingCount ? `(${product.ratingCount})` : ''}</Text>
-        </View>
+          <Text style={styles.ratingText}>{verifiedRating.rating.toFixed(1)} ({verifiedRating.ratingCount})</Text>
+        </View> : null}
         <View style={styles.priceRow}>
           <Text style={styles.price}>{hasPrice ? formatMoney(price, product?.currency) : 'Price unavailable'}</Text>
           {discount ? <Text style={styles.discount}>{discount}</Text> : null}
@@ -2104,6 +2442,7 @@ const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLo
             style={styles.cardButton}
           />
         ) : null}
+        {hasTryOnImage || videoUri ? <ReportContentAction content={reportContentReference(tryOn, 'product_tryon')} /> : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
         {videoError ? <Text style={styles.errorText}>{videoError}</Text> : null}
       </View>
@@ -2223,7 +2562,7 @@ const categoryRailItems = [
 const categoryPageContent = {
   popular: {
     kicker: 'POPULAR',
-    title: 'Featured On Lookmefy',
+    title: 'Featured on Lookmefy',
     featured: [
       { label: 'Top Brands', image: 'category-generated/new-arrivals.png', params: { sort: 'newest' } },
       { label: 'Premium\nCollection', image: 'category-generated/dresses.png', params: { category: 'dresses', gender: 'women' } },
@@ -2350,8 +2689,7 @@ const categoryPageContent = {
 };
 const homeProductFeedPageSize = 48;
 const shopProductGridLimit = 50;
-const shopProductInitialVisibleCount = 10;
-const shopProductVisibleStep = 10;
+const shopProductPageSize = 96;
 const searchQuickSuggestions = ['short kurti', 'saree', 'kurti', 'tshirt', 'earring', 'top for women', 'slipper', 'watch', 'top', 'kurti set', 'shoes', 'eyewear'];
 
 function categorySearchText(value = '') {
@@ -2386,15 +2724,10 @@ const categorySearchReferences = (() => {
   return references;
 })();
 
-function PageBackRow({ onBack, children }) {
-  if (!onBack && !children) return null;
+function PageBackRow({ children }) {
+  if (!children) return null;
   return (
     <View style={styles.pageBackRow}>
-      {onBack ? (
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Go back" activeOpacity={0.86} style={styles.pageBackButton} onPress={onBack}>
-          <Ionicons name="chevron-back" size={21} color="#111111" />
-        </TouchableOpacity>
-      ) : null}
       {children}
     </View>
   );
@@ -2442,7 +2775,28 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
   const layout = useResponsiveLayout();
   const categoryMainScrollRef = useRef(null);
   const [categoryQuery, setCategoryQuery] = useState('');
+  const [categorySearchFocused, setCategorySearchFocused] = useState(false);
   const content = categoryPageContent[selectedCategory] || categoryPageContent.popular;
+  const categoryRailWidth = layout.isTablet ? 96 : layout.windowWidth <= 340 ? 82 : layout.windowWidth <= 375 ? 84 : layout.windowWidth >= 414 ? 90 : 88;
+  const categoryPanelWidth = Math.max(180, layout.contentWidth - categoryRailWidth);
+  const categoryPanelPadding = layout.isTablet ? 24 : layout.windowWidth <= 340 ? 10 : 12;
+  const categoryGridGap = layout.windowWidth <= 340 ? 8 : 10;
+  const categoryPanelInnerWidth = Math.max(160, categoryPanelWidth - (categoryPanelPadding * 2));
+  const categoryFeatureHorizontalPadding = layout.windowWidth <= 340 ? 8 : 12;
+  // Include the featured band's horizontal padding and a small border/rounding allowance.
+  const categoryFeaturedInnerWidth = Math.max(136, categoryPanelInnerWidth - (categoryFeatureHorizontalPadding * 2) - 4);
+  const categoryGridColumns = layout.isTablet ? 3 : categoryPanelInnerWidth >= 270 ? 3 : 2;
+  const categoryFeaturedColumns = layout.isTablet
+    ? 3
+    : categoryFeaturedInnerWidth >= 270 && content.featured.length % 3 === 0
+      ? 3
+      : 2;
+  const categoryTileWidth = layout.isTablet
+    ? '31.5%'
+    : Math.floor((categoryPanelInnerWidth - (categoryGridGap * (categoryGridColumns - 1))) / categoryGridColumns);
+  const categoryFeaturedTileWidth = layout.isTablet
+    ? '31.5%'
+    : Math.floor((categoryFeaturedInnerWidth - (categoryGridGap * (categoryFeaturedColumns - 1))) / categoryFeaturedColumns);
   const normalizedCategoryQuery = categorySearchText(categoryQuery).toLowerCase();
   const categoryMatches = useMemo(() => {
     if (!normalizedCategoryQuery) return [];
@@ -2453,10 +2807,18 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
         const params = categorySearchText([item.params?.q, item.params?.category, item.params?.gender].filter(Boolean).join(' ')).toLowerCase();
         const haystack = `${label} ${section} ${params}`;
         if (!haystack.includes(normalizedCategoryQuery)) return null;
-        return { item, score: label.startsWith(normalizedCategoryQuery) ? 0 : section.startsWith(normalizedCategoryQuery) ? 1 : 2 };
+        const score = label === normalizedCategoryQuery
+          ? 0
+          : label.startsWith(normalizedCategoryQuery)
+            ? 1
+            : section.startsWith(normalizedCategoryQuery)
+              ? 2
+              : 3;
+        const specificity = item.params?.gender ? 1 : 0;
+        return { item, score, specificity };
       })
       .filter(Boolean)
-      .sort((a, b) => a.score - b.score || a.item.label.localeCompare(b.item.label))
+      .sort((a, b) => a.score - b.score || a.specificity - b.specificity || a.item.label.localeCompare(b.item.label))
       .map(({ item }) => item)
       .slice(0, 6);
   }, [normalizedCategoryQuery]);
@@ -2478,6 +2840,11 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
     if (query) onNavigate('shop', { q: query });
   };
   const openTile = (item) => onNavigate('shop', item.params || { sort: 'newest' });
+  const selectCategory = (key) => {
+    if (key === selectedCategory) return;
+    onSelectCategory(key);
+    categoryMainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
+  };
 
   useEffect(() => {
     if (!initialScrollY) return undefined;
@@ -2492,23 +2859,26 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
       <AppHeader onNavigate={onNavigate} user={user} compact />
       <PageBackRow onBack={onBack}>
         <View style={styles.categorySearchDock}>
-          <View style={styles.categorySearchBox}>
-            <Ionicons name="search-outline" size={18} color="#706a75" />
+          <View style={[styles.categorySearchBox, categorySearchFocused && styles.categorySearchBoxFocused]}>
+            <Ionicons name="search-outline" size={18} color="#625c56" />
             <TextInput
+              accessibilityLabel="Search categories"
               value={categoryQuery}
               onChangeText={setCategoryQuery}
               placeholder="Search categories"
-              placeholderTextColor="#8b8491"
+              placeholderTextColor="#77716c"
               returnKeyType="search"
               onSubmitEditing={submitCategorySearch}
+              onFocus={() => setCategorySearchFocused(true)}
+              onBlur={() => setCategorySearchFocused(false)}
               style={styles.categorySearchInput}
             />
             {categoryQuery ? (
-              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Clear category search" style={styles.categorySearchIconButton} onPress={() => setCategoryQuery('')}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Clear category search" hitSlop={8} style={styles.categorySearchIconButton} onPress={() => setCategoryQuery('')}>
                 <Ionicons name="close" size={16} color="#706a75" />
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Search categories" style={styles.categorySearchSubmit} onPress={submitCategorySearch}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Search categories" hitSlop={4} style={styles.categorySearchSubmit} onPress={submitCategorySearch}>
               <Ionicons name="arrow-forward" size={16} color="#ffffff" />
             </TouchableOpacity>
           </View>
@@ -2533,21 +2903,22 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
         </View>
       </PageBackRow>
       <View style={styles.categoryBrowser}>
-        <ScrollView style={[styles.categoryRail, layout.isTablet && styles.categoryRailTablet]} contentContainerStyle={[styles.categoryRailContent, layout.isTablet && styles.categoryRailContentTablet]} showsVerticalScrollIndicator={false}>
+        <ScrollView style={[styles.categoryRail, { width: categoryRailWidth, maxWidth: categoryRailWidth, flexBasis: categoryRailWidth }]} contentContainerStyle={[styles.categoryRailContent, layout.isTablet && styles.categoryRailContentTablet]} showsVerticalScrollIndicator={false}>
           {categoryRailItems.map((item) => {
             const active = item.key === selectedCategory;
             return (
               <TouchableOpacity
                 key={item.key}
                 accessibilityRole="button"
+                accessibilityLabel={`${categorySearchText(item.label)} category`}
                 accessibilityState={{ selected: active }}
                 activeOpacity={0.86}
                 style={[styles.categoryRailItem, active && styles.categoryRailItemActive]}
-                onPress={() => onSelectCategory(item.key)}
+                onPress={() => selectCategory(item.key)}
               >
                 {active ? <View style={styles.categoryRailAccent} /> : null}
                 <CategoryBubble item={item} size="rail" active={active} />
-                <Text style={[styles.categoryRailLabel, active && styles.categoryRailLabelActive]} numberOfLines={3}>{item.label}</Text>
+                <Text style={[styles.categoryRailLabel, active && styles.categoryRailLabelActive]} numberOfLines={3}>{categorySearchText(item.label)}</Text>
               </TouchableOpacity>
             );
           })}
@@ -2556,22 +2927,30 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
         <ScrollView
           ref={categoryMainScrollRef}
           style={styles.categoryMain}
-          contentContainerStyle={[styles.categoryMainContent, layout.isTablet && styles.categoryMainContentTablet]}
+          contentContainerStyle={[styles.categoryMainContent, { paddingHorizontal: categoryPanelPadding }, layout.isTablet && styles.categoryMainContentTablet]}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
           onScroll={(event) => onScrollPositionChange?.(event.nativeEvent.contentOffset.y)}
         >
-          <View style={styles.categoryFeatureBand}>
+          <View style={[styles.categoryFeatureBand, { paddingHorizontal: categoryFeatureHorizontalPadding }]}>
+            <IosGlassBackdrop />
             <View style={styles.categoryKickerRow}>
               <Text style={styles.categoryKicker}>{content.kicker}</Text>
               <View style={styles.categoryKickerLine} />
             </View>
             <Text style={styles.categoryHeadline}>{content.title}</Text>
-            <View style={[styles.categoryFeaturedGrid, layout.isTablet && styles.categoryTileGridTablet]}>
+            <View style={[styles.categoryFeaturedGrid, { columnGap: categoryGridGap }, layout.isTablet && styles.categoryTileGridTablet]}>
               {content.featured.map((item) => (
-                <TouchableOpacity key={`${content.kicker}-${item.label}`} accessibilityRole="button" activeOpacity={0.86} style={[styles.categoryFeaturedTile, layout.categoryTileStyle]} onPress={() => openTile(item)}>
+                <TouchableOpacity key={`${content.kicker}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryFeaturedTile, { width: categoryFeaturedTileWidth }]} onPress={() => openTile(item)}>
                   <CategoryBubble item={item} size="featured" />
-                  <Text style={styles.categoryFeaturedLabel} numberOfLines={2}>{item.label}</Text>
+                  <Text
+                    style={styles.categoryFeaturedLabel}
+                    numberOfLines={/^\S{11,}$/.test(categorySearchText(item.label)) ? 1 : 2}
+                    adjustsFontSizeToFit={/^\S{11,}$/.test(categorySearchText(item.label))}
+                    minimumFontScale={0.82}
+                  >
+                    {categorySearchText(item.label)}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -2581,11 +2960,11 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
             <Text style={styles.categorySectionTitle}>{content.sectionTitle}</Text>
             <View style={styles.categorySectionRule} />
           </View>
-          <View style={[styles.categoryTileGrid, layout.isTablet && styles.categoryTileGridTablet]}>
+          <View style={[styles.categoryTileGrid, { columnGap: categoryGridGap }, layout.isTablet && styles.categoryTileGridTablet]}>
             {content.items.map((item) => (
-              <TouchableOpacity key={`${content.sectionTitle}-${item.label}`} accessibilityRole="button" activeOpacity={0.86} style={[styles.categoryTile, layout.categoryTileStyle]} onPress={() => openTile(item)}>
+              <TouchableOpacity key={`${content.sectionTitle}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryTile, { width: categoryTileWidth }]} onPress={() => openTile(item)}>
                 <CategoryBubble item={item} />
-                <Text style={styles.categoryTileLabel} numberOfLines={2}>{item.label}</Text>
+                <Text style={styles.categoryTileLabel} numberOfLines={2}>{categorySearchText(item.label)}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -2612,7 +2991,7 @@ function CurationProductCard({ product, onPress, onTryOn, onVideoTryOn, onAddToW
     onAddToWishlist?.(product);
   };
   return (
-    <TouchableOpacity style={[styles.homeProductCard, rail && styles.homeProductCardRail, !rail && layout.productGridWidthStyle]} onPress={onPress}>
+    <TouchableOpacity style={[styles.homeProductCard, Platform.OS === 'ios' && styles.iosGlassCard, rail && styles.homeProductCardRail, !rail && layout.productGridWidthStyle]} onPress={onPress}>
       <View style={styles.homeProductImageWrap}>
         <ProductImage product={product} style={styles.homeProductImage} alt={product.title || product.name} />
         {discount ? <Text style={styles.homeDealBadge}>{discount}% OFF</Text> : product.isNew ? <Text style={styles.homeNewBadge}>NEW</Text> : null}
@@ -2661,9 +3040,10 @@ function HomeOfferCards({ offers = [], onNavigate }) {
             activeOpacity={0.88}
             accessibilityRole="button"
             accessibilityLabel={`${offer.title}. ${offer.cta}`}
-            style={[styles.homeOfferCard, layout.isTablet && styles.homeOfferCardTablet]}
+            style={[styles.homeOfferCard, Platform.OS === 'ios' && styles.iosGlassCard, layout.isTablet && styles.homeOfferCardTablet]}
             onPress={() => onNavigate(offer.route, offer.params || {})}
           >
+            <IosGlassBackdrop />
             <View style={styles.homeOfferCopy}>
               <Text style={styles.homeOfferKicker} numberOfLines={1}>{offer.kicker}</Text>
               <Text style={styles.homeOfferTitle} numberOfLines={2}>{offer.title}</Text>
@@ -2726,6 +3106,202 @@ function HomeWardrobeTile({ item, onPress }) {
   );
 }
 
+const homeStudioActions = [
+  { key: 'catalog', title: 'Shop Catalog', text: 'Discover styles', icon: 'grid-outline', route: 'shop' },
+  { key: 'upload', title: 'Add to Wardrobe', text: 'Upload clothing', icon: 'cloud-upload-outline', route: 'closet', params: { view: 'add' } },
+  { key: 'stylist', title: 'Ask AI Stylist', text: 'Personalized ideas', icon: 'sparkles-outline', route: 'stylebot' }
+];
+
+function HomeStudioSectionHead({ title, subtitle, onPress }) {
+  return (
+    <View style={styles.homeStudioSectionHead}>
+      <View style={styles.homeStudioSectionCopy}>
+        <Text style={styles.homeStudioSectionTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.homeStudioSectionSubtitle}>{subtitle}</Text> : null}
+      </View>
+      {onPress ? (
+        <TouchableOpacity style={styles.homeStudioSeeAll} activeOpacity={0.78} onPress={onPress}>
+          <Text style={styles.homeStudioSeeAllText}>See All</Text>
+          <Ionicons name="chevron-forward" size={16} color="#111111" />
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+}
+
+function HomeStudioHero({ onNavigate }) {
+  const { width, fontScale } = useWindowDimensions();
+  const compact = width < 350;
+  const tablet = width >= 768;
+  const baseHeight = tablet ? Math.min(470, Math.round((width - 40) / 2)) : compact ? 220 : 228;
+  const scaledHeight = { height: baseHeight + (fontScale > 1 ? Math.ceil((fontScale - 1) * 145) : 0) };
+  return (
+    <View style={[styles.homeStudioHero, compact && styles.homeStudioHeroCompact, scaledHeight]}>
+      <Image source={images.homeCinematicTryOn} style={[styles.homeStudioHeroImage, tablet && styles.homeStudioHeroImageTablet]} resizeMode="cover" accessibilityIgnoresInvertColors />
+      <View style={styles.homeStudioHeroTextScrim} pointerEvents="none" />
+      <View style={[styles.homeStudioHeroCopy, compact && styles.homeStudioHeroCopyCompact, tablet && styles.homeStudioHeroCopyTablet]}>
+        <Text style={[styles.homeStudioKicker, tablet && styles.homeStudioKickerTablet]}>AI VIRTUAL TRY-ON</Text>
+        <Text style={[styles.homeStudioTitle, compact && styles.homeStudioTitleCompact, tablet && styles.homeStudioTitleTablet]} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.88}>{'See it. Try it.\nLove it.'}</Text>
+        <Text style={[styles.homeStudioText, tablet && styles.homeStudioTextTablet]}>Preview outfits on yourself before you buy.</Text>
+        <TouchableOpacity style={[styles.homeStudioPrimaryButton, fontScale > 1 && styles.homeStudioPrimaryButtonLargeText, tablet && styles.homeStudioPrimaryButtonTablet]} activeOpacity={0.88} accessibilityRole="button" accessibilityLabel="Create Your Look" onPress={() => onNavigate('tryon')}>
+          <Text style={[styles.homeStudioPrimaryText, tablet && styles.homeStudioPrimaryTextTablet]}>Create Your Look</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+function HomeStudioActionTile({ item, onNavigate, narrow = false }) {
+  return (
+    <TouchableOpacity
+      style={[styles.homeStudioActionTile, Platform.OS === 'ios' && styles.iosGlassCard, narrow && styles.homeStudioActionTileNarrow]}
+      activeOpacity={0.84}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.title}. ${item.text}`}
+      onPress={() => onNavigate(item.route, item.params || {})}
+    >
+      <IosGlassBackdrop />
+      <View style={[styles.homeStudioActionIcon, narrow && styles.homeStudioActionIconNarrow]}>
+        <Ionicons name={item.icon} size={26} color="#171412" />
+      </View>
+      <View style={narrow ? styles.homeStudioActionCopyNarrow : null}>
+        <Text style={[styles.homeStudioActionTitle, narrow && styles.homeStudioActionTitleNarrow]}>{item.title}</Text>
+        <Text style={[styles.homeStudioActionText, narrow && styles.homeStudioActionTextNarrow]}>{item.text}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function HomeStyleStudio({ onNavigate }) {
+  const { width } = useWindowDimensions();
+  const narrow = width < 350;
+  return (
+    <View style={[styles.homeStudioPanel, styles.homeStyleStudioPanel]}>
+      <HomeStudioSectionHead title="Your Style Studio" subtitle="Three ways to begin." />
+      <View style={[styles.homeStudioActionGrid, narrow && styles.homeStudioActionGridNarrow]}>
+        {homeStudioActions.map((item) => <HomeStudioActionTile key={item.key} item={item} onNavigate={onNavigate} narrow={narrow} />)}
+      </View>
+    </View>
+  );
+}
+
+function HomeStudioLookCard({ product, title, meta, imageSource, onPress, compact = false, cardWidth, onAddToWishlist, isWishlisted }) {
+  return (
+    <TouchableOpacity
+      style={[styles.homeStudioLookCard, cardWidth ? { width: cardWidth } : null, compact && styles.homeStudioLookCardCompact]}
+      activeOpacity={0.86}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${meta}`}
+      onPress={onPress}
+    >
+      <View style={styles.homeStudioLookImageWrap}>
+        {product?.imageUrl || product?.imageUrls?.length ? (
+          <ProductImage product={product} style={styles.homeStudioLookImage} resizeMode="contain" alt={product?.title || product?.name || title} />
+        ) : (
+          <Image source={imageSource || images['lookmefy_model_01.png']} style={styles.homeStudioLookImage} resizeMode="cover" />
+        )}
+        {onAddToWishlist && product?.id ? <WishlistDoneButton saved={isWishlisted} compact onPress={() => onAddToWishlist(product)} /> : null}
+      </View>
+      <Text style={styles.homeStudioLookTitle} numberOfLines={2}>{title}</Text>
+      <Text style={styles.homeStudioLookMeta} numberOfLines={1}>{meta}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function HomeCuratedStyleRail({ products = [], onNavigate, onAddToWishlist, wishlistIds, itemKeyPrefix }) {
+  const { width } = useWindowDimensions();
+  const cardGap = 12;
+  const cardWidth = Math.max(134, Math.min(184, (width - 40 - cardGap) / 2));
+  const visibleProducts = fashionFirstHomeProducts(products).slice(0, 8);
+  if (!visibleProducts.length) return null;
+  return (
+    <View style={styles.homeStudioPanel}>
+      <HomeStudioSectionHead title="Curated for Your Style" subtitle="Discover pieces and looks you'll love." onPress={() => onNavigate('shop')} />
+      <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.homeStudioLookRow}>
+        {visibleProducts.map((product) => (
+          <HomeStudioLookCard
+            key={`${itemKeyPrefix}-${product.id}`}
+            cardWidth={cardWidth}
+            product={product}
+            title={product.title || product.name || product.displayLabel || 'Curated style'}
+            meta={Number.isFinite(Number(product.price)) ? formatMoney(product.price, product.currency) : 'Price unavailable'}
+            onPress={() => onNavigate('product', { id: product.id })}
+            onAddToWishlist={onAddToWishlist}
+            isWishlisted={wishlistIds?.has(product.id)}
+          />
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+function HomeStudioWardrobeBanner({ closetItems = [], onNavigate }) {
+  const savedItems = closetItems.filter((item) => item?.imageUrl).slice(0, 3);
+  const returning = closetItems.length > 0;
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel={returning ? 'Explore your wardrobe' : 'Add your first wardrobe item'}
+      style={[styles.homeStudioWardrobeBanner, Platform.OS === 'ios' && styles.iosGlassCard]}
+      activeOpacity={0.86}
+      onPress={() => onNavigate('closet', returning ? { view: 'wardrobe' } : { view: 'add' })}
+    >
+      <IosGlassBackdrop />
+      <View style={styles.homeStudioWardrobeBannerCopy}>
+        <Text style={styles.homeStudioBannerTitle}>{returning ? 'Your Wardrobe' : 'Your wardrobe, reimagined.'}</Text>
+        <Text style={styles.homeStudioBannerText}>
+          {returning ? 'Rediscover the pieces you have saved.' : 'Save your clothes. Discover new ways to style them.'}
+        </Text>
+        <View style={styles.homeStudioBannerButton}>
+          <Text style={styles.homeStudioBannerButtonText}>{returning ? 'Explore wardrobe' : 'Add first item'}</Text>
+          <Ionicons name="arrow-forward" size={15} color="#ffffff" />
+        </View>
+      </View>
+      {savedItems.length ? (
+        <View style={styles.homeStudioSavedPreview}>
+          {savedItems.map((item, index) => (
+            <ResilientImage
+              key={item.id || item._id || `${item.imageUrl}-${index}`}
+              source={{ uri: imageUrl(item.imageUrl) }}
+              style={[styles.homeStudioSavedImage, index > 0 && styles.homeStudioSavedImageOverlap]}
+              resizeMode="cover"
+              fallbackIcon="shirt-outline"
+            />
+          ))}
+        </View>
+      ) : returning ? (
+        <View style={styles.homeStudioSavedPreviewFallback}>
+          <Ionicons name="shirt-outline" size={34} color="#5e5853" />
+        </View>
+      ) : (
+        <Image source={images.homeStarterWardrobe} style={styles.homeStudioBannerImage} resizeMode="cover" />
+      )}
+    </TouchableOpacity>
+  );
+}
+
+function NewUserHomeStudio({ products = [], onNavigate, onAddToWishlist, wishlistIds }) {
+  return (
+    <>
+      <HomeStudioHero onNavigate={onNavigate} />
+      <HomeStyleStudio onNavigate={onNavigate} />
+      <HomeStudioWardrobeBanner onNavigate={onNavigate} />
+      <HomeCuratedStyleRail products={products} onNavigate={onNavigate} onAddToWishlist={onAddToWishlist} wishlistIds={wishlistIds} itemKeyPrefix="new-home" />
+    </>
+  );
+}
+
+function ReturningUserHomeStudio({ products = [], closetItems = [], onNavigate, onAddToWishlist, wishlistIds }) {
+  return (
+    <>
+      <HomeStudioHero onNavigate={onNavigate} />
+      <HomeStyleStudio onNavigate={onNavigate} />
+      <HomeStudioWardrobeBanner closetItems={closetItems} onNavigate={onNavigate} />
+      <HomeCuratedStyleRail products={products} onNavigate={onNavigate} onAddToWishlist={onAddToWishlist} wishlistIds={wishlistIds} itemKeyPrefix="return-home" />
+    </>
+  );
+}
+
 function HomeHeroShowcase() {
   const progress = useRef(new Animated.Value(0)).current;
   const slideCount = homeHeroShowcaseSlides.length;
@@ -2781,20 +3357,6 @@ function HomeHeroShowcase() {
           </Animated.View>
         );
       })}
-    </View>
-  );
-}
-
-function HomeMissionStoryShowcase() {
-  return (
-    <View style={styles.homeMissionStoryFrame}>
-      <View style={styles.homeMissionModelLayer}>
-        <Image source={images[homeMissionModel.image]} style={[styles.homeMissionModel, homeMissionModel.modelStyle]} resizeMode="contain" />
-      </View>
-      <View style={styles.homeMissionCopy}>
-        <Text style={styles.homeMissionTitle}>{homeMissionCopy.title}</Text>
-        <Text style={styles.homeMissionSubtitle}>{homeMissionCopy.subtitle}</Text>
-      </View>
     </View>
   );
 }
@@ -2900,21 +3462,12 @@ function HomeBeforeAfterSlider() {
   );
 }
 
-function ProductTopBar({ onNavigate, user, onBack, showSearch = true, children }) {
+function ProductTopBar({ onNavigate, user, onBack, showSearch = true, preserveWordmarkOnNarrow = false, children }) {
   return (
     <>
-      <AppHeader onNavigate={onNavigate} user={user} compact showSearch={showSearch} />
+      <AppHeader onNavigate={onNavigate} user={user} compact showSearch={showSearch} preserveWordmarkOnNarrow={preserveWordmarkOnNarrow} />
       <PageBackRow onBack={onBack}>{children}</PageBackRow>
     </>
-  );
-}
-
-function ProductActionButton({ label, icon, active, disabled, onPress }) {
-  return (
-    <TouchableOpacity style={[styles.productActionButton, active && styles.productActionButtonActive, disabled && styles.disabledButton]} activeOpacity={0.85} disabled={disabled} onPress={onPress}>
-      <Ionicons name={icon} size={15} color={active ? '#ffffff' : '#4f4a48'} />
-      <Text style={[styles.productActionText, active && styles.productActionTextActive]}>{label}</Text>
-    </TouchableOpacity>
   );
 }
 
@@ -2943,7 +3496,7 @@ function ConciergeSuggestionCard({ product, fallback, featured, onOpenProduct, o
   const sourceLabel = onlineProduct ? 'Amazon result' : product?.sourceLabel || (product?.source === 'wardrobe' ? 'Wardrobe item' : product?.source ? 'Lookmefy catalog' : '');
   const externalUrl = product?.affiliateLink || product?.sourceUrl;
   return (
-    <View style={styles.conciergeSuggestionCard}>
+    <View style={[styles.conciergeSuggestionCard, Platform.OS === 'ios' && styles.iosGlassCard]}>
       <TouchableOpacity
         style={styles.conciergeSuggestionImageWrap}
         activeOpacity={0.88}
@@ -2975,7 +3528,7 @@ function ConciergeSuggestionCard({ product, fallback, featured, onOpenProduct, o
         <TouchableOpacity style={[styles.conciergeShopButton, tryOnLoading && styles.disabledButton]} disabled={tryOnLoading} onPress={onTryOn || onShop}>
           <Text style={styles.conciergeShopText}>{tryOnLoading ? 'Generating...' : actionLabel}</Text>
         </TouchableOpacity>
-        {tryOn?.imageUrl ? <AiPreviewNote /> : null}
+        {tryOn?.imageUrl ? <AiPreviewNote content={reportContentReference(tryOn, isOnlineAiStudioProduct(product) ? 'external_tryon' : 'product_tryon')} /> : null}
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
         {externalUrl && onShop && onTryOn ? (
           <TouchableOpacity style={styles.conciergeExternalLink} onPress={onShop}>
@@ -3001,7 +3554,7 @@ function AiStudioOutfitCard({ outfit }) {
           {items.map((item) => (
             <View style={styles.aiOutfitItem} key={item.id || item.name}>
               {item.imageUrl ? (
-                <Image source={{ uri: imageUrl(item.imageUrl) }} style={styles.aiOutfitItemImage} resizeMode="cover" />
+                <ResilientImage source={{ uri: imageUrl(item.imageUrl) }} style={styles.aiOutfitItemImage} resizeMode="cover" />
               ) : (
                 <View style={styles.aiOutfitItemFallback}>
                   <Ionicons name="shirt-outline" size={20} color="#9b5658" />
@@ -3023,13 +3576,14 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
   const [homeRefreshing, setHomeRefreshing] = useState(false);
   const [homeAiRecommendationSeed, setHomeAiRecommendationSeed] = useState(0);
-  const [journalVisibleCount, setJournalVisibleCount] = useState(6);
   const preferredGender = productGenderForUser(user);
   const preferredApiGender = productApiGenderForUser(user);
   const curated = useProducts({ sort: 'newest', limit: homeProductFeedPageSize, gender: preferredApiGender, refreshKey: homeRefreshKey }, token);
   const recommended = useRecommendedProducts(user, token, 16, homeRefreshKey);
-  const shopLookQuery = { sort: 'newest', limit: 48 };
-  const shopLooks = useProducts({ ...shopLookQuery, refreshKey: homeRefreshKey }, token);
+  const shopLooks = usePagedShopProducts({ sort: 'newest', refreshKey: homeRefreshKey }, token, null, 24);
+  const closet = useApiState('/closet', token, Boolean(user), { items: [], outfits: [], suggestions: [], stats: {} });
+  const closetData = closet.data || {};
+  const closetItems = Array.isArray(closetData.items) ? closetData.items : [];
   const catalogProducts = useMemo(() => uniqueProductsWithImages(curated.products), [curated.products]);
   const arrivalProducts = useMemo(() => {
     const newArrivalProducts = catalogProducts.filter((product) => product.isNew);
@@ -3116,8 +3670,6 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
     ].filter((section) => section.loading || uniqueProductsWithImages(section.products).length >= 4);
   }, [catalogProducts, curated.error, curated.loading, preferredGender, recommended.error, recommended.loading, recommendedProducts]);
   const shopLookProducts = shopLooks.products.filter((product) => product.imageUrl || product.imageUrls?.length);
-  const visibleShopLookProducts = shopLookProducts.slice(0, journalVisibleCount);
-  const canShowMoreLooks = journalVisibleCount < shopLookProducts.length;
   const lookLabels = preferredGender === 'men'
     ? ['Office Sharp', 'Weekend Fit', 'Denim Day', 'Sneaker Edit', 'Layered Look', 'Evening Ready']
     : ['Dinner Ready', 'Soft Floral', 'Denim Day', 'Party Edit', 'Vacation', 'Weekend'];
@@ -3129,6 +3681,8 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
     : preferredGender === 'women'
       ? 'Real dress picks from the live catalog, selected for quick outfit discovery.'
       : 'Live catalog picks selected for quick outfit discovery.';
+  const isReturningHomeUser = Boolean(user && (closetItems.length || (Array.isArray(closetData.outfits) && closetData.outfits.length) || (Array.isArray(closetData.suggestions) && closetData.suggestions.length)));
+  const studioProducts = uniqueProductsWithImages([...recommendedProducts, ...arrivalProducts, ...tryOnPickProducts, ...catalogProducts]);
   const catalogTourTarget = useTourTarget('home-catalog', registerTourTarget, { request: tourFocusRequest, scrollRef: homeScrollRef, scrollOffset: 92 });
   const handleHomeRefresh = useCallback(() => {
     const nextSeed = Date.now();
@@ -3149,10 +3703,6 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
     }, 500);
     return () => clearTimeout(refreshTimer);
   }, [curated.loading, homeRefreshing, recommended.loading, shopLooks.loading]);
-
-  useEffect(() => {
-    setJournalVisibleCount(6);
-  }, [preferredGender]);
 
   useEffect(() => {
     if (!initialScrollY) return undefined;
@@ -3178,89 +3728,35 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
             progressBackgroundColor="#fffdfb"
           />
         )}
-        onScroll={(event) => onScrollPositionChange?.(event.nativeEvent.contentOffset.y)}
+        onScroll={(event) => {
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          onScrollPositionChange?.(contentOffset.y);
+          if (contentSize.height - contentOffset.y - layoutMeasurement.height < 600) shopLooks.loadMore();
+        }}
         {...screenScrollProps}
       >
-        <View style={styles.homeTryOnHero}>
-          <View style={styles.homeMissionIntro}>
-            <HomeMissionStoryShowcase />
-          </View>
-          <View style={styles.homeMissionGrid}>
-            {homeMissionTiles.map((item) => (
-              <TouchableOpacity
-                key={item.label}
-                accessibilityRole="button"
-                accessibilityLabel={`Show ${item.label} products`}
-                activeOpacity={0.86}
-                style={[styles.homeMissionTile, item.tileStyle]}
-                onPress={() => onNavigate('shop', { ...missionProductPresets[item.mission].params, mission: item.mission })}
-              >
-                <Image source={images[item.image]} style={[styles.homeMissionTileImage, item.imageStyle]} resizeMode="contain" />
-                <View pointerEvents="none" style={styles.homeMissionTileScrim} />
-                <Text style={styles.homeMissionTileLabel}>{item.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <TouchableOpacity style={styles.homeMissionGenerateButton} activeOpacity={0.88} onPress={() => onNavigate('stylebot')}>
-            <Text style={styles.homeMissionGenerateText}>Generate My Looks</Text>
-            <Ionicons name="arrow-forward" size={20} color="#ffffff" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.homeAiRecommendationsHead}>
-          <Text style={styles.homeCommerceTitle}>AI Recommendations</Text>
-          <TouchableOpacity style={styles.homeAiGenerateLink} activeOpacity={0.82} onPress={refreshHomeAiRecommendations}>
-            <Ionicons name="refresh-outline" size={19} color="#9b5658" />
-            <Text style={styles.homeAiGenerateText}>{curated.loading || recommended.loading ? 'Refreshing' : 'Generate Look'}</Text>
-          </TouchableOpacity>
-        </View>
-        <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.homeAiRecommendationTrack}>
-          {homeAiRecommendationCards.map((card) => (
-            <TouchableOpacity key={card.id} style={styles.homeAiRecommendationCard} activeOpacity={0.88} onPress={() => onNavigate('shop')}>
-              <View style={styles.homeAiRecommendationImages}>
-                {card.products.map((product) => (
-                  <ResilientImage
-                    key={`${card.id}-${product.id}`}
-                    source={product.imageUrl ? { uri: imageUrl(product.imageUrl) } : null}
-                    fallbackSource={images['category-generated/dresses.png']}
-                    style={styles.homeAiRecommendationImage}
-                    resizeMode="cover"
-                    fallbackIcon="shirt-outline"
-                    alt={product.title || product.name}
-                  />
-                ))}
-              </View>
-              <View style={styles.homeAiRecommendationFooter}>
-                <Text style={styles.homeAiRecommendationTitle} numberOfLines={1}>{card.title}</Text>
-                <Ionicons name="chevron-forward" size={27} color="#111111" />
-              </View>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        <View style={styles.homeTryOnStudioHead}>
-          <Text style={styles.homeCommerceTitle}>Try-On Studio</Text>
-          <Text style={styles.homeCommerceSubtitle}>See how it looks on you before you wear it.</Text>
-        </View>
-        <View style={styles.homeTryOnStudioCard}>
-          <View style={styles.homeTryOnStudioBody}>
-            <HomeBeforeAfterSlider />
-            <View style={styles.homeTryOnStudioCopy}>
-              <TouchableOpacity style={styles.homeTryOnStudioButton} activeOpacity={0.88} onPress={() => onNavigate('tryon')}>
-                <Text style={styles.homeTryOnStudioButtonText}>Try Now</Text>
-                <View style={styles.homeTryOnStudioButtonIcon}>
-                  <Ionicons name="arrow-forward" size={16} color="#050505" />
-                </View>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
+        {isReturningHomeUser ? (
+          <ReturningUserHomeStudio
+            products={studioProducts}
+            closetItems={closetItems}
+            onNavigate={onNavigate}
+            onAddToWishlist={onAddToWishlist}
+            wishlistIds={wishlistIds}
+          />
+        ) : (
+          <NewUserHomeStudio
+            products={studioProducts}
+            onNavigate={onNavigate}
+            onAddToWishlist={onAddToWishlist}
+            wishlistIds={wishlistIds}
+          />
+        )}
 
         <View ref={catalogTourTarget.ref} onLayout={catalogTourTarget.onLayout} />
 
       <HomeProductRail
-        title="Recommended for You"
-        subtitle="Built from your Lookmefy profile"
+        title="Recommended for Your Style"
+        subtitle="Selected from your Lookmefy profile"
         products={recommendedProducts}
         loading={(curated.loading || recommended.loading) && !recommendedProducts.length}
         error={recommendedProducts.length ? '' : recommended.error || curated.error}
@@ -3307,16 +3803,16 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
           </View>
         </View>
         <Text style={[styles.homeJournalIntro, layout.isTablet && styles.homeJournalIntroTablet]}>{journalIntro}</Text>
-        {shopLooks.loading ? (
+        {shopLooks.loading || (!shopLookProducts.length && shopLooks.loadingMore) ? (
           <HomeJournalSkeletonGrid />
         ) : shopLooks.error || !shopLookProducts.length ? (
           <StatusPanel error={shopLooks.error} empty={!shopLookProducts.length} text={preferredGender === 'men' ? 'No men looks found yet.' : 'No looks found yet.'} />
         ) : (
           <View style={styles.homeJournalGrid}>
-            {visibleShopLookProducts.map((product, index) => {
+            {shopLookProducts.map((product, index) => {
               const price = Number(product.price);
               return (
-                <TouchableOpacity key={product.id} style={[styles.homeJournalProductCard, layout.productGridWidthStyle]} activeOpacity={0.86} onPress={() => onNavigate('product', { id: product.id })}>
+                <TouchableOpacity key={product.id} style={[styles.homeJournalProductCard, Platform.OS === 'ios' && styles.iosGlassCard, layout.productGridWidthStyle]} activeOpacity={0.86} onPress={() => onNavigate('product', { id: product.id })}>
                   <View style={styles.homeJournalImageFrame}>
                     <ProductImage product={product} style={styles.homeJournalImage} resizeMode="cover" alt={product.title || product.name} />
                     {onAddToWishlist ? <WishlistDoneButton saved={wishlistIds?.has(product.id)} compact onPress={() => onAddToWishlist(product)} /> : null}
@@ -3354,14 +3850,14 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
                 </TouchableOpacity>
               );
             })}
-            {canShowMoreLooks ? (
-              <TouchableOpacity style={styles.homeJournalSeeMoreButton} activeOpacity={0.86} onPress={() => setJournalVisibleCount((current) => Math.min(current + 12, shopLookProducts.length))}>
-                <Text style={styles.homeJournalSeeMoreText}>See more</Text>
-                <Ionicons name="chevron-down" size={16} color="#ffffff" />
-              </TouchableOpacity>
-            ) : null}
           </View>
         )}
+        {shopLooks.loadingMore && shopLookProducts.length ? <ActivityIndicator style={styles.shopProductLoadingMore} color="#252221" /> : null}
+        {shopLooks.loadMoreError ? (
+          <TouchableOpacity accessibilityRole="button" style={styles.shopProductRetry} onPress={shopLooks.retryLoadMore}>
+            <Text style={styles.shopProductRetryText}>{shopLooks.loadMoreError} Tap to retry.</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
       </ScrollView>
     </View>
@@ -3442,10 +3938,12 @@ function FilterDropdown({ label, selected, options, onSelect }) {
 }
 
 function TryOnVideoPlayer({ uri, style, nativeControls = true }) {
-  const player = useVideoPlayer(uri, (instance) => {
+  const privateMediaSession = useContext(PrivateMediaSessionContext);
+  const source = authenticatedMediaSource(uri ? { uri } : null, { apiOrigin: imageUrl('/api/health'), sessionToken: privateMediaSession });
+  const player = useVideoPlayer(source ? { ...source, useCaching: false } : null, (instance) => {
     instance.loop = true;
     instance.muted = true;
-    instance.play();
+    if (source) instance.play();
   });
 
   return (
@@ -3630,6 +4128,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
     return <StyleBotScreen user={user} setUser={setUser} token={token} onNavigate={onNavigate} onRequireAuth={onRequireAuth} />;
   }
 
+  const layout = useResponsiveLayout();
   const [draft, setDraft] = useState(initial.q || '');
   const [filters, setFilters] = useState({
     q: initial.q || '',
@@ -3649,12 +4148,10 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
   const [tryOnVideoLoading, setTryOnVideoLoading] = useState({});
   const [tryOnErrors, setTryOnErrors] = useState({});
   const [tryOnVideoErrors, setTryOnVideoErrors] = useState({});
-  const [visibleProductCount, setVisibleProductCount] = useState(shopProductInitialVisibleCount);
   const shopScrollRef = useRef(null);
   const missionPreset = missionProductPresets[String(initial.mission || '').toLowerCase()] || null;
-  const state = useProducts({ ...filters, limit: missionPreset ? 96 : shopProductGridLimit }, token);
+  const state = usePagedShopProducts(filters, token, missionPreset);
   const [tryOns, setTryOns] = useTryOns(user, state.products, token);
-  const missionOrderedProducts = useMemo(() => orderProductsForMission(state.products, missionPreset), [missionPreset?.id, state.products]);
   const resultTitle = missionPreset?.title || shopResultTitle(filters, false);
   const searchPlaceholder = filters.category
     ? `Search in ${titleCase(filters.category)}`
@@ -3662,8 +4159,6 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
       ? `Search ${String(filters.q).toLowerCase()}, brands, colours`
       : 'Search products, brands, colours';
   const hasSearchIntent = Boolean(filters.q || filters.category || filters.brand || filters.gender || filters.newArrival || filters.maxPrice || filters.discounted || filters.sale);
-  const visibleProducts = missionOrderedProducts.slice(0, visibleProductCount);
-  const canShowMoreProducts = visibleProductCount < missionOrderedProducts.length;
   const showStorefront = !tryOnMode && !hasSearchIntent && !filters.sort;
 
   useEffect(() => {
@@ -3691,13 +4186,9 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
   }, [JSON.stringify(initial || {}), explicitCategorySection]);
 
   useEffect(() => {
-    setVisibleProductCount(shopProductInitialVisibleCount);
-  }, [JSON.stringify(initial || {}), filters.q, filters.category, filters.brand, filters.gender, filters.sort, filters.newArrival, filters.maxPrice, filters.discounted, filters.sale]);
-
-  useEffect(() => {
     if (!initialScrollY || showStorefront) return undefined;
     const restoreTimer = setTimeout(() => {
-      shopScrollRef.current?.scrollTo?.({ y: initialScrollY, animated: false });
+      shopScrollRef.current?.scrollToOffset?.({ offset: initialScrollY, animated: false });
     }, 80);
     return () => clearTimeout(restoreTimer);
   }, [initialScrollY, showStorefront]);
@@ -3743,6 +4234,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
       });
       let nextTryOn = data.tryOn || null;
       if (!nextTryOn?.imageUrl) nextTryOn = await fetchProductTryOn(product.id, { waitForImage: true });
+      requireGeneratedImage(nextTryOn);
       if (nextTryOn) setTryOns((current) => ({ ...current, [product.id]: nextTryOn }));
       if (data.user) setUser(data.user);
     } catch (error) {
@@ -3791,6 +4283,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
         timeoutMs: aiTryOnRequestTimeoutMs,
         jobTimeoutMs: aiTryOnJobTimeoutMs
       });
+      if (!data.tryOn?.videoUrl) throw new Error('Your AI video is not ready yet. Please try again in a moment.');
       setTryOns((current) => ({ ...current, [product.id]: data.tryOn }));
       if (data.user) setUser(data.user);
     } catch (error) {
@@ -3822,12 +4315,41 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
   return (
     <View style={styles.shopScreen}>
       <ShopTopBar onNavigate={onNavigate} user={user} onBack={onBack} />
-      <ScrollView
+      <FlatList
+        key={layout.productColumns}
         ref={shopScrollRef}
-        contentContainerStyle={styles.scrollContent}
-        onScroll={(event) => onScrollPositionChange?.(event.nativeEvent.contentOffset.y)}
+        data={state.products}
+        numColumns={layout.productColumns}
+        keyExtractor={(product) => product.id}
+        renderItem={({ item: product }) => (
+          <ProductCard
+            variant="homeFrame"
+            product={product}
+            tryOn={tryOns[product.id]}
+            loading={Boolean(tryOnLoading[product.id])}
+            videoLoading={Boolean(tryOnVideoLoading[product.id])}
+            error={tryOnErrors[product.id]}
+            videoError={tryOnVideoErrors[product.id]}
+            onPress={() => onNavigate('product', { id: product.id })}
+            onAddToWishlist={onAddToWishlist}
+            isWishlisted={wishlistIds?.has(product.id)}
+            onTryOn={() => generateTryOn(product)}
+            onTryOnVideo={() => generateTryOnVideo(product)}
+          />
+        )}
+        columnWrapperStyle={styles.shopProductGridRow}
+        contentContainerStyle={styles.shopProductListContent}
+        onEndReached={state.loadMore}
+        onEndReachedThreshold={0.65}
+        onScroll={(event) => {
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          onScrollPositionChange?.(contentOffset.y);
+          if (contentSize.height - contentOffset.y - layoutMeasurement.height <= Math.max(240, layoutMeasurement.height * 0.6)) {
+            state.loadMore();
+          }
+        }}
         {...screenScrollProps}
-      >
+        ListHeaderComponent={<View style={styles.shopProductListHeader}>
       <View style={styles.searchPanel}>
         <View style={styles.searchRow}>
           <Ionicons name="search-outline" size={19} color="#66748a" />
@@ -3884,42 +4406,15 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
           </View>
         </View>
       ) : null}
-
-      {state.loading ? <ProductGridSkeleton /> : (
-        <>
-          <StatusPanel error={state.error} empty={!missionOrderedProducts.length} text="Try a different search or browse another category." />
-          <View style={styles.productGrid}>
-            {visibleProducts.map((product) => (
-              <ProductCard
-                key={product.id}
-                variant="homeFrame"
-                product={product}
-                tryOn={tryOns[product.id]}
-                loading={Boolean(tryOnLoading[product.id])}
-                videoLoading={Boolean(tryOnVideoLoading[product.id])}
-                error={tryOnErrors[product.id]}
-                videoError={tryOnVideoErrors[product.id]}
-                onPress={() => onNavigate('product', { id: product.id })}
-                onAddToWishlist={onAddToWishlist}
-                isWishlisted={wishlistIds?.has(product.id)}
-                onTryOn={() => generateTryOn(product)}
-                onTryOnVideo={() => generateTryOnVideo(product)}
-              />
-            ))}
-            {canShowMoreProducts ? (
-              <TouchableOpacity
-                style={styles.productGridSeeMoreButton}
-                activeOpacity={0.86}
-                onPress={() => setVisibleProductCount((current) => Math.min(current + shopProductVisibleStep, missionOrderedProducts.length))}
-              >
-                <Text style={styles.productGridSeeMoreText}>See more</Text>
-                <Ionicons name="chevron-down" size={16} color="#ffffff" />
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        </>
-      )}
-      </ScrollView>
+      {state.loading ? <ProductGridSkeleton /> : null}
+      {!state.loading ? <StatusPanel error={state.error} empty={!state.products.length} text="Try a different search or browse another category." /> : null}
+        </View>}
+        ListFooterComponent={state.loadingMore ? <ActivityIndicator style={styles.shopProductLoadingMore} color="#252221" /> : state.loadMoreError || state.error ? (
+          <TouchableOpacity accessibilityRole="button" style={styles.shopProductRetry} onPress={state.retryLoadMore}>
+            <Text style={styles.shopProductRetryText}>{state.loadMoreError || state.error} Tap to retry.</Text>
+          </TouchableOpacity>
+        ) : null}
+      />
     </View>
   );
 }
@@ -3933,12 +4428,14 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
   const [tryOnVideoLoading, setTryOnVideoLoading] = useState(false);
   const [tryOnError, setTryOnError] = useState('');
   const [tryOnVideoError, setTryOnVideoError] = useState('');
+  const [titleExpanded, setTitleExpanded] = useState(false);
   const [lightbox, setLightbox] = useState(null);
   const productScrollRef = useRef(null);
   const mediaScrollRef = useRef(null);
   const detailContentWidth = layout.contentWidth || width;
   const mediaWidth = Math.max(1, Math.round(detailContentWidth - 28));
-  const related = useProducts({ category: state.product?.category || '', limit: 5 }, token);
+  const categoryPresentation = useMemo(() => productCategoryPresentation(state.product || {}), [state.product]);
+  const related = useProducts({ category: categoryPresentation.category, limit: 5, enabled: categoryPresentation.reliable }, token);
   const relatedProducts = related.products.filter((item) => item.id !== id).slice(0, 4);
   const [relatedTryOns] = useTryOns(user, relatedProducts, token);
 
@@ -3952,6 +4449,10 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
       alive = false;
     };
   }, [id, token]);
+
+  useEffect(() => {
+    setTitleExpanded(false);
+  }, [id]);
 
   useEffect(() => {
     if (!user || !id) {
@@ -4004,8 +4505,9 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
       });
       let nextTryOn = data.tryOn || null;
       if (!nextTryOn?.imageUrl) nextTryOn = await fetchProductTryOn(state.product.id, { waitForImage: true });
+      requireGeneratedImage(nextTryOn);
       if (nextTryOn) setTryOn(nextTryOn);
-      if (regenerate && data.reused) setTryOnError('Existing try-on was reused. Restart the backend with the latest code, then try again.');
+      if (regenerate && data.reused) setTryOnError('Your previous AI look was returned. A new look was not confirmed.');
       if (data.user) setUser(data.user);
     } catch (error) {
       if (isAuthExpiredError(error)) {
@@ -4055,8 +4557,9 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
         timeoutMs: aiTryOnRequestTimeoutMs,
         jobTimeoutMs: aiTryOnJobTimeoutMs
       });
+      if (!data.tryOn?.videoUrl) throw new Error('Your AI video is not ready yet. Please try again in a moment.');
       setTryOn(data.tryOn);
-      if (regenerate && data.reused) setTryOnVideoError('Existing video was reused. Restart the backend with the latest code, then try again.');
+      if (regenerate && data.reused) setTryOnVideoError('Your previous video was returned. A new video was not confirmed.');
       if (data.user) setUser(data.user);
     } catch (error) {
       if (isAuthExpiredError(error)) {
@@ -4082,6 +4585,9 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
   }
 
   const product = state.product;
+  const productTitle = product.title || product.name;
+  const productBrand = verifiedProductBrand(product);
+  const collapsibleTitle = productTitle.length > 105;
   const isWishlisted = wishlistIds?.has(product.id);
   const originalUri = imageUrl(product.imageUrl);
   const tryOnUri = tryOnImageUrl(tryOn);
@@ -4091,23 +4597,25 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
     tryOnUri ? { key: 'tryon', label: tryOnDisplayLabel(tryOn), source: { uri: tryOnUri }, uri: tryOnUri } : null,
     { key: 'original', label: 'Original Product', source: originalUri ? { uri: originalUri } : null, uri: originalUri, product }
   ].filter(Boolean);
-  const detailTags = [
-    titleCase(product.category || ''),
-    product.fit || '',
-    titleCase(product.gender || '')
-  ].filter(Boolean).slice(0, 3);
-  const detailRows = ['PRODUCT DETAILS', 'FIT & CARE', 'SHIPPING & RETURNS'];
+  const productRating = verifiedProductRating(product);
   const mediaHeight = layout.isTablet
-    ? Math.min(600, Math.max(420, Math.round(mediaWidth * 0.62)))
-    : Math.min(520, Math.max(360, Math.round(mediaWidth * 1.31)));
+    ? Math.min(520, Math.max(380, Math.round(mediaWidth * 0.58)))
+    : Math.min(425, Math.max(300, Math.round(mediaWidth * 1.04)));
+  const merchantUrl = productMerchantUrl(product);
+  const productColors = (product.colors || [])
+    .map((color) => String(color?.name || color || '').trim())
+    .filter((color) => color && color.length <= 32 && !/[₹$€£]|\b(?:get it|delivery|discount|offer)\b/i.test(color))
+    .slice(0, 5);
+  const productSizes = (product.sizes || []).map((size) => String(size || '').trim()).filter(Boolean).slice(0, 8);
   const openShop = () => {
     if (!user) {
       onRequireAuth?.('Log in with your mobile number to shop this brand.');
       return;
     }
-    if (product.affiliateLink) openExternalWebUrl(product.affiliateLink);
+    if (merchantUrl) openExternalWebUrl(merchantUrl);
     else onNavigate('shop');
   };
+  const openCategory = () => onNavigate('shop', categoryPresentation.reliable ? { category: categoryPresentation.category } : {});
 
   return (
     <View style={styles.productDetailScreen}>
@@ -4119,6 +4627,8 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
             <Pressable key={item.key} style={[styles.productMediaSlide, { width: mediaWidth }]} onPress={() => item.type !== 'video' && item.uri && setLightbox(item.uri)}>
               {item.type === 'video' ? (
                 <TryOnVideoPlayer uri={item.uri} style={styles.productHeroVideo} nativeControls />
+              ) : item.key === 'original' ? (
+                <ProductImage product={product} style={styles.productHeroImage} resizeMode="contain" alt={productTitle} />
               ) : item.source ? (
                 <Image source={item.source} style={styles.productHeroImage} resizeMode="contain" />
               ) : (
@@ -4148,73 +4658,107 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
       </View>
 
       <View style={styles.productSummary}>
-        <View style={styles.productSummaryTop}>
-          <View style={styles.productSummaryTitleBlock}>
-            <Text style={styles.productBrandLabel}>{product.displayLabel || titleCase(product.category || 'Catalog')}</Text>
-            <Text style={styles.productNameText}>{product.title || product.name}</Text>
-          </View>
-          <View style={styles.productPriceBlock}>
-            <Text style={styles.productDetailPrice}>{Number.isFinite(Number(product.price)) ? formatMoney(Number(product.price), product.currency) : 'Price unavailable'}</Text>
-            {product.rating ? (
-              <View style={styles.productRatingLine}>
-                <Ionicons name="star" size={12} color="#9b5658" />
-                <Text style={styles.productRatingText}>{Number(product.rating).toFixed(1)} {product.ratingCount ? `(${product.ratingCount})` : ''}</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-        <View style={styles.productTagRow}>
-          {detailTags.map((tag) => <Text key={tag} style={styles.productSoftTag}>{tag}</Text>)}
-        </View>
-        {product.category ? (
-          <TouchableOpacity style={styles.productCategoryMeta} activeOpacity={0.76} onPress={() => onNavigate('shop', { category: product.category })}>
-            <Ionicons name="pricetag-outline" size={13} color="#8c817c" />
-            <Text style={styles.productCategoryMetaLabel}>Category</Text>
-            <Text style={styles.productCategoryMetaValue}>{titleCase(product.category)}</Text>
+        {productBrand ? <Text style={styles.productBrandLabel}>{productBrand}</Text> : null}
+        <Text
+          accessibilityLabel={productTitle}
+          numberOfLines={collapsibleTitle && !titleExpanded ? 2 : undefined}
+          ellipsizeMode="tail"
+          style={styles.productNameText}
+        >
+          {productTitle}
+        </Text>
+        {collapsibleTitle ? (
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={titleExpanded ? 'Show less of product title' : 'Read full product title'}
+            activeOpacity={0.72}
+            style={styles.productTitleDisclosure}
+            onPress={() => setTitleExpanded((current) => !current)}
+          >
+            <Text style={styles.productTitleDisclosureText}>{titleExpanded ? 'Show less' : 'Read more'}</Text>
+            <Ionicons name={titleExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#625a55" />
           </TouchableOpacity>
         ) : null}
+        <View style={styles.productValueRow}>
+          <Text style={styles.productDetailPrice}>{Number.isFinite(Number(product.price)) ? formatMoney(Number(product.price), product.currency) : 'Price unavailable'}</Text>
+          {productRating ? (
+            <View style={styles.productRatingLine}>
+              <Ionicons name="star" size={13} color="#8c665d" />
+              <Text style={styles.productRatingText}>{productRating.rating.toFixed(1)} ({productRating.ratingCount})</Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={styles.productMetadataRow}>
+          <TouchableOpacity style={styles.productMetadataItem} activeOpacity={0.76} onPress={openCategory}>
+            <Text style={styles.productCategoryMetaLabel}>PRODUCT TYPE</Text>
+            <Text style={styles.productCategoryMetaValue}>{categoryPresentation.label}</Text>
+          </TouchableOpacity>
+          {product.gender ? (
+            <View style={styles.productMetadataItem}>
+              <Text style={styles.productCategoryMetaLabel}>FOR</Text>
+              <Text style={styles.productCategoryMetaValue}>{titleCase(product.gender)}</Text>
+            </View>
+          ) : null}
+        </View>
 
         <View style={styles.productActionRow}>
-          <ProductActionButton label="Shop" icon="bag-handle-outline" active onPress={openShop} />
-          <ProductActionButton
-            label={tryOnLoading ? 'Trying...' : tryOn?.imageUrl ? 'Again' : 'Try On'}
-            icon="sparkles-outline"
-            disabled={tryOnLoading}
-            onPress={generate}
-          />
-          <ProductActionButton
-            label={tryOnVideoLoading ? 'Video...' : tryOn?.videoUrl ? 'New Video' : 'Video'}
-            icon="play-circle-outline"
-            disabled={tryOnLoading || tryOnVideoLoading}
-            onPress={generateVideo}
-          />
+          <TouchableOpacity style={[styles.productPrimaryAction, tryOnLoading && styles.disabledButton]} activeOpacity={0.86} disabled={tryOnLoading} onPress={generate}>
+            <Ionicons name="sparkles-outline" size={17} color="#ffffff" />
+            <Text style={styles.productPrimaryActionText}>{tryOnLoading ? 'Creating your try-on…' : tryOn?.imageUrl ? 'Try It On Again' : 'Try It On'}</Text>
+            {!tryOnLoading ? <Ionicons name="arrow-forward" size={17} color="#ffffff" /> : null}
+          </TouchableOpacity>
+          <View style={styles.productSecondaryActionRow}>
+            {merchantUrl ? (
+              <TouchableOpacity accessibilityRole="link" accessibilityLabel="View product on merchant site" style={styles.productSecondaryAction} activeOpacity={0.8} onPress={openShop}>
+                <Text style={styles.productSecondaryActionText}>View Product</Text>
+                <Ionicons name="arrow-forward" size={15} color="#211f1d" />
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity style={[styles.productVideoAction, !merchantUrl && styles.productVideoActionWide, (tryOnLoading || tryOnVideoLoading) && styles.disabledButton]} activeOpacity={0.8} disabled={tryOnLoading || tryOnVideoLoading} onPress={generateVideo}>
+              <Ionicons name="play-circle-outline" size={17} color="#514b47" />
+              <Text style={styles.productVideoActionText}>{tryOnVideoLoading ? 'Creating…' : tryOn?.videoUrl ? 'New Video' : 'Video Try-On'}</Text>
+            </TouchableOpacity>
+          </View>
+          {!merchantUrl ? <Text style={styles.productCommerceUnavailable}>Shopping link unavailable for this item.</Text> : null}
         </View>
-        {tryOn?.imageUrl || tryOn?.videoUrl ? <AiPreviewNote /> : null}
+        {tryOn?.imageUrl || tryOn?.videoUrl ? <AiPreviewNote content={reportContentReference(tryOn, 'product_tryon')} /> : null}
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
         {tryOnVideoError ? <Text style={styles.errorText}>{tryOnVideoError}</Text> : null}
       </View>
 
-      <View style={styles.productAccordion}>
-        {detailRows.map((row) => (
-          <TouchableOpacity key={row} style={styles.productAccordionRow}>
-            <Text style={styles.productAccordionText}>{row}</Text>
-            <Ionicons name="add" size={17} color="#4f4a48" />
-          </TouchableOpacity>
-        ))}
-      </View>
-
       <View style={styles.productStorySection}>
-        <Text style={styles.productStoryTitle}>Product Notes</Text>
+        <Text style={styles.productStoryTitle}>Product Description</Text>
         <Text style={styles.productStoryText}>
           {product.description || 'No additional product description is available yet.'}
         </Text>
-        <ProductImage product={product} style={styles.productStoryImage} resizeMode="cover" alt={product.title} />
+        {productColors.length || productSizes.length || product.sizeNotes ? (
+          <View style={styles.productFacts}>
+            {productColors.length ? (
+              <View style={styles.productFactRow}>
+                <Text style={styles.productFactLabel}>Colors</Text>
+                <Text style={styles.productFactValue}>{productColors.join(', ')}</Text>
+              </View>
+            ) : null}
+            {productSizes.length ? (
+              <View style={styles.productFactRow}>
+                <Text style={styles.productFactLabel}>Sizes</Text>
+                <Text style={styles.productFactValue}>{productSizes.join(', ')}</Text>
+              </View>
+            ) : null}
+            {product.sizeNotes ? (
+              <View style={styles.productFactRow}>
+                <Text style={styles.productFactLabel}>Fit & sizing</Text>
+                <Text style={styles.productFactValue}>{product.sizeNotes}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.completeLookSection}>
         <View style={styles.completeLookHead}>
           <Text style={styles.completeLookTitle}>Complete the Look</Text>
-          <TouchableOpacity onPress={() => onNavigate('shop', { category: product.category })}>
+          <TouchableOpacity onPress={openCategory}>
             <Text style={styles.completeLookAll}>SHOP ALL</Text>
           </TouchableOpacity>
         </View>
@@ -4229,7 +4773,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
                 isWishlisted={wishlistIds?.has(item.id)}
               />
             );
-          }) : <StatusPanel empty text="No related products found yet." />}
+          }) : <StatusPanel empty text={categoryPresentation.reliable ? 'No related products found yet.' : 'Related products are unavailable while this item’s category is reviewed.'} />}
         </View>
       </View>
       </ScrollView>
@@ -4245,12 +4789,15 @@ const phoneAuthPerks = [
 ];
 
 function AuthPasswordField({ value, onChangeText, placeholder, visible, onToggle, fieldHeight, autoComplete = 'password', textContentType = 'password' }) {
+  const { width, fontScale } = useWindowDimensions();
+  const compactAccessibleInput = width < 340 && fontScale > 1;
   const inputRef = useRef(null);
   return (
-    <View style={[styles.loginInputWrap, { minHeight: fieldHeight }]}>
+    <View style={[styles.loginInputWrap, { minHeight: fieldHeight }, compactAccessibleInput && { paddingHorizontal: 12, gap: 8 }]}>
       <Ionicons name="lock-closed-outline" size={23} color="#555a5d" />
       <TextInput
         ref={inputRef}
+        accessibilityLabel={placeholder}
         style={styles.loginInput}
         defaultValue={value}
         onChangeText={onChangeText}
@@ -4265,19 +4812,20 @@ function AuthPasswordField({ value, onChangeText, placeholder, visible, onToggle
         contextMenuHidden
         selectTextOnFocus={false}
       />
-      <TouchableOpacity style={styles.passwordVisibilityButton} activeOpacity={0.72} onPress={onToggle}>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={visible ? 'Hide password' : 'Show password'} hitSlop={4} style={styles.passwordVisibilityButton} activeOpacity={0.72} onPress={onToggle}>
         <Ionicons name={visible ? 'eye-off-outline' : 'eye-outline'} size={21} color="#5d5754" />
       </TouchableOpacity>
     </View>
   );
 }
 
-function AuthScreen({ mode, setUser, setToken, onNavigate }) {
+function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
   const isSignup = mode === 'signup';
   const { width, height } = useWindowDimensions();
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [otpSent, setOtpSent] = useState(false);
+  const [otpSession, setOtpSession] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -4285,6 +4833,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const phoneInputRef = useRef(null);
+  const authRequestRef = useRef(false);
   const phoneDraftRef = useRef('');
   const passwordDraftRef = useRef('');
   const confirmPasswordDraftRef = useRef('');
@@ -4316,6 +4865,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   useEffect(() => {
     setOtp('');
     setOtpSent(false);
+    setOtpSession('');
     setPhone('');
     phoneDraftRef.current = '';
     clearPasswordDrafts();
@@ -4324,6 +4874,9 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     setMessage('');
     setSignupStage('otp');
     setSignupToken('');
+    setDetailName('');
+    setDetailGender('');
+    setDetailPhoto(null);
     setResetStage('idle');
     setResetToken('');
   }, [mode]);
@@ -4332,15 +4885,18 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     await saveToken(data.token);
     setToken(data.token);
     setUser(data.user);
-    onNavigate('home');
+    if (onAuthenticated) onAuthenticated();
+    else onNavigate('home');
   };
 
   const sendSignupOtp = async () => {
+    if (authRequestRef.current) return;
     const phoneValue = currentPhoneValue();
     if (phoneValue.length !== 10) {
       setMessage('Enter a valid 10 digit mobile number.');
       return;
     }
+    authRequestRef.current = true;
     setLoading(true);
     setMessage('Sending OTP...');
     try {
@@ -4349,44 +4905,47 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
         body: JSON.stringify({ phone: phoneValue, purpose: 'signup' })
       });
       setOtp('');
+      setOtpSession(data.otpSession || '');
       setOtpSent(true);
       setMessage(data.message ? `${data.message}. Enter the code from SMS.` : 'OTP sent. Enter the code from SMS.');
     } catch (error) {
       setMessage(error.message);
     } finally {
+      authRequestRef.current = false;
       setLoading(false);
     }
   };
 
   const verifySignupOtp = async () => {
+    if (authRequestRef.current) return;
     const phoneValue = currentPhoneValue();
     const cleanOtp = normalizeOtpInput(otp);
-    if (phoneValue.length !== 10 || !cleanOtp) {
-      setMessage('Enter your mobile number and OTP.');
+    if (phoneValue.length !== 10 || !/^\d{6}$/.test(cleanOtp)) {
+      setMessage('Enter your mobile number and the 6-digit OTP.');
       return;
     }
+    authRequestRef.current = true;
     setLoading(true);
     setMessage('Verifying OTP...');
     try {
       const data = await api('/auth/otp/verify', {
         method: 'POST',
-        body: JSON.stringify({ phone: phoneValue, otp: cleanOtp, purpose: 'signup' })
+        body: JSON.stringify({ phone: phoneValue, otp: cleanOtp, otpSession, purpose: 'signup' })
       });
       setSignupToken(data.signupToken || '');
-      setDetailName('');
-      setDetailGender('');
-      setDetailPhoto(null);
       clearPasswordDrafts();
       setSignupStage('details');
       setMessage('');
     } catch (error) {
       setMessage(error.message);
     } finally {
+      authRequestRef.current = false;
       setLoading(false);
     }
   };
 
   const loginWithPassword = async () => {
+    if (authRequestRef.current) return;
     const phoneValue = currentPhoneValue();
     const passwordValue = currentPassword();
     if (phoneValue.length !== 10) {
@@ -4397,6 +4956,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       setMessage('Enter your password.');
       return;
     }
+    authRequestRef.current = true;
     setLoading(true);
     setMessage('Logging in...');
     try {
@@ -4408,16 +4968,19 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     } catch (error) {
       setMessage(error.message);
     } finally {
+      authRequestRef.current = false;
       setLoading(false);
     }
   };
 
   const startPasswordReset = async () => {
+    if (authRequestRef.current) return;
     const phoneValue = currentPhoneValue();
     if (phoneValue.length !== 10) {
       setMessage('Enter your mobile number first.');
       return;
     }
+    authRequestRef.current = true;
     setLoading(true);
     setMessage('Sending reset OTP...');
     try {
@@ -4426,29 +4989,33 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
         body: JSON.stringify({ phone: phoneValue, purpose: 'password-reset' })
       });
       setOtp('');
+      setOtpSession(data.otpSession || '');
       setOtpSent(true);
       setResetStage('otp');
       setMessage(data.message ? `${data.message}. Enter the code from SMS.` : 'OTP sent. Enter the code from SMS.');
     } catch (error) {
       setMessage(error.message);
     } finally {
+      authRequestRef.current = false;
       setLoading(false);
     }
   };
 
   const verifyPasswordResetOtp = async () => {
+    if (authRequestRef.current) return;
     const phoneValue = currentPhoneValue();
     const cleanOtp = normalizeOtpInput(otp);
-    if (phoneValue.length !== 10 || !cleanOtp) {
-      setMessage('Enter your mobile number and OTP.');
+    if (phoneValue.length !== 10 || !/^\d{6}$/.test(cleanOtp)) {
+      setMessage('Enter your mobile number and the 6-digit OTP.');
       return;
     }
+    authRequestRef.current = true;
     setLoading(true);
     setMessage('Verifying OTP...');
     try {
       const data = await api('/auth/otp/verify', {
         method: 'POST',
-        body: JSON.stringify({ phone: phoneValue, otp: cleanOtp, purpose: 'password-reset' })
+        body: JSON.stringify({ phone: phoneValue, otp: cleanOtp, otpSession, purpose: 'password-reset' })
       });
       setResetToken(data.resetToken || '');
       setResetStage('password');
@@ -4459,11 +5026,13 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     } catch (error) {
       setMessage(error.message);
     } finally {
+      authRequestRef.current = false;
       setLoading(false);
     }
   };
 
   const completePasswordReset = async () => {
+    if (authRequestRef.current) return;
     const passwordValue = currentPassword();
     const confirmPasswordValue = currentConfirmPassword();
     const passwordError = passwordValidationMessage(passwordValue);
@@ -4480,6 +5049,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       setResetStage('otp');
       return;
     }
+    authRequestRef.current = true;
     setLoading(true);
     setMessage('Saving password...');
     try {
@@ -4492,18 +5062,35 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     } catch (error) {
       setMessage(error.message);
     } finally {
+      authRequestRef.current = false;
       setLoading(false);
     }
   };
 
-  const changeSignupMobile = () => {
+  const cancelPendingOtp = async (purpose) => {
+    if (!otpSession) return;
+    const path = purpose === 'password-reset' ? '/auth/password-reset/cancel-otp' : '/auth/signup/cancel-otp';
+    try {
+      await api(path, {
+        method: 'POST',
+        body: JSON.stringify({ phone: currentPhoneValue(), otpSession })
+      });
+    } catch {
+      // OTP challenges expire quickly; cancellation must not trap the user on this screen.
+    }
+    setOtpSession('');
+  };
+
+  const changeSignupMobile = async () => {
+    await cancelPendingOtp('signup');
     setOtpSent(false);
     setOtp('');
     setSignupToken('');
     setMessage('');
   };
 
-  const returnToLogin = () => {
+  const returnToLogin = async () => {
+    await cancelPendingOtp('password-reset');
     setResetStage('idle');
     setResetToken('');
     setOtp('');
@@ -4513,6 +5100,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   };
 
   const exitSignupDetails = async () => {
+    await cancelPendingOtp('signup');
     await clearToken();
     setSignupToken('');
     setSignupStage('otp');
@@ -4521,12 +5109,23 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
     onNavigate('home');
   };
 
+  const leaveAuth = async (routeName) => {
+    if (isSignup && otpSent) await cancelPendingOtp('signup');
+    if (!isSignup && resetStage !== 'idle') await cancelPendingOtp('password-reset');
+    onNavigate(routeName);
+  };
+
   const pickDetailPhoto = async () => {
-    const asset = await pickImage();
-    if (asset?.uri) setDetailPhoto(asset);
+    try {
+      const asset = await pickImage();
+      if (asset?.uri) setDetailPhoto(asset);
+    } catch {
+      setMessage('Could not open your photos. Please try again.');
+    }
   };
 
   const completeSignupDetails = async () => {
+    if (authRequestRef.current) return;
     const passwordValue = currentPassword();
     const confirmPasswordValue = currentConfirmPassword();
     const cleanName = detailName.trim().replace(/\s+/g, ' ');
@@ -4552,6 +5151,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       return;
     }
 
+    authRequestRef.current = true;
     setLoading(true);
     setMessage('Saving your profile...');
     try {
@@ -4578,8 +5178,19 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
       setSignupStage('otp');
       setMessage('');
     } catch (error) {
-      setMessage(isMissingRouteError(error.message) ? 'Profile setup is not active on the running backend. Restart the backend, then try again.' : error.message);
+      if (error.status === 401 || (error.status === 400 && /verify your phone number first/i.test(error.message))) {
+        setSignupToken('');
+        setOtpSession('');
+        setOtpSent(false);
+        setOtp('');
+        clearPasswordDrafts();
+        setSignupStage('otp');
+        setMessage('Mobile verification expired. Request a new OTP to continue your profile setup.');
+      } else {
+        setMessage(isMissingRouteError(error.message) ? 'Profile setup is not active on the running backend. Restart the backend, then try again.' : error.message);
+      }
     } finally {
+      authRequestRef.current = false;
       setLoading(false);
     }
   };
@@ -4635,12 +5246,14 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.signupDetailsCard}>
+          <View style={[styles.signupDetailsCard, Platform.OS === 'ios' && styles.iosGlassCard]}>
+            <IosGlassBackdrop />
             <View style={styles.phoneAuthIcon}>
-              <Ionicons name="person-add-outline" size={26} color="#9b5658" />
+              <Ionicons name="scan-outline" size={24} color="#625c56" />
             </View>
-            <Text style={[styles.loginTitle, { fontSize: titleSize * 0.86, lineHeight: titleSize }]}>Complete your profile</Text>
-            <Text style={styles.phoneAuthSubtitle}>Add your details and set the password you will use for future mobile login.</Text>
+            <Text style={styles.signupDetailsEyebrow}>YOUR FITTING PROFILE</Text>
+            <Text style={styles.signupDetailsTitle}>Let's create your fitting profile.</Text>
+            <Text style={styles.phoneAuthSubtitle}>Add your details and a clear full-body photo to get started with virtual try-on.</Text>
 
             <View style={styles.signupDetailsFieldStack}>
               <View style={[styles.loginInputWrap, { minHeight: fieldHeight }]}>
@@ -4674,7 +5287,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
               <AuthPasswordField
                 value={password}
                 onChangeText={setPassword}
-                placeholder="Create password"
+                placeholder="Password"
                 visible={showPassword}
                 onToggle={() => setShowPassword((value) => !value)}
                 fieldHeight={fieldHeight}
@@ -4684,7 +5297,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
               <AuthPasswordField
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
-                placeholder="Confirm password"
+                placeholder="Confirm"
                 visible={showConfirmPassword}
                 onToggle={() => setShowConfirmPassword((value) => !value)}
                 fieldHeight={fieldHeight}
@@ -4694,7 +5307,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
               <TouchableOpacity style={styles.signupDetailsUploadBox} activeOpacity={0.84} onPress={pickDetailPhoto}>
                 {detailPhoto?.uri ? (
                   <>
-                    <Image source={{ uri: detailPhoto.uri }} style={styles.signupDetailsUploadImage} resizeMode="cover" />
+                    <Image source={{ uri: detailPhoto.uri }} style={styles.signupDetailsUploadImage} resizeMode="contain" />
                     <View style={styles.signupDetailsUploadOverlay}>
                       <Ionicons name="camera-outline" size={18} color="#ffffff" />
                       <Text style={styles.signupDetailsUploadOverlayText}>Change photo</Text>
@@ -4703,26 +5316,27 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
                 ) : (
                   <View style={styles.signupDetailsUploadCopy}>
                     <View style={styles.signupDetailsUploadIcon}>
-                      <Ionicons name="cloud-upload-outline" size={27} color="#9b5658" />
+                      <Ionicons name="camera-outline" size={25} color="#625c56" />
                     </View>
-                    <Text style={styles.signupDetailsUploadTitle}>Upload profile photo</Text>
-                    <Text style={styles.signupDetailsUploadText}>Tap or drag and drop a clear standing photo for try-on previews.</Text>
+                    <Text style={styles.signupDetailsUploadTitle}>Add a full-body photo</Text>
+                    <Text style={styles.signupDetailsUploadText}>Use a clear, front-facing photo with your head, outfit, and feet visible.</Text>
+                    <Text style={styles.signupDetailsUploadMeta}>Required for virtual try-on</Text>
                   </View>
                 )}
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={[styles.loginSubmit, loading && styles.signupSubmitDisabled]} activeOpacity={0.88} disabled={loading} onPress={completeSignupDetails}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={loading ? 'Please wait' : actionLabel} accessibilityState={{ disabled: loading, busy: loading }} style={[styles.loginSubmit, loading && styles.signupSubmitDisabled]} activeOpacity={0.88} disabled={loading} onPress={completeSignupDetails}>
               {loading ? <ActivityIndicator size="small" color="#ffffff" /> : null}
-              <Text style={styles.loginSubmitText}>{loading ? 'Saving profile' : 'Finish Signup'}</Text>
+              <Text style={styles.loginSubmitText}>{loading ? 'Creating your profile' : 'Create My Profile'}</Text>
               {!loading ? <Ionicons name="arrow-forward" size={22} color="#ffffff" /> : null}
             </TouchableOpacity>
 
             <Text style={styles.signupDetailsLegalText}>
               By signing up, you agree to Lookmefy's{' '}
-              <Text style={styles.signupDetailsLegalLink} onPress={() => Alert.alert('Terms & Conditions', 'Lookmefy uses your account, credits, shopping activity, and AI try-on tools to provide the service.')}>Terms & Conditions</Text>
+              <Text accessibilityRole="link" style={styles.signupDetailsLegalLink} onPress={() => openLegalPolicy('terms')}>Terms & Conditions</Text>
               {' '}and{' '}
-              <Text style={styles.signupDetailsLegalLink} onPress={() => Alert.alert('Privacy Policy', 'Your profile photo and generated try-on assets are handled as personal styling data for your Lookmefy account.')}>Privacy Policy</Text>
+              <Text accessibilityRole="link" style={styles.signupDetailsLegalLink} onPress={() => openLegalPolicy('privacy')}>Privacy Policy</Text>
               .
             </Text>
 
@@ -4742,7 +5356,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
         {...screenScrollProps}
       >
         <View style={styles.phoneAuthTopRow}>
-          <TouchableOpacity style={styles.phoneAuthClose} activeOpacity={0.78} onPress={() => onNavigate('home')}>
+          <TouchableOpacity style={styles.phoneAuthClose} activeOpacity={0.78} onPress={() => leaveAuth('home')}>
             <Ionicons name="close" size={20} color="#2b2321" />
           </TouchableOpacity>
         </View>
@@ -4761,6 +5375,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
               <Ionicons name="call-outline" size={23} color="#555a5d" />
               <TextInput
                 ref={phoneInputRef}
+                accessibilityLabel="Mobile number"
                 style={styles.loginInput}
                 defaultValue={phone}
                 onChangeText={(value) => {
@@ -4843,7 +5458,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
             ) : null}
           </View>
 
-          <TouchableOpacity style={[styles.loginSubmit, loading && styles.signupSubmitDisabled]} activeOpacity={0.88} disabled={loading} onPress={submit}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={loading ? 'Please wait' : actionLabel} accessibilityState={{ disabled: loading, busy: loading }} style={[styles.loginSubmit, loading && styles.signupSubmitDisabled]} activeOpacity={0.88} disabled={loading} onPress={submit}>
             {loading ? <ActivityIndicator size="small" color="#ffffff" /> : null}
             <Text style={styles.loginSubmitText}>{loading ? 'Please wait' : actionLabel}</Text>
             {!loading ? <Ionicons name="arrow-forward" size={22} color="#ffffff" /> : null}
@@ -4874,7 +5489,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
 
           <View style={styles.authModeSwitch}>
             <Text style={styles.authModeSwitchText}>{isSignup ? 'Already have an account?' : 'New to Lookmefy?'}</Text>
-            <TouchableOpacity activeOpacity={0.75} onPress={() => onNavigate(isSignup ? 'login' : 'signup')}>
+            <TouchableOpacity activeOpacity={0.75} onPress={() => leaveAuth(isSignup ? 'login' : 'signup')}>
               <Text style={styles.authModeSwitchLink}>{isSignup ? 'Log in' : 'Create account'}</Text>
             </TouchableOpacity>
           </View>
@@ -4900,7 +5515,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.phoneAuthBrowseButton} activeOpacity={0.75} onPress={() => onNavigate('home')}>
+        <TouchableOpacity style={styles.phoneAuthBrowseButton} activeOpacity={0.75} onPress={() => leaveAuth('home')}>
           <Text style={styles.phoneAuthBrowseText}>Continue browsing products</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -4908,86 +5523,80 @@ function AuthScreen({ mode, setUser, setToken, onNavigate }) {
   );
 }
 
-const authEntryFeatures = ['Virtual AI Try-On', 'Smart Digital Closet', 'AI Studio Fashion Search'];
+const authEntryFeatures = [
+  { icon: 'scan-outline', title: 'AI Try-On', text: 'See clothing on you' },
+  { icon: 'shirt-outline', title: 'Digital Wardrobe', text: 'Keep your pieces together' },
+  { icon: 'sparkles-outline', title: 'AI Stylist', text: 'Find ideas that feel like you' }
+];
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 function AuthEntryScreen({ onNavigate }) {
-  const { width, height } = useWindowDimensions();
+  const { width, height, fontScale = 1 } = useWindowDimensions();
   const compact = height < 720 || width < 360;
-  const framePaddingX = clamp(width * 0.068, 18, 32);
-  const framePaddingTop = clamp(height * 0.025, 12, 28);
-  const framePaddingBottom = clamp(height * 0.022, 12, 24);
-  const logoSize = clamp(width * 0.168, 50, 70);
-  const taglineSize = clamp(width * 0.05, 15, 21);
-  const taglineSpace = clamp(width * 0.01, 2.4, 4);
-  const featureHeight = clamp(height * 0.104, 70, 92);
-  const featureGap = clamp(height * 0.027, 14, 28);
-  const featurePaddingX = clamp(width * 0.08, 18, 33);
-  const featureIconSize = clamp(width * 0.072, 24, 30);
-  const featureTextSize = clamp(width * 0.056, 18, 22);
-  const ctaHeight = clamp(height * 0.085, 62, 78);
-  const ctaFontSize = clamp(width * 0.052, 17, 20);
-  const exploreFontSize = clamp(width * 0.055, 18, 22);
-  const exploreLetterSpacing = clamp(width * 0.012, 3, 5);
-  const indicatorWidth = clamp(width * 0.16, 48, 66);
-  const backgroundScale = width < 360 ? 1.1 : 1.05;
+  const screenPadding = clamp(width * 0.052, 16, 24);
+  const heroHeight = clamp((height * 0.42) + (Math.max(0, fontScale - 1) * 100), 330, 420);
+  const titleSize = clamp(width * 0.088, 28, 34);
 
   return (
     <ScrollView
       style={styles.authEntryScroll}
       contentContainerStyle={[
         styles.authEntryContent,
-        {
-          paddingHorizontal: framePaddingX,
-          paddingTop: framePaddingTop,
-          paddingBottom: framePaddingBottom
-        }
+        { paddingBottom: compact ? 18 : 24 }
       ]}
       showsVerticalScrollIndicator={false}
       {...screenScrollProps}
     >
-      <Image source={images.hero} style={[styles.authEntryBackground, { transform: [{ scale: backgroundScale }] }]} resizeMode="cover" />
-      <View style={styles.authEntryImageWash} />
-      <View style={styles.authEntryShadow} />
-
-      <View style={[styles.authEntryMain, compact && styles.authEntryMainCompact]}>
-        <View style={styles.authEntryBrand}>
+      <View style={[styles.authEntryHero, { height: heroHeight }]}>
+        <Image source={images.homeAtelierHero} style={styles.authEntryBackground} resizeMode="cover" />
+        <View style={styles.authEntryImageWash} />
+        <View style={styles.authEntryHeroTop}>
           <BrandLogo
             light
             style={styles.authEntryLogoMark}
-            symbolStyle={{ width: logoSize * 0.9, height: logoSize * 0.9 }}
-            dividerStyle={{ height: logoSize * 0.72 }}
-            textStyle={{ fontSize: logoSize * 0.72, lineHeight: logoSize * 0.86 }}
+            symbolStyle={styles.authEntryLogoSymbol}
+            dividerStyle={styles.authEntryLogoDivider}
+            textStyle={styles.authEntryLogoText}
           />
-          <Text style={[styles.authEntryTagline, { fontSize: taglineSize, lineHeight: taglineSize * 1.48, letterSpacing: taglineSpace }]}>AI-POWERED FASHION</Text>
-          <Text style={[styles.authEntryTagline, { fontSize: taglineSize, lineHeight: taglineSize * 1.48, letterSpacing: taglineSpace }]}>EXPERIENCE</Text>
+          <TouchableOpacity accessibilityRole="button" style={styles.authEntrySignInTop} activeOpacity={0.78} onPress={() => onNavigate('login')}>
+            <Text style={styles.authEntrySignInTopText}>Sign in</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.authEntryHeroCaption}>
+          <Text style={styles.authEntryEyebrow}>YOUR PERSONAL STYLE STUDIO</Text>
+          <Text style={[styles.authEntryHeroTitle, { fontSize: titleSize, lineHeight: titleSize * 1.12 }]}>See it. Try it.{"\n"}Love it.</Text>
+          <Text style={styles.authEntryHeroText}>Discover how outfits look on you before you buy.</Text>
+        </View>
+      </View>
+
+      <View style={[styles.authEntryMain, { paddingHorizontal: screenPadding }, compact && styles.authEntryMainCompact]}>
+        <View style={styles.authEntryIntro}>
+          <Text style={styles.authEntryIntroTitle}>Style, made personal.</Text>
+          <Text style={styles.authEntryIntroText}>Everything you need to try, organize, and discover your style.</Text>
         </View>
 
-        <View style={[styles.authEntryFeatureList, { gap: featureGap }]}>
+        <View style={styles.authEntryFeatureList}>
           {authEntryFeatures.map((feature) => (
-            <View key={feature} style={[styles.authEntryFeature, { minHeight: featureHeight, paddingHorizontal: featurePaddingX, gap: clamp(width * 0.065, 16, 32) }]}>
-              <View style={[styles.authEntryCheck, { width: featureIconSize, height: featureIconSize, borderRadius: featureIconSize / 2 }]}>
-                <Ionicons name="checkmark" size={featureIconSize * 0.68} color="#6f3e36" />
+            <View key={feature.title} style={styles.authEntryFeature}>
+              <View style={styles.authEntryFeatureIcon}>
+                <Ionicons name={feature.icon} size={20} color="#211f1d" />
               </View>
-              <Text style={[styles.authEntryFeatureText, { fontSize: featureTextSize, lineHeight: featureTextSize * 1.25 }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.84}>
-                {feature}
-              </Text>
+              <View style={styles.authEntryFeatureCopy}>
+                <Text style={styles.authEntryFeatureTitle}>{feature.title}</Text>
+                <Text style={styles.authEntryFeatureText}>{feature.text}</Text>
+              </View>
             </View>
           ))}
         </View>
 
-        <TouchableOpacity style={[styles.authEntryCta, { minHeight: ctaHeight, borderRadius: ctaHeight / 2 }]} activeOpacity={0.88} onPress={() => onNavigate('signup')}>
-          <Text style={[styles.authEntryCtaText, { fontSize: ctaFontSize }]}>GET STARTED</Text>
-          <Ionicons name="arrow-forward" size={ctaFontSize + 1} color="#151515" />
+        <TouchableOpacity accessibilityRole="button" style={styles.authEntryCta} activeOpacity={0.88} onPress={() => onNavigate('signup')}>
+          <Text style={styles.authEntryCtaText}>Create your profile</Text>
+          <Ionicons name="arrow-forward" size={19} color="#ffffff" />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.authEntryExplore} activeOpacity={0.75} onPress={() => onNavigate('home')}>
-          <Text style={[styles.authEntryExploreText, { fontSize: exploreFontSize, lineHeight: exploreFontSize * 1.28, letterSpacing: exploreLetterSpacing }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78}>
-            EXPLORE LOOKMEFY
-          </Text>
+        <TouchableOpacity accessibilityRole="button" style={styles.authEntryExplore} activeOpacity={0.75} onPress={() => onNavigate('home')}>
+          <Text style={styles.authEntryExploreText}>Explore Lookmefy first</Text>
         </TouchableOpacity>
-
-        <View style={[styles.authEntryHomeIndicator, { width: indicatorWidth }]} />
       </View>
     </ScrollView>
   );
@@ -5227,6 +5836,16 @@ function wardrobeItemSlotsFromItems(entries = []) {
   }));
 }
 
+function wardrobeGarmentForTryOn(items, itemId, user) {
+  const owner = String(user?.id || user?._id || '');
+  if (!owner || !itemId) return null;
+  const item = (items || []).find((entry) => String(entry.id) === String(itemId));
+  if (!item?.imageUrl || item.deleted || item.deletedAt) return null;
+  const itemOwner = item.userId || item.ownerId;
+  if (itemOwner && String(itemOwner) !== owner) return null;
+  return { uri: imageUrl(item.imageUrl), wardrobeItemId: item.id, ownerId: owner };
+}
+
 function closetCategoryEntryLabel(category) {
   const labels = {
     accessories: 'Accessory',
@@ -5423,10 +6042,11 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
   const selectedWardrobeGenerateHint = selectedIds.length && !selectedWardrobeHasSupportedItem
     ? 'Select a clothing, footwear, or accessory item before generating a look.'
     : '';
-  const compactWardrobePreview = height < 640;
+  const compactWardrobePreview = height < 640 || layout.windowWidth < 350;
+  const wardrobeStudioImageHeight = Math.max(1, layout.windowWidth - 36) * 1.5;
   const wardrobePreviewHeight = compactWardrobePreview
-    ? clamp(height * 0.39, 216, 232)
-    : clamp(height * 0.54, 340, 480);
+    ? clamp(wardrobeStudioImageHeight, 390, 450)
+    : clamp(wardrobeStudioImageHeight, 480, 590);
   const recommendationSource = suggestions.slice(0, 3);
   const detectionSummaryFields = [
     ['Name', itemName],
@@ -5698,6 +6318,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
           title: details.title || `Closet look for ${details.occasion || occasion || 'today'}`
         })
       });
+      requireGeneratedImage(data.outfit, 'Your wardrobe look');
       if (data.user) setUser(data.user);
       setSuggestionOverrides(null);
       setMessage('Closet look is ready.');
@@ -5736,6 +6357,15 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
       itemSlots: wardrobeItemSlotsFromItems(entries),
       clearSelectionAfterGenerate: true
     });
+  };
+
+  const openWardrobeTryOn = (ids) => {
+    const garment = ids.length === 1 ? wardrobeGarmentForTryOn(items, ids[0], user) : null;
+    if (!garment) {
+      setMessage('Select an available wardrobe garment first.');
+      return;
+    }
+    onNavigate('tryon', { wardrobeItemId: garment.wardrobeItemId });
   };
 
   const askForSuggestions = async (nextOccasion = occasion) => {
@@ -5821,23 +6451,33 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
   };
 
   const renderWardrobeCategoryButton = (tab) => {
+    const selected = activeWardrobeTabKey === tab.key;
     const renderCategoryIcon = () => {
       if (tab.icon === 'pants') return <Image source={wardrobeBottomsIcon} style={styles.wardrobeCategoryAssetIcon} resizeMode="contain" />;
       if (tab.icon === 'shoe') return <Image source={wardrobeFootwearIcon} style={styles.wardrobeCategoryAssetIcon} resizeMode="contain" />;
-      return <Ionicons name={tab.icon} size={28} color="#444444" />;
+      return <Ionicons name={tab.icon} size={22} color={selected ? '#211f1d' : '#514b47'} />;
     };
     return (
       <Pressable
         key={tab.key}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${tab.label} in your wardrobe`}
+        accessibilityState={{ selected }}
         style={[styles.wardrobeCategoryButton, compactWardrobePreview && styles.wardrobeCategoryButtonCompact]}
         onPress={() => openWardrobeCategory(tab)}
       >
         {({ pressed }) => (
           <>
-            <View style={[styles.wardrobeCategoryIcon, compactWardrobePreview && styles.wardrobeCategoryIconCompact, pressed && styles.wardrobeCategoryIconActive]}>
+            <View style={[styles.wardrobeCategoryIcon, compactWardrobePreview && styles.wardrobeCategoryIconCompact, selected && styles.wardrobeCategoryIconSelected, pressed && styles.wardrobeCategoryIconPressed]}>
               {renderCategoryIcon()}
             </View>
-            <Text style={[styles.wardrobeCategoryLabel, compactWardrobePreview && styles.wardrobeCategoryLabelCompact, pressed && styles.wardrobeCategoryLabelActive]} numberOfLines={1}>{tab.label}</Text>
+            <Text
+              style={[styles.wardrobeCategoryLabel, compactWardrobePreview && styles.wardrobeCategoryLabelCompact, selected && styles.wardrobeCategoryLabelSelected]}
+              numberOfLines={2}
+              maxFontSizeMultiplier={1.2}
+            >
+              {tab.label}
+            </Text>
           </>
         )}
       </Pressable>
@@ -5848,16 +6488,17 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
     return (
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.addStudioScreen}>
         <ScrollView ref={addStudioScrollRef} contentContainerStyle={styles.addStudioContent} {...screenScrollProps}>
-          <View style={styles.addStudioTopBar}>
-            <BrandLogo compact style={styles.addStudioBrandLogo} />
-            <TouchableOpacity style={styles.addStudioTopButton} onPress={() => onNavigate('closet')}>
-              <Ionicons name="cube-outline" size={22} color="#171412" />
-            </TouchableOpacity>
-          </View>
+          <WardrobeTopBar user={user} onNavigate={onNavigate} />
 
-          <View style={styles.addStudioIntro}>
-            <Text style={styles.addStudioTitle}>Curate Your Studio</Text>
-            <Text style={styles.addStudioSubtitle}>Build your Atelier Digital. High-fidelity archives enable precise AI styling and virtual try-on sessions.</Text>
+          <View style={[styles.wardrobeHeroHead, compactWardrobePreview && styles.wardrobeHeroHeadCompact]}>
+            <View style={styles.wardrobeHeroCopy}>
+              <Text style={[styles.wardrobeTitle, compactWardrobePreview && styles.wardrobeTitleCompact]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.88} maxFontSizeMultiplier={1.1}>My Wardrobe</Text>
+              <Text style={[styles.wardrobeSubtitle, compactWardrobePreview && styles.wardrobeSubtitleCompact]} numberOfLines={2} maxFontSizeMultiplier={1.15}>Your personal style collection</Text>
+            </View>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add wardrobe item" style={[styles.wardrobeAddButton, compactWardrobePreview && styles.wardrobeAddButtonCompact]} activeOpacity={0.85} onPress={pickClosetItemPhoto}>
+              <Ionicons name="add" size={compactWardrobePreview ? 20 : 22} color="#ffffff" />
+              <Text style={[styles.wardrobeAddText, compactWardrobePreview && styles.wardrobeAddTextCompact]} numberOfLines={1} maxFontSizeMultiplier={1.15}>Add Item</Text>
+            </TouchableOpacity>
           </View>
 
           <TouchableOpacity ref={wardrobeUploadTourTarget.ref} onLayout={wardrobeUploadTourTarget.onLayout} style={styles.addStudioUploadBox} activeOpacity={0.84} onPress={pickClosetItemPhoto}>
@@ -6026,14 +6667,14 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
       <WardrobeTopBar user={user} onNavigate={onNavigate} />
       <ScrollView style={styles.flex} contentContainerStyle={styles.wardrobeContent} {...screenScrollProps}>
         <PageBackRow onBack={onBack} />
-        <View style={styles.wardrobeHeroHead}>
-          <View>
-            <Text style={styles.wardrobeTitle}>My Wardrobe</Text>
-            <Text style={styles.wardrobeSubtitle}>Curated Collection</Text>
+        <View style={[styles.wardrobeHeroHead, compactWardrobePreview && styles.wardrobeHeroHeadCompact]}>
+          <View style={styles.wardrobeHeroCopy}>
+            <Text style={[styles.wardrobeTitle, compactWardrobePreview && styles.wardrobeTitleCompact]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.88} maxFontSizeMultiplier={1.1}>My Wardrobe</Text>
+            <Text style={[styles.wardrobeSubtitle, compactWardrobePreview && styles.wardrobeSubtitleCompact]} numberOfLines={2} maxFontSizeMultiplier={1.15}>Your personal style collection</Text>
           </View>
-          <TouchableOpacity style={styles.wardrobeAddButton} activeOpacity={0.85} onPress={() => onNavigate('closet', { view: 'add' })}>
-            <Ionicons name="add" size={22} color="#ffffff" />
-            <Text style={styles.wardrobeAddText}>Add Item</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add wardrobe item" style={[styles.wardrobeAddButton, compactWardrobePreview && styles.wardrobeAddButtonCompact]} activeOpacity={0.85} onPress={() => onNavigate('closet', { view: 'add' })}>
+            <Ionicons name="add" size={compactWardrobePreview ? 20 : 22} color="#ffffff" />
+            <Text style={[styles.wardrobeAddText, compactWardrobePreview && styles.wardrobeAddTextCompact]} numberOfLines={1} maxFontSizeMultiplier={1.15}>Add Item</Text>
           </TouchableOpacity>
         </View>
 
@@ -6041,7 +6682,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
           <>
             <View style={styles.wardrobePreviewWrap}>
               <View style={[styles.wardrobePreviewStage, compactWardrobePreview && styles.wardrobePreviewStageCompact]}>
-                <Pressable style={[styles.wardrobePreviewCard, { height: wardrobePreviewHeight }]} onPress={() => mainPreview && setLightbox(imageUrl(mainPreview))}>
+                <Pressable accessibilityRole={mainPreview ? 'button' : undefined} accessibilityLabel={mainPreview ? 'View wardrobe model full screen' : undefined} style={[styles.wardrobePreviewCard, compactWardrobePreview && styles.wardrobePreviewCardCompact, { height: wardrobePreviewHeight }]} onPress={() => mainPreview && setLightbox(imageUrl(mainPreview))}>
                   {wardrobePreviewSource ? (
                     <ResilientImage source={wardrobePreviewSource} style={styles.wardrobePreviewImage} resizeMode="contain" fallbackIcon="shirt-outline" />
                   ) : null}
@@ -6053,15 +6694,20 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
                 <View style={[styles.wardrobeCategoryRail, compactWardrobePreview && styles.wardrobeCategoryRailCompact, styles.wardrobeCategoryRailRight]}>
                   {wardrobeRightCategoryTabs.map(renderWardrobeCategoryButton)}
                 </View>
-                <View style={[styles.wardrobeTryButtonDock, compactWardrobePreview && styles.wardrobeTryButtonDockCompact]}>
-                  <TouchableOpacity
-                    style={[styles.wardrobeTryButton, compactWardrobePreview && styles.wardrobeTryButtonCompact, (!tryThisLookIds.length || busy === 'generate') && styles.disabledButton]}
-                    disabled={!tryThisLookIds.length || busy === 'generate'}
-                    onPress={() => generateOutfit(tryThisLookIds, { title: 'My wardrobe look', itemSlots: tryThisItemSlots })}
-                  >
-                    <Text style={styles.wardrobeTryText}>{busy === 'generate' ? 'Generating...' : 'Try On'}</Text>
-                  </TouchableOpacity>
-                </View>
+              </View>
+              <View style={[styles.wardrobeTryButtonDock, compactWardrobePreview && styles.wardrobeTryButtonDockCompact]}>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={tryThisLookIds.length ? 'Try this wardrobe look on' : 'Add clothing to enable try-on'}
+                  accessibilityState={{ disabled: !tryThisLookIds.length || busy === 'generate' }}
+                  style={[styles.wardrobeTryButton, compactWardrobePreview && styles.wardrobeTryButtonCompact, (!tryThisLookIds.length || busy === 'generate') && styles.wardrobeTryButtonDisabled]}
+                  disabled={!tryThisLookIds.length || busy === 'generate'}
+                  onPress={() => tryThisLookIds.length === 1 ? openWardrobeTryOn(tryThisLookIds) : generateOutfit(tryThisLookIds, { title: 'My wardrobe look', itemSlots: tryThisItemSlots })}
+                >
+                  <Text style={[styles.wardrobeTryText, !tryThisLookIds.length && styles.wardrobeTryTextDisabled]} maxFontSizeMultiplier={1.2}>{busy === 'generate' ? 'Generating…' : 'Try On'}</Text>
+                  {busy !== 'generate' ? <Ionicons name="arrow-forward" size={16} color={tryThisLookIds.length ? '#ffffff' : '#8a837e'} /> : null}
+                </TouchableOpacity>
+                {!tryThisLookIds.length ? <Text style={styles.wardrobeTryHint} maxFontSizeMultiplier={1.2}>Add clothing to start styling</Text> : null}
               </View>
             </View>
           </>
@@ -6302,10 +6948,10 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
               style={[styles.wardrobeGenerateLookButton, (!selectedIds.length || !selectedWardrobeCanGenerate || busy === 'generate') && styles.disabledButton]}
               activeOpacity={0.88}
               disabled={!selectedIds.length || busy === 'generate'}
-              onPress={generateSelectedWardrobeLook}
+              onPress={() => selectedIds.length === 1 ? openWardrobeTryOn(selectedIds) : generateSelectedWardrobeLook()}
             >
               <Ionicons name="sparkles-outline" size={20} color="#ffffff" />
-              <Text style={styles.wardrobeGenerateLookText}>{busy === 'generate' ? 'GENERATING...' : 'GENERATE LOOK'}</Text>
+              <Text style={styles.wardrobeGenerateLookText}>{busy === 'generate' ? 'GENERATING...' : selectedIds.length === 1 ? 'TRY ON' : 'GENERATE LOOK'}</Text>
               {selectedIds.length ? <Text style={styles.wardrobeGenerateLookCount}>{selectedIds.length}</Text> : null}
             </TouchableOpacity>
           </View>
@@ -6317,6 +6963,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
                 <ResilientImage source={outfit.imageUrl ? { uri: imageUrl(outfit.imageUrl) } : null} style={styles.latestOutfitImage} resizeMode="cover" fallbackIcon="shirt-outline" />
                 <View style={styles.latestOutfitCopy}>
                   <Text style={styles.latestOutfitTitle}>{outfit.title || 'Generated outfit'}</Text>
+                  <ReportContentAction content={reportContentReference(outfit, 'wardrobe_outfit')} />
                   <Text style={styles.muted}>{outfit.items?.map((item) => item.name).join(' + ') || outfit.occasion || 'Saved closet look'}</Text>
                 </View>
               </Pressable>
@@ -6331,15 +6978,28 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
   );
 }
 
-function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack, refreshUser }) {
+function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack, refreshUser, initial = {} }) {
   const layout = useResponsiveLayout();
   const { height } = useWindowDimensions();
   const [garment, setGarment] = useState(null);
   const [result, setResult] = useState(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const customRequestRef = useRef(false);
   const [lightbox, setLightbox] = useState(null);
   const latestCustom = useApiState('/tryons/custom/latest', token, Boolean(user), { tryOn: null });
+  const wardrobe = useApiState('/closet', token, Boolean(user && initial.wardrobeItemId), { items: [] });
+  const paymentPlans = useApiState('/payments/plans', token, Boolean(user), { costs: { imageTokens: defaultTryOnCreditCost } });
+
+  useEffect(() => {
+    if (!initial.wardrobeItemId) return;
+    setGarment(null);
+    setResult(null);
+    if (wardrobe.loading) return;
+    const selected = wardrobeGarmentForTryOn(wardrobe.data?.items, initial.wardrobeItemId, user);
+    setGarment(selected);
+    setMessage(selected ? '' : 'This wardrobe item is no longer available. Choose another garment.');
+  }, [initial.wardrobeItemId, user?.id, user?._id, wardrobe.data, wardrobe.loading]);
 
   if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
 
@@ -6354,13 +7014,29 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
   const generatedUri = result?.imageUrl ? imageUrl(result.imageUrl) : '';
   const hasGenerated = Boolean(generatedUri);
   const latestCustomTryOn = latestCustom.data?.tryOn;
+  const configuredTryOnCost = Number(paymentPlans.data?.costs?.imageTokens ?? paymentPlans.data?.creditCosts?.customTryOn);
+  const customTryOnCreditCost = user.devMode
+    ? 0
+    : Number.isFinite(configuredTryOnCost) && configuredTryOnCost > 0
+      ? Math.ceil(configuredTryOnCost)
+      : defaultTryOnCreditCost;
+  const customTryOnCostLabel = customTryOnCreditCost === 0
+    ? 'Included'
+    : `${customTryOnCreditCost} credit${customTryOnCreditCost === 1 ? '' : 's'}`;
+  const customTextProps = { maxFontSizeMultiplier: 1.2 };
   const compactCustomTryOn = height < 640 && !layout.isTablet;
-  const customResultHeight = layout.isTablet ? Math.min(520, Math.max(390, Math.round(layout.contentWidth * 0.42))) : compactCustomTryOn ? 300 : 368;
+  const narrowCustomTryOn = layout.windowWidth < 340 && !layout.isTablet;
+  const customInputHeight = layout.isTablet ? 352 : Math.round(Math.min(236, Math.max(184, (layout.contentWidth - (narrowCustomTryOn ? 42 : 44)) * 0.67)));
+  const customResultHeight = hasGenerated
+    ? layout.isTablet
+      ? Math.min(520, Math.max(390, Math.round(layout.contentWidth * 0.42)))
+      : compactCustomTryOn ? 300 : 388
+    : compactCustomTryOn ? 108 : 120;
 
   useEffect(() => {
-    if (garment || result || loading || !latestCustomTryOn?.imageUrl) return;
+    if (initial.wardrobeItemId || garment || result || loading || !latestCustomTryOn?.imageUrl) return;
     setResult(latestCustomTryOn);
-  }, [garment, latestCustomTryOn, loading, result]);
+  }, [initial.wardrobeItemId, garment, latestCustomTryOn, loading, result]);
 
   const chooseGarment = async () => {
     const selected = await pickImage();
@@ -6371,6 +7047,7 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
   };
 
   const submit = async () => {
+    if (customRequestRef.current) return;
     if (!garment) {
       setMessage('Upload a clothing photo first.');
       return;
@@ -6380,13 +7057,14 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
       setMessage(profileMessage);
       return;
     }
+    customRequestRef.current = true;
     setLoading(true);
     setMessage(hasGenerated ? 'Regenerating custom try-on...' : 'Generating custom try-on...');
     try {
       const form = new FormData();
       form.append('garment', filePart(garment, 'garment.jpg'));
       const data = await api('/tryons/custom', { method: 'POST', body: form, timeoutMs: aiTryOnRequestTimeoutMs, jobTimeoutMs: aiTryOnJobTimeoutMs });
-      const nextTryOn = data.tryOn;
+      const nextTryOn = requireGeneratedImage(data.tryOn);
       setResult(nextTryOn);
       if (data.user) {
         setUser(data.user);
@@ -6395,109 +7073,142 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
       latestCustom.reload?.();
       setMessage('Custom try-on ready.');
     } catch (error) {
-      setMessage(aiFeatureErrorMessage(error, 'Could not generate custom try-on. Try again in a moment.'));
+      setMessage(customGarmentErrorMessage(error));
     } finally {
+      customRequestRef.current = false;
       setLoading(false);
     }
   };
 
   return (
-    <ScrollView style={styles.customTryOnScreen} contentContainerStyle={[styles.customTryOnContent, compactCustomTryOn && styles.customTryOnContentCompact]} {...screenScrollProps}>
-      <PageBackRow onBack={onBack} />
-      <View style={[styles.customHeroPanel, compactCustomTryOn && styles.customHeroPanelCompact]}>
-        <View style={styles.customHeroMetaRow}>
-          <Text style={styles.kicker}>Custom Try-On</Text>
-          <View style={styles.customTokenPill}>
-            <Ionicons name="sparkles" size={12} color="#9b5658" />
-            <Text style={styles.customTokenText}>1 token</Text>
+    <View style={styles.customTryOnScreen}>
+      <ScrollView style={styles.customTryOnScroll} contentContainerStyle={[styles.customTryOnContent, compactCustomTryOn && styles.customTryOnContentCompact]} {...screenScrollProps}>
+        <PageBackRow onBack={onBack} />
+        <View style={[styles.customHeroPanel, compactCustomTryOn && styles.customHeroPanelCompact]}>
+          <View style={styles.customHeroMetaRow}>
+            <Text style={styles.customHeroEyebrow} {...customTextProps}>AI FITTING STUDIO</Text>
+            <View style={styles.customTokenPill}>
+              <Ionicons name="sparkles" size={12} color="#9b5658" />
+              <Text style={styles.customTokenText} {...customTextProps}>{customTryOnCostLabel}</Text>
+            </View>
           </View>
+          <Text style={[styles.customHeroTitle, compactCustomTryOn && styles.customHeroTitleCompact]} {...customTextProps}>Your look, reimagined.</Text>
+          <Text style={[styles.customHeroDescription, compactCustomTryOn && styles.customHeroDescriptionCompact]} {...customTextProps}>Upload a garment and see how it looks on you.</Text>
         </View>
-        <Text style={[styles.screenTitle, compactCustomTryOn && styles.customHeroTitleCompact]}>Try on any clothing photo.</Text>
-        <Text style={[styles.description, compactCustomTryOn && styles.customHeroDescriptionCompact]}>Upload a garment image and Lookmefy will generate it on your saved profile photo with FitRoom.</Text>
-      </View>
 
-      <View style={[styles.customUploadRow, compactCustomTryOn && styles.customUploadRowCompact, layout.isTablet && styles.customUploadRowTablet]}>
-        <Pressable style={[styles.customProfileCard, compactCustomTryOn && styles.customProfileCardCompact, layout.isTablet && styles.customProfileCardTablet]} onPress={() => profilePreviewUri && setLightbox(profilePreviewUri)}>
-          {profilePreviewUri ? (
-            <ResilientImage source={{ uri: profilePreviewUri }} style={styles.customProfileImage} imageStyle={profilePreviewImageStyle} imageBaseStyle={profilePreviewBaseStyle} resizeMode={profilePreviewResizeMode} fallbackIcon="person-outline" />
-          ) : (
-            <View style={styles.customProfileEmpty}>
-              <Ionicons name="person-outline" size={24} color="#8d8682" />
-              <Text style={styles.customProfileEmptyText}>Add profile photo</Text>
-            </View>
-          )}
-          <View style={styles.customProfileCaption}>
-            <Text style={styles.customProfileLabel}>{profilePreviewIsFullBody ? 'Full-body profile' : 'Profile photo'}</Text>
-            <Text style={styles.customProfileSub} numberOfLines={1}>{user.bodyPhotoStatus === 'generating' ? 'Preparing' : 'Saved'}</Text>
-          </View>
-        </Pressable>
-        <TouchableOpacity style={[styles.customGarmentDrop, compactCustomTryOn && styles.customGarmentDropCompact, layout.isTablet && styles.customGarmentDropTablet, garment?.uri && styles.customGarmentDropReady]} activeOpacity={0.86} onPress={chooseGarment}>
-          {garment?.uri ? (
-            <>
-              <Image source={{ uri: garment.uri }} style={styles.customGarmentImage} resizeMode="cover" />
-              <View style={styles.customGarmentOverlay}>
-                <Ionicons name="camera-outline" size={16} color="#ffffff" />
-                <Text style={styles.customGarmentOverlayText}>Change garment</Text>
+        <View style={[styles.customUploadRow, compactCustomTryOn && styles.customUploadRowCompact, layout.isTablet && styles.customUploadRowTablet]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="View saved profile photo"
+            disabled={!profilePreviewUri}
+            style={[styles.customProfileCard, { height: customInputHeight }]}
+            onPress={() => profilePreviewUri && setLightbox(profilePreviewUri)}
+          >
+            {profilePreviewUri ? (
+              <ResilientImage source={{ uri: profilePreviewUri }} style={styles.customProfileImage} imageStyle={profilePreviewImageStyle} imageBaseStyle={profilePreviewBaseStyle} resizeMode={profilePreviewResizeMode} fallbackIcon="person-outline" />
+            ) : (
+              <View style={styles.customProfileEmpty}>
+                <Ionicons name="person-outline" size={24} color="#8d8682" />
+                <Text style={styles.customProfileEmptyText} {...customTextProps}>Add a photo in Profile</Text>
               </View>
-            </>
-          ) : (
-            <View style={styles.customGarmentCopy}>
-              <View style={styles.customGarmentIcon}>
-                <Ionicons name="cloud-upload-outline" size={26} color="#9b5658" />
-              </View>
-              <Text style={styles.customGarmentTitle}>Upload garment</Text>
-              <Text style={styles.customGarmentHelp}>Use a clear product or clothing photo.</Text>
+            )}
+            <View style={styles.customCardBadge}>
+              <Text style={styles.customCardBadgeText} {...customTextProps}>YOUR PROFILE</Text>
             </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.customResultCard}>
-        <View style={styles.customResultHead}>
-          <View>
-            <Text style={styles.customResultTitle}>Generated try-on</Text>
-            <Text style={styles.customResultSub}>{hasGenerated ? 'Generated preview' : 'Your result will appear here'}</Text>
-          </View>
-          {hasGenerated ? (
-            <TouchableOpacity style={styles.customResultOpen} onPress={() => setLightbox(generatedUri)}>
-              <Ionicons name="expand-outline" size={16} color="#111111" />
-            </TouchableOpacity>
-          ) : null}
+            <View style={styles.customProfileCaption}>
+              <Text style={styles.customProfileLabel} {...customTextProps}>{profilePreviewUri ? (profilePreviewIsFullBody ? 'Full-body profile' : 'Profile photo') : 'Profile required'}</Text>
+              <Text style={styles.customProfileSub} numberOfLines={1} {...customTextProps}>{profilePreviewUri ? (user.bodyPhotoStatus === 'generating' ? 'Preparing' : 'Saved') : 'Add in Profile'}</Text>
+            </View>
+          </Pressable>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={garment?.uri ? 'Change garment photo' : 'Upload garment photo'}
+            style={[styles.customGarmentDrop, { height: customInputHeight }, garment?.uri && styles.customGarmentDropReady]}
+            activeOpacity={0.86}
+            accessibilityState={{ disabled: loading }}
+            disabled={loading}
+            onPress={chooseGarment}
+          >
+            {garment?.uri ? (
+              <>
+                <ResilientImage source={{ uri: garment.uri }} style={styles.customGarmentImage} resizeMode="contain" />
+                <View style={styles.customCardBadge}>
+                  <Text style={styles.customCardBadgeText} {...customTextProps}>GARMENT</Text>
+                </View>
+                <View style={styles.customGarmentOverlay}>
+                  <Ionicons name="camera-outline" size={16} color="#ffffff" />
+                  <Text style={styles.customGarmentOverlayText} {...customTextProps}>Change garment</Text>
+                </View>
+              </>
+            ) : (
+              <View style={styles.customGarmentCopy}>
+                <View style={styles.customGarmentIcon}>
+                  <Ionicons name="cloud-upload-outline" size={24} color="#9b5658" />
+                </View>
+                <Text style={styles.customGarmentTitle} {...customTextProps}>Upload garment</Text>
+                <Text style={styles.customGarmentHelp} {...customTextProps}>Use a clear photo showing the clothing you want to try.</Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
-        <Pressable style={[styles.customResultFrame, { minHeight: customResultHeight }]} onPress={() => hasGenerated && setLightbox(generatedUri)}>
-          {hasGenerated ? (
-            <ResilientImage
-              source={{ uri: generatedUri }}
-              style={[styles.customResultImage, { height: customResultHeight }]}
-              resizeMode="cover"
-              fallbackIcon="alert-circle-outline"
-              fallbackText="Result unavailable. Generate again."
-            />
-          ) : null}
-          {loading ? (
-            <View style={[styles.customResultState, hasGenerated && styles.customResultStateOverlay]}>
-              <TryOnLoading text={hasGenerated ? 'Regenerating' : 'Generating'} large />
-            </View>
-          ) : !hasGenerated ? (
-            <View style={styles.customResultState}>
-              <Ionicons name="sparkles-outline" size={27} color="#8d8682" />
-              <Text style={styles.previewPlaceholder}>Generated try-on</Text>
-            </View>
-          ) : null}
-        </Pressable>
-      </View>
 
-      {hasGenerated ? <AiPreviewNote style={styles.customAiPreviewNote} /> : null}
-      <AppButton
-        label={loading ? (hasGenerated ? 'Regenerating...' : 'Generating...') : hasGenerated ? 'Regenerate Custom Try-On' : 'Generate Custom Try-On'}
-        icon="sparkles-outline"
-        disabled={loading}
-        onPress={submit}
-        style={styles.customGenerateButton}
-      />
-      {message ? <Text style={[styles.formMessage, styles.customTryOnMessage, /ready|generating|regenerating/i.test(message) ? null : styles.errorText]}>{message}</Text> : null}
+        <View style={styles.customResultCard}>
+          <View style={styles.customResultHead}>
+            <View style={styles.customResultCopy}>
+              <Text style={styles.customResultTitle} {...customTextProps}>Your styled preview</Text>
+              <Text style={styles.customResultSub} numberOfLines={2} {...customTextProps}>{hasGenerated ? 'Tap the image to view it full screen.' : loading ? 'Creating your AI try-on…' : 'Your generated look will appear here.'}</Text>
+            </View>
+            {hasGenerated ? (
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open generated look full screen" style={styles.customResultOpen} onPress={() => setLightbox(generatedUri)}>
+                <Ionicons name="expand-outline" size={16} color="#111111" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          <Pressable accessibilityRole={hasGenerated ? 'button' : undefined} accessibilityLabel={hasGenerated ? 'Open generated look full screen' : undefined} disabled={!hasGenerated} style={[styles.customResultFrame, { minHeight: customResultHeight }]} onPress={() => hasGenerated && setLightbox(generatedUri)}>
+            {hasGenerated ? (
+              <ResilientImage
+                source={{ uri: generatedUri }}
+                style={[styles.customResultImage, { height: customResultHeight }]}
+                resizeMode="contain"
+                fallbackIcon="alert-circle-outline"
+                fallbackText="Result unavailable. Generate again."
+              />
+            ) : null}
+            {loading ? (
+              <View style={[styles.customResultState, hasGenerated && styles.customResultStateOverlay]}>
+                <TryOnLoading text={hasGenerated ? 'Regenerating' : 'Generating'} large />
+              </View>
+            ) : !hasGenerated ? (
+              <View style={styles.customResultState}>
+                <View style={styles.customResultIcon}>
+                  <Ionicons name="sparkles-outline" size={22} color="#9b5658" />
+                </View>
+                <Text style={styles.customResultPlaceholder} {...customTextProps}>Ready when you are</Text>
+              </View>
+            ) : null}
+          </Pressable>
+        </View>
+
+        {message ? <Text style={[styles.formMessage, styles.customTryOnMessage, /ready|generating|regenerating/i.test(message) ? null : styles.errorText]} {...customTextProps}>{message}</Text> : null}
+        {hasGenerated ? <AiPreviewNote style={styles.customAiPreviewNote} content={reportContentReference(result, 'custom_tryon')} /> : null}
+      </ScrollView>
+      <View style={styles.customActionDock}>
+        <AppButton
+          label={loading ? (hasGenerated ? 'Regenerating…' : 'Creating your look…') : hasGenerated ? `Regenerate My Look · ${customTryOnCostLabel}` : `Generate My Look · ${customTryOnCostLabel}`}
+          icon="sparkles-outline"
+          disabled={loading}
+          onPress={submit}
+          style={styles.customGenerateButton}
+          labelProps={{
+            adjustsFontSizeToFit: true,
+            maxFontSizeMultiplier: 1.2,
+            minimumFontScale: 0.85,
+            numberOfLines: 1
+          }}
+        />
+      </View>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
-    </ScrollView>
+    </View>
   );
 }
 
@@ -6527,24 +7238,14 @@ function StyleBotScreen({
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [chatTryOnLoading, setChatTryOnLoading] = useState({});
   const [lightbox, setLightbox] = useState(null);
   const scrollRef = useRef(null);
+  const requestInFlightRef = useRef(false);
+  const shouldAutoScrollRef = useRef(true);
   const composerBottom = useRef(new Animated.Value(Platform.OS === 'ios' ? 10 : 14)).current;
   const composerTourTarget = useTourTarget('ai-studio-composer', registerTourTarget, { request: tourFocusRequest, scrollOffset: 84 });
-  const swipeBackResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gesture) => (
-      gesture.moveX < 42
-      && gesture.dx > 18
-      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35
-    ),
-    onPanResponderRelease: (_, gesture) => {
-      if (gesture.dx > 72 && Math.abs(gesture.dy) < 84) {
-        if (onBack) onBack();
-        else onNavigate('home');
-      }
-    }
-  }), [onBack, onNavigate]);
   const messages = aiStudioMessages?.length ? aiStudioMessages : initialAiStudioMessages(user);
   const setMessages = setAiStudioMessages;
   const hasUserMessages = aiStudioHasUserMessages(messages);
@@ -6632,21 +7333,42 @@ function StyleBotScreen({
     };
   }, [composerBottom]);
 
-  const submit = async (preset) => {
+  const submit = async (preset, requestOptions = {}) => {
     const prompt = String(preset || query || '').trim();
-    if (!prompt || busy) return;
+    if (!prompt || requestInFlightRef.current) return;
+    const retryMessageId = String(requestOptions.retryMessageId || '');
+    const retryUserMessageId = String(requestOptions.retryUserMessageId || '');
+    const retrying = Boolean(retryMessageId);
     if (!aiStudioActiveChatId) {
       setAiStudioActiveChatId(`chat-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     }
-    const userMessage = { id: `user-${Date.now()}`, role: 'user', text: prompt };
-    const assistantId = `assistant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const loadingMessage = { id: assistantId, role: 'assistant', text: 'AI Studio is searching fashion...', loading: true };
+    const requestId = retryMessageId || `assistant-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const userMessageId = retryUserMessageId || `user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const userMessage = { id: userMessageId, role: 'user', text: prompt, requestId };
+    const loadingMessage = {
+      id: requestId,
+      role: 'assistant',
+      text: 'Your stylist is putting ideas together…',
+      loading: true,
+      error: false,
+      requestStatus: 'loading',
+      retryPrompt: prompt,
+      userMessageId
+    };
 
     setQuery('');
+    requestInFlightRef.current = true;
+    shouldAutoScrollRef.current = true;
     setBusy(true);
-    setMessages((current) => [...current, userMessage, loadingMessage]);
+    setMessages((current) => retrying
+      ? current.map((message) => message.id === requestId ? { ...message, ...loadingMessage } : message)
+      : [...current, userMessage, loadingMessage]);
 
     try {
+      const requestHistory = messages
+        .filter((message) => !message.loading && !message.error && message.id !== retryUserMessageId)
+        .slice(-8)
+        .map((message) => ({ role: message.role, text: message.text }));
       const data = await api('/recommendations/studio-chat', {
         method: 'POST',
         headers: { 'x-fitlook-sync': '1' },
@@ -6654,15 +7376,18 @@ function StyleBotScreen({
         body: JSON.stringify({
           message: prompt,
           conversationId: aiStudioConversationId || '',
-          history: messages.slice(-8).map((message) => ({ role: message.role, text: message.text }))
+          history: requestHistory
         })
       });
       const outfits = normalizeAiStudioOutfits(data.outfits || []);
       const products = normalizeAiStudioProducts(data.products || [], outfits);
       const actions = normalizeAiStudioActions(data);
+      if (!String(data.reply || '').trim() && !products.length && !outfits.length && !actions.length) {
+        throw new Error('Empty AI stylist response');
+      }
       if (data.conversationId) setAiStudioConversationId(data.conversationId);
       setMessages((current) => current.map((message) => (
-        message.id === assistantId
+        message.id === requestId
           ? {
             ...message,
             text: data.reply || 'I found a few directions for you.',
@@ -6670,22 +7395,25 @@ function StyleBotScreen({
             outfits,
             actions,
             suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+            reportableContent: reportContentReference(data.reportableContent, 'stylist_message'),
             mode: data.mode || '',
             intent: data.intent || '',
-            loading: false
+            loading: false,
+            error: false,
+            requestStatus: 'succeeded',
+            retryPrompt: ''
           }
           : message
       )));
     } catch (error) {
-      const messageText = isMissingRouteError(error.message)
-        ? 'AI Studio is not active on the running backend. Restart the backend, then try again.'
-        : error.message || 'AI Studio could not respond right now.';
+      const messageText = aiStudioErrorMessage(error);
       setMessages((current) => current.map((message) => (
-        message.id === assistantId
-          ? { ...message, text: messageText, error: true, loading: false }
+        message.id === requestId
+          ? { ...message, text: messageText, error: true, loading: false, requestStatus: 'failed', retryPrompt: prompt, userMessageId }
           : message
       )));
     } finally {
+      requestInFlightRef.current = false;
       setBusy(false);
     }
   };
@@ -6709,9 +7437,10 @@ function StyleBotScreen({
         jobTimeoutMs: aiTryOnJobTimeoutMs,
         body: JSON.stringify(isExternalProduct ? { product, force: regenerate } : { force: regenerate })
       });
+      requireGeneratedImage(data.tryOn);
       setChatTryOns((current) => ({ ...current, [key]: data.tryOn }));
       if (regenerate && data.reused) {
-        setChatTryOnErrors((current) => ({ ...current, [key]: 'Existing try-on was reused. Restart the backend with the latest code, then try again.' }));
+        setChatTryOnErrors((current) => ({ ...current, [key]: 'Your previous AI look was returned. A new look was not confirmed.' }));
       }
       if (data.user) setUser(data.user);
     } catch (error) {
@@ -6721,10 +7450,20 @@ function StyleBotScreen({
     }
   };
 
+  const lastMessage = messages[messages.length - 1];
+  const lastMessageScrollKey = `${messages.length}:${lastMessage?.id || ''}:${lastMessage?.loading ? 'loading' : 'settled'}:${String(lastMessage?.text || '').length}`;
+
   useEffect(() => {
+    if (!shouldAutoScrollRef.current) return undefined;
     const timer = setTimeout(() => scrollRef.current?.scrollToEnd?.({ animated: true }), 80);
     return () => clearTimeout(timer);
-  }, [messages.length, busy]);
+  }, [lastMessageScrollKey]);
+
+  const handleConversationScroll = useCallback((event) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+    shouldAutoScrollRef.current = distanceFromBottom < 120;
+  }, []);
 
   useEffect(() => {
     if (user && !aiStudioMessages?.length) setMessages(initialAiStudioMessages(user));
@@ -6733,8 +7472,8 @@ function StyleBotScreen({
   if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
 
   return (
-    <View style={styles.aiStudioScreen} {...swipeBackResponder.panHandlers}>
-      <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack}>
+    <View style={styles.aiStudioScreen}>
+      <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack} preserveWordmarkOnNarrow>
         <TouchableOpacity style={styles.aiStudioMenuButton} activeOpacity={0.84} accessibilityLabel="Open chat history" onPress={() => setHistoryOpen(true)}>
           <Ionicons name="menu-outline" size={22} color="#252221" />
         </TouchableOpacity>
@@ -6770,15 +7509,13 @@ function StyleBotScreen({
           </View>
         </View>
       </Modal>
-      <ScrollView ref={scrollRef} contentContainerStyle={styles.aiStudioContent} {...screenScrollProps}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.aiStudioContent} {...screenScrollProps} onScroll={handleConversationScroll}>
         {!hasUserMessages ? (
           <View style={styles.aiStudioHero}>
-            <View style={styles.aiStudioHeroIcon}>
-              <Ionicons name="sparkles" size={22} color="#9b5658" />
-            </View>
             <View style={styles.aiStudioHeroCopy}>
-              <Text style={styles.aiStudioHeroLabel}>AI STYLIST</Text>
-              <Text style={styles.aiStudioHeroTitle}>Search the look</Text>
+              <Text style={styles.aiStudioHeroLabel}>YOUR PERSONAL AI STYLIST</Text>
+              <Text style={styles.aiStudioHeroTitle}>What are we styling today?</Text>
+              <Text style={styles.aiStudioHeroText}>Discover pieces, explore styles, and find what feels like you.</Text>
             </View>
           </View>
         ) : null}
@@ -6790,14 +7527,30 @@ function StyleBotScreen({
             return (
               <View key={message.id} style={styles.aiMessageBlock}>
                 <View style={[styles.aiMessageBubble, userBubble ? styles.aiMessageBubbleUser : styles.aiMessageBubbleAssistant, introBubble && styles.aiMessageBubbleIntro, message.error && styles.aiMessageBubbleError]}>
-                  {introBubble ? (
-                    <View style={styles.aiMessageSparkBadge}>
-                      <Ionicons name="sparkles-outline" size={15} color="#9b5658" />
-                    </View>
-                  ) : null}
                   {message.loading ? <ActivityIndicator size="small" color="#9b5658" /> : null}
-                  <Text style={[styles.aiMessageText, userBubble && styles.aiMessageTextUser, message.error && styles.aiMessageTextError]}>{message.text}</Text>
+                  {message.error ? <Ionicons name="alert-circle-outline" size={18} color="#7b6258" style={styles.aiMessageErrorIcon} /> : null}
+                  <Text style={[styles.aiMessageText, introBubble && styles.aiMessageTextIntro, userBubble && styles.aiMessageTextUser, message.error && styles.aiMessageTextError]}>{introBubble ? aiStudioWelcomeText(user) : message.text}</Text>
                 </View>
+                {!userBubble && !introBubble && !message.loading && !message.error ? <ReportContentAction content={message.reportableContent} /> : null}
+                {message.error && message.retryPrompt ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry stylist request"
+                    activeOpacity={0.78}
+                    disabled={busy}
+                    onPress={() => {
+                      const precedingUser = [...messages.slice(0, index)].reverse().find((item) => item.role === 'user');
+                      submit(message.retryPrompt, {
+                        retryMessageId: message.id,
+                        retryUserMessageId: message.userMessageId || precedingUser?.id || ''
+                      });
+                    }}
+                    style={[styles.aiRetryButton, busy && styles.disabledButton]}
+                  >
+                    <Ionicons name="refresh-outline" size={15} color="#5f5853" />
+                    <Text style={styles.aiRetryButtonText}>Retry</Text>
+                  </TouchableOpacity>
+                ) : null}
                 {message.products?.length ? (
                   <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.aiSuggestionProductsTrack}>
                     {message.products.map((product) => {
@@ -6838,9 +7591,9 @@ function StyleBotScreen({
                     {message.actions.map((action) => (
                       <TouchableOpacity
                         key={`${message.id}-${action.type}-${action.label}`}
-                        style={[styles.aiFollowUpChip, action.disabled && styles.disabledButton]}
+                        style={[styles.aiFollowUpChip, (action.disabled || busy) && styles.disabledButton]}
                         activeOpacity={0.82}
-                        disabled={action.disabled}
+                        disabled={action.disabled || busy}
                         onPress={() => submit(action.prompt || action.label)}
                       >
                         <Text style={styles.aiFollowUpText}>{action.label}</Text>
@@ -6851,7 +7604,7 @@ function StyleBotScreen({
                 {!message.actions?.length && message.suggestions?.length ? (
                   <View style={styles.aiFollowUpRow}>
                     {message.suggestions.map((suggestion) => (
-                      <TouchableOpacity key={suggestion} style={styles.aiFollowUpChip} activeOpacity={0.82} onPress={() => submit(suggestion)}>
+                      <TouchableOpacity key={suggestion} style={[styles.aiFollowUpChip, busy && styles.disabledButton]} activeOpacity={0.82} disabled={busy} onPress={() => submit(suggestion)}>
                         <Text style={styles.aiFollowUpText}>{suggestion}</Text>
                       </TouchableOpacity>
                     ))}
@@ -6864,29 +7617,23 @@ function StyleBotScreen({
 
         {!hasUserMessages ? (
           <View style={styles.aiStarterPanel}>
-            <Text style={styles.aiStarterTitle}>Try a fashion search</Text>
-            <View style={styles.aiStarterGrid}>
+            <Text style={styles.aiStarterTitle}>Explore a style</Text>
+            <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.aiStarterGrid}>
               {aiStudioStarterPrompts.map((starter) => (
-                <TouchableOpacity key={starter.prompt} style={styles.aiStarterCard} activeOpacity={0.82} onPress={() => submit(starter.prompt)}>
-                  <View style={styles.aiStarterIcon}>
-                    <Ionicons name={starter.icon} size={19} color="#9b5658" />
-                  </View>
-                  <View style={styles.aiStarterCopy}>
-                    <Text style={styles.aiStarterCardTitle}>{starter.title}</Text>
-                    <Text style={styles.aiStarterCardText}>{starter.text}</Text>
-                  </View>
-                  <Ionicons name="arrow-forward" size={17} color="#9b5658" />
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Ask your stylist about ${starter.title}`} key={starter.prompt} style={styles.aiStarterCard} activeOpacity={0.76} onPress={() => submit(starter.prompt)}>
+                  <Text style={styles.aiStarterCardTitle} numberOfLines={1}>{starter.title}</Text>
+                  <Ionicons name="arrow-up-outline" size={14} color="#625b57" style={styles.aiStarterArrow} />
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
           </View>
         ) : null}
       </ScrollView>
 
-      <Animated.View ref={composerTourTarget.ref} onLayout={composerTourTarget.onLayout} style={[styles.aiComposer, { bottom: composerBottom }]}>
-        <TextInput style={styles.aiComposerInput} value={query} onChangeText={setQuery} placeholder="Search shirts, shoes, jackets..." placeholderTextColor="#8d8682" returnKeyType="send" onSubmitEditing={() => submit()} />
-        <TouchableOpacity style={[styles.aiSendButton, (!query.trim() || busy) && styles.disabledButton]} disabled={!query.trim() || busy} onPress={() => submit()}>
-          <Ionicons name={busy ? 'hourglass-outline' : 'send'} size={22} color="#ffffff" />
+      <Animated.View ref={composerTourTarget.ref} onLayout={composerTourTarget.onLayout} style={[styles.aiComposer, composerFocused && styles.aiComposerFocused, { bottom: composerBottom }]}>
+        <TextInput accessibilityLabel="Message your AI stylist" style={styles.aiComposerInput} value={query} onChangeText={setQuery} onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)} placeholder="Ask your stylist anything..." placeholderTextColor="#77716c" returnKeyType="send" onSubmitEditing={() => submit()} />
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Send message" style={[styles.aiSendButton, !busy && !query.trim() && styles.aiSendButtonDisabled]} disabled={!query.trim() || busy} onPress={() => submit()}>
+          <Ionicons name={busy ? 'hourglass-outline' : 'send'} size={22} color={!busy && !query.trim() ? '#625c56' : '#ffffff'} />
         </TouchableOpacity>
       </Animated.View>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
@@ -6949,63 +7696,190 @@ function PaymentSummaryLine({ label, value, strong }) {
   return (
     <View style={styles.paymentSummaryLine}>
       <Text style={styles.paymentSummaryLabel}>{label}</Text>
-      <Text style={[styles.paymentSummaryValue, strong && styles.paymentSummaryValueStrong]} numberOfLines={2}>{value}</Text>
+      <Text style={[styles.paymentSummaryValue, strong && styles.paymentSummaryValueStrong]}>{value}</Text>
     </View>
   );
 }
 
-function MonthlyCreditCard({ plan, selected, active, onPress, style }) {
+function MonthlyCreditCard({ plan, selected, active, onPress, style, showMandateTerms = true }) {
+  const terms = subscriptionTerms(plan);
   return (
     <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
       <View style={styles.creditSelectedRow}>
         {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
         {active ? <Text style={styles.creditActivePill}>ACTIVE</Text> : null}
       </View>
-      <Text style={styles.creditCardKicker}>FITLOOK MONTHLY</Text>
+      <Text style={styles.creditCardKicker}>MONTHLY CREDITS</Text>
       <Text style={styles.creditMandateTitle}>{plan.headline || `${plan.credits} credits every month`}</Text>
-      <Text style={styles.creditMandateSub}>{plan.credits} credits every month</Text>
-      <Text style={styles.creditMutedText}>{formatCreditRate(plan)}</Text>
-      <Text style={styles.creditCapsText}>{formatMoney((Number(plan.amount) || 0) / 100, plan.currency)}/month</Text>
-      <Text style={styles.creditCardDescription}>{plan.summary || 'Cancel future monthly billing before the next renewal.'}</Text>
+      {showMandateTerms && terms.valid ? <Text style={styles.creditMutedText}>{formatCreditRate(plan)}</Text> : null}
+      <Text style={styles.creditCapsText}>{!showMandateTerms ? 'MONTHLY BILLING UNAVAILABLE' : terms.valid ? `${formatMoney(terms.setup / 100, plan.currency)} setup · ${formatMoney(terms.recurring / 100, plan.currency)}/${recurringPeriodLabel(terms.frequency)}` : 'Billing terms unavailable'}</Text>
+      <Text style={styles.creditCardDescription}>{!showMandateTerms ? 'Google Play monthly subscriptions are unavailable in this build.' : terms.valid ? plan.summary || terms.cancellation : 'Confirm billing terms before subscribing.'}</Text>
     </TouchableOpacity>
   );
 }
 
-function AddMoreCard({ selected, onPress, style }) {
+function AddMoreCard({ selected, onPress, style, plans = [] }) {
+  const quantities = plans.map((plan) => Number(plan.credits)).filter((value) => Number.isSafeInteger(value) && value > 0);
   return (
     <TouchableOpacity activeOpacity={0.88} style={[styles.creditAddMoreCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
       <Text style={styles.creditCardKicker}>TOP-UP</Text>
       <Text style={styles.creditAddMoreTitle}>Add more</Text>
       <Text style={styles.creditMandateSub}>One-time packs</Text>
       <Text style={styles.creditCapsText}>NO SUBSCRIPTION CHANGE</Text>
-      <Text style={styles.creditCardDescription}>Choose 50, 75, 110, 135, or 400 extra credits for image try-ons and videos.</Text>
+      <Text style={styles.creditCardDescription}>{quantities.length ? `Choose from ${quantities.join(', ')} credit packs for image try-ons and videos.` : 'View available one-time credit packs.'}</Text>
     </TouchableOpacity>
   );
 }
 
-function TopUpCreditCard({ plan, selected, onPress, style }) {
+function TopUpCreditCard({ plan, selected, onPress, style, displayPrice, hideRate = false }) {
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
-      {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
-      {plan.badge ? <Text style={styles.topUpBestValue}>{String(plan.badge).toUpperCase()}</Text> : null}
-      <Text style={styles.creditCardKicker}>TOP-UP</Text>
-      <Text style={styles.topUpPrice}>{formatMoney((Number(plan.amount) || 0) / 100, plan.currency)}</Text>
-      <Text style={styles.creditMandateSub}>{plan.credits} credits</Text>
-      <Text style={styles.creditMutedText}>{formatCreditRate(plan)}</Text>
-      <Text style={styles.creditCapsText}>{String(plan.cadence || 'One-time').toUpperCase()}</Text>
-      <Text style={styles.creditCardDescription}>{plan.description}</Text>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${plan.credits} credits, ${displayPrice || creditPackageDisplayPrice('web', plan)}, ${selected ? 'selected' : 'select package'}`} accessibilityState={{ selected }} activeOpacity={0.88} style={[styles.topUpCreditCard, Platform.OS === 'ios' && styles.iosGlassCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      <IosGlassBackdrop />
+      <View style={styles.creditPackageHeader}><Text style={styles.creditPackageQuantity}>{plan.credits} Credits</Text>{selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}</View>
+      <Text style={styles.topUpPrice}>{displayPrice || creditPackageDisplayPrice('web', plan)}</Text>
+      {!hideRate && <Text style={styles.creditMutedText}>{formatCreditRate(plan)}</Text>}
+      <Text style={styles.creditCardDescription}>{creditPackageDescription(plan)}</Text>
     </TouchableOpacity>
   );
 }
 
 function loadExpoIapModule() {
-  if (Platform.OS !== 'ios') return null;
-  if (!NativeModules?.ExpoIap) return null;
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return null;
   try {
     return require('expo-iap');
   } catch {
     return null;
   }
+}
+
+function useGooglePlayCredits({ enabled, user, setUser, onRequireAuth, productIds }) {
+  const [state, setState] = useState({ products: {}, busy: false, message: '', error: '' });
+  const iapRef = useRef(null);
+  const processingRef = useRef(new Set());
+  const purchaseActiveRef = useRef(false);
+  const userRef = useLatestValue(user);
+  const idsRef = useLatestValue(productIds);
+  const enabledRef = useLatestValue(enabled);
+
+  const verify = useCallback(async (purchase) => {
+    if (!enabledRef.current || !userRef.current) return;
+    if (purchase.purchaseState === 'pending') {
+      purchaseActiveRef.current = false;
+      setState((old) => ({ ...old, busy: false, message: 'Payment is pending in Google Play. Credits will appear after confirmation.' }));
+      return;
+    }
+    const productId = String(purchase.productId || '');
+    const token = String(purchase.purchaseToken || '');
+    if (!idsRef.current.includes(productId) || !token) {
+      purchaseActiveRef.current = false;
+      setState((old) => ({ ...old, busy: false, error: 'Google Play returned an unrecognized purchase. Contact support.' }));
+      return;
+    }
+    if (processingRef.current.has(token)) return;
+    processingRef.current.add(token);
+    setState((old) => ({ ...old, busy: true, message: 'Verifying purchase...', error: '' }));
+    try {
+      const result = await api('/payments/google-play/verify', {
+        method: 'POST',
+        body: JSON.stringify({ productId, purchaseToken: token })
+      });
+      if (result.user) setUser(result.user);
+      setState((old) => ({
+        ...old,
+        busy: false,
+        message: result.status === 'pending'
+          ? 'Payment is pending in Google Play.'
+          : result.status === 'review_required'
+            ? 'This purchase needs support review. No additional credits were added.'
+            : result.status === 'credited' && result.credited === true
+              ? result.finalized === true
+                ? 'Purchase verified. Credits added.'
+                : 'Credits added. Google Play finalization is pending; retry when online.'
+              : 'Purchase confirmation is unavailable. No new credit grant was confirmed. Reopen this screen or contact support.'
+      }));
+    } catch {
+      setState((old) => ({ ...old, busy: false, error: 'Could not verify purchase. Reopen this screen when online to retry.' }));
+    } finally {
+      purchaseActiveRef.current = false;
+      processingRef.current.delete(token);
+    }
+  }, [enabledRef, idsRef, setUser, userRef]);
+
+  useEffect(() => {
+    if (!enabled || Platform.OS !== 'android') return undefined;
+    const iap = loadExpoIapModule();
+    iapRef.current = iap;
+    if (!iap) {
+      setState((old) => ({ ...old, error: 'Google Play Billing needs a compatible Android build.' }));
+      return undefined;
+    }
+    let alive = true;
+    let updated;
+    let errors;
+    try {
+      updated = iap.purchaseUpdatedListener?.((purchase) => { if (alive) verify(purchase); });
+      errors = iap.purchaseErrorListener?.((error) => {
+      if (!alive) return;
+      purchaseActiveRef.current = false;
+      const cancelled = googlePlayPurchaseCancelled(error);
+      setState((old) => ({ ...old, busy: false, message: cancelled ? 'Purchase cancelled.' : '', error: cancelled ? '' : 'Google Play purchase could not be completed.' }));
+      });
+    } catch {
+      updated?.remove?.();
+      iapRef.current = null;
+      setState((old) => ({ ...old, error: 'Google Play Billing needs a compatible Android build.' }));
+      return undefined;
+    }
+    initGooglePlayCatalog(iap, productIds)
+      .then(async (products) => {
+        if (alive) setState((old) => ({ ...old, products }));
+        const unfinished = await iap.getAvailablePurchases();
+        if (alive) for (const purchase of unfinished || []) await verify(purchase);
+      })
+      .catch(() => { if (alive) setState((old) => ({ ...old, error: 'Google Play products are unavailable. Try again later.' })); });
+    return () => {
+      alive = false;
+      purchaseActiveRef.current = false;
+      updated?.remove?.();
+      errors?.remove?.();
+      iap.endConnection?.().catch?.(() => {});
+    };
+  }, [enabled, productIds.join('|'), verify]);
+
+  useEffect(() => {
+    if (!enabled || !user || !iapRef.current) return;
+    iapRef.current.getAvailablePurchases()
+      .then(async (purchases) => { for (const purchase of purchases || []) await verify(purchase); })
+      .catch(() => {});
+  }, [enabled, user?.id, user?._id, verify]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active' || !iapRef.current) return;
+      iapRef.current.getAvailablePurchases()
+        .then(async (purchases) => { for (const purchase of purchases || []) await verify(purchase); })
+        .catch(() => {});
+    });
+    return () => subscription.remove();
+  }, [enabled, verify]);
+
+  const purchase = useCallback(async (productId) => {
+    if (!user) return onRequireAuth?.('Log in to buy credits.');
+    if (!enabled || !iapRef.current || !state.products[productId] || state.busy || !beginGooglePlayPurchase(purchaseActiveRef)) return;
+    setState((old) => ({ ...old, busy: true, error: '', message: 'Opening Google Play...' }));
+    try {
+      const config = await api('/payments/google-play/config');
+      if (!config.enabled || !config.obfuscatedAccountId) throw new Error('Billing is unavailable.');
+      await iapRef.current.requestPurchase({ request: { google: { skus: [productId], obfuscatedAccountId: config.obfuscatedAccountId } }, type: 'in-app' });
+    } catch (error) {
+      purchaseActiveRef.current = false;
+      const cancelled = googlePlayPurchaseCancelled(error);
+      setState((old) => ({ ...old, busy: false, message: cancelled ? 'Purchase cancelled.' : '', error: cancelled ? '' : 'Google Play purchase could not be started.' }));
+    }
+  }, [enabled, onRequireAuth, state.busy, state.products, user]);
+
+  return { ...state, purchase };
 }
 
 const STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_IDS = Object.freeze([STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID]);
@@ -7281,10 +8155,13 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
     }
 
     let alive = true;
-    const purchaseSubscription = iap.purchaseUpdatedListener?.((purchase) => {
-      if (alive) verifyPurchase(purchase, 'purchase');
-    });
-    const errorSubscription = iap.purchaseErrorListener?.((error) => {
+    let purchaseSubscription;
+    let errorSubscription;
+    try {
+      purchaseSubscription = iap.purchaseUpdatedListener?.((purchase) => {
+        if (alive) verifyPurchase(purchase, 'purchase');
+      });
+      errorSubscription = iap.purchaseErrorListener?.((error) => {
       if (!alive) return;
       updateState({
         purchasePending: false,
@@ -7292,7 +8169,13 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
         statusMessage: isStoreKitCancel(error) ? 'Purchase cancelled.' : '',
         error: isStoreKitCancel(error) ? '' : error.message || 'Apple purchase failed.'
       });
-    });
+      });
+    } catch {
+      purchaseSubscription?.remove?.();
+      iapRef.current = null;
+      updateState({ available: false, loading: false, unavailableReason: 'StoreKit is unavailable in this build.' });
+      return undefined;
+    }
 
     iap.initConnection()
       .then(() => {
@@ -7391,7 +8274,8 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
   const manageSubscription = useCallback(async () => {
     const iap = iapRef.current;
     try {
-      await iap?.deepLinkToSubscriptions?.();
+      if (typeof iap?.deepLinkToSubscriptions === 'function') await iap.deepLinkToSubscriptions();
+      else await Linking.openURL('https://apps.apple.com/account/subscriptions');
     } catch (error) {
       updateState({ error: error.message || 'Could not open App Store subscription settings.' });
     }
@@ -7411,7 +8295,8 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
 function AppleStoreKitCreditCard({ selected, active, product, title, kicker, headline, subhead, description, onPress, style }) {
   const price = storeKitProductPrice(product);
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, Platform.OS === 'ios' && styles.iosGlassCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      <IosGlassBackdrop />
       <View style={styles.creditSelectedRow}>
         {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
         {active ? <Text style={styles.creditActivePill}>ACTIVE</Text> : null}
@@ -7429,37 +8314,38 @@ function AppleStoreKitCreditCard({ selected, active, product, title, kicker, hea
 function AppleStoreKitTopUpCard({ plan, product, selected, onPress, style }) {
   const price = storeKitProductPrice(product);
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
-      {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
-      {plan.badge ? <Text style={styles.topUpBestValue}>{String(plan.badge).toUpperCase()}</Text> : null}
-      <Text style={styles.creditCardKicker}>TOP-UP</Text>
+    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, Platform.OS === 'ios' && styles.iosGlassCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      <IosGlassBackdrop />
+      <View style={styles.creditPackageHeader}><Text style={styles.creditPackageQuantity}>{plan.credits} Credits</Text>{selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}</View>
       <Text style={styles.topUpPrice}>{price || 'Unavailable'}</Text>
-      <Text style={styles.creditMandateSub}>{plan.credits} credits</Text>
-      <Text style={styles.creditMutedText}>{storeKitProductTitle(product, `${plan.credits} credit top-up`)}</Text>
-      <Text style={styles.creditCapsText}>{String(plan.cadence || 'One-time').toUpperCase()}</Text>
-      <Text style={styles.creditCardDescription}>{plan.description}</Text>
+      <Text style={styles.creditCardDescription}>{creditPackageDescription(plan)}</Text>
     </TouchableOpacity>
   );
 }
 
-function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly, selectedTopUp }) {
+function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly, selectedTopUp, plansError = false, plansLoading = false }) {
   const buyingSubscription = appleStoreKit.purchasingProductId === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID;
   const buyingCredits = isStoreKitConsumableProductId(appleStoreKit.purchasingProductId);
   const busy = appleStoreKit.loading || appleStoreKit.verifying || appleStoreKit.purchasePending || appleStoreKit.syncing || appleStoreKit.restoring;
   const selectedTopUpProductId = storeKitProductIdForTopUpPlan(selectedTopUp);
   const selectedProduct = mode === 'top_up' ? appleStoreKit.creditProductsById[selectedTopUpProductId] : appleStoreKit.subscriptionProduct;
-  const disabled = busy || !appleStoreKit.connected || !selectedProduct || (mode === 'subscription' && activeMonthly);
+  const disabled = plansError || plansLoading || busy || !appleStoreKit.connected || !storeKitProductPrice(selectedProduct) || (mode === 'subscription' && activeMonthly);
   let label = mode === 'top_up' ? `BUY ${Number(selectedTopUp?.credits) || ''} CREDITS`.trim() : 'SUBSCRIBE WITH APPLE';
-  if (appleStoreKit.loading) label = 'LOADING APP STORE';
+  if (plansLoading) label = 'LOADING PLANS';
+  else if (appleStoreKit.loading) label = 'LOADING APP STORE';
   else if (appleStoreKit.restoring) label = 'RESTORING PURCHASES';
   else if (appleStoreKit.syncing) label = 'SYNCING STATUS';
   else if (buyingSubscription || buyingCredits || appleStoreKit.purchasePending) label = 'WAITING FOR APP STORE';
   else if (appleStoreKit.verifying) label = 'VERIFYING PURCHASE';
   else if (mode === 'subscription' && activeMonthly) label = 'MONTHLY ACTIVE';
+  else if (plansError || !appleStoreKit.connected || !storeKitProductPrice(selectedProduct)) label = 'PURCHASES UNAVAILABLE';
 
   return (
     <>
       <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ disabled, busy }}
         style={[styles.secureCheckoutButton, disabled && styles.disabledButton]}
         activeOpacity={0.88}
         disabled={disabled}
@@ -7489,13 +8375,17 @@ function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly, selectedTopU
   );
 }
 
-function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
+function TokensScreen({ user, setUser, token, onNavigate, onBack, onRequireAuth }) {
   const layout = useResponsiveLayout();
+  const [balanceRefreshing, setBalanceRefreshing] = useState(false);
+  const [balanceError, setBalanceError] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [catalog, setCatalog] = useState(fallbackPaymentCatalog);
   const [plansLoading, setPlansLoading] = useState(true);
+  const [plansRefreshKey, setPlansRefreshKey] = useState(0);
+  const [plansError, setPlansError] = useState(false);
   const [mode, setMode] = useState('subscription');
   const [selectedTopUpId, setSelectedTopUpId] = useState(fallbackTopUpPlans[0].id);
   const [pendingOrderId, setPendingOrderId] = useState('');
@@ -7516,27 +8406,53 @@ function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
   const subscriptionPeriodActive = !subscription?.currentPeriodEnd || new Date(subscription.currentPeriodEnd) > new Date();
   const activeMonthly = ['active', 'billing_grace'].includes(subscriptionStatus) && subscriptionPeriodActive;
   const isAppleCheckout = Platform.OS === 'ios';
+  const isAndroidCheckout = Platform.OS === 'android';
+  const googlePlayEnabled = isAndroidCheckout && catalog.androidGooglePlay?.enabled === true;
+  const googleProductIds = useMemo(() => (catalog.androidGooglePlay?.products || []).map((item) => item.productId), [catalog.androidGooglePlay]);
+  const googlePlay = useGooglePlayCredits({ enabled: googlePlayEnabled, user, setUser, onRequireAuth, productIds: googleProductIds });
+  const terms = subscriptionTerms(subscriptionPlan);
   const activeAppleMonthly = isAppleCheckout && subscription?.provider === 'apple' && activeMonthly;
   const appleStoreKit = useAppleStoreKitPayments({ enabled: isAppleCheckout, user, setUser, onRequireAuth });
   const appleSelectedTopUpProductId = storeKitProductIdForTopUpPlan(selectedTopUp);
   const appleSelectedProduct = mode === 'top_up' ? appleStoreKit.creditProductsById[appleSelectedTopUpProductId] : appleStoreKit.subscriptionProduct;
   const appleSelectedPrice = storeKitProductPrice(appleSelectedProduct) || 'Unavailable';
   const appleSelectedProductId = mode === 'top_up' ? appleSelectedTopUpProductId : STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID;
+  const selectedStoreProduct = isAppleCheckout ? appleSelectedProduct : googlePlay.products[selectedTopUp?.id];
+  const purchaseAvailability = creditPurchaseAvailability({ platform: Platform.OS, enabled: googlePlayEnabled, connected: appleStoreKit.connected, product: selectedStoreProduct, busy: isAppleCheckout ? appleStoreKit.purchasePending || appleStoreKit.verifying : googlePlay.busy });
   const visibleMessage = isAppleCheckout
     ? appleStoreKit.error || appleStoreKit.statusMessage || appleStoreKit.unavailableReason
-    : message;
-  const remainingCredits = userCreditBalance(user);
-  const creditBalanceLabel = user?.devMode ? 'Unlimited' : String(remainingCredits);
+    : isAndroidCheckout ? mode !== 'top_up' ? 'Monthly billing is unavailable on Android.' : googlePlay.error || googlePlay.message || (!purchaseAvailability.available ? purchaseAvailability.label : '') : message;
+  const creditBalance = knownCreditBalance(user);
+  const creditBalanceLabel = creditBalance === null ? 'Unavailable' : typeof creditBalance === 'number' ? creditBalance.toLocaleString('en-IN') : String(creditBalance);
+  const creditHistory = useApiState('/tryons/credit-history?limit=20', token, Boolean(user), { events: [] });
+  const creditEvents = Array.isArray(creditHistory.data?.events) ? creditHistory.data.events : [];
   const creditChoiceCardStyle = layout.isTablet ? styles.creditGridCardHalf : null;
   const topUpCreditCardStyle = layout.isTablet ? (layout.isLargeTablet ? styles.creditGridCardThird : styles.creditGridCardHalf) : null;
-  const firstPaymentDate = formatDate(addDays(new Date(), 1));
   const messageIsError = isAppleCheckout
     ? Boolean(appleStoreKit.error || appleStoreKit.unavailableReason)
-    : /failed|missing|not|error|could not|unavailable/i.test(message);
+    : isAndroidCheckout ? mode !== 'top_up' || Boolean(googlePlay.error || !googlePlayEnabled) : /failed|missing|not|error|could not|unavailable/i.test(message);
+
+  const refreshBalance = useCallback(async () => {
+    if (!user) return;
+    setBalanceRefreshing(true);
+    setBalanceError(false);
+    try {
+      const data = await api('/auth/me', { noCache: true });
+      if (data?.user) setUser(data.user);
+      else setBalanceError(true);
+    } catch {
+      setBalanceError(true);
+    } finally {
+      setBalanceRefreshing(false);
+    }
+  }, [setUser, user?.id]);
+
+  useEffect(() => { refreshBalance(); }, [refreshBalance]);
 
   useEffect(() => {
     let alive = true;
     setPlansLoading(true);
+    setPlansError(false);
     api('/payments/plans')
       .then((data) => {
         if (!alive) return;
@@ -7546,9 +8462,15 @@ function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
             ? data.plans.filter((item) => item.type === 'top_up')
             : [];
         const subscriptionFromPlans = data?.subscription || (Array.isArray(data?.plans) ? data.plans.find((item) => item.type === 'subscription') : null);
+        if (!paymentCatalogAvailable(subscriptionFromPlans, topUps)) {
+          setPlansError(true);
+          setMessage('Plans are unavailable. Please try again.');
+          return;
+        }
         setCatalog({
           subscription: subscriptionFromPlans || fallbackSubscriptionPlan,
           topUps: topUps.length ? topUps : fallbackTopUpPlans,
+          androidGooglePlay: data?.androidGooglePlay || { enabled: false, products: [] },
           appStoreProductIds: data?.appStoreProductIds || fallbackPaymentCatalog.appStoreProductIds,
           creditCosts: data?.creditCosts || fallbackPaymentCatalog.creditCosts
         });
@@ -7556,7 +8478,10 @@ function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
         setMessage('');
       })
       .catch((error) => {
-        if (alive) setMessage(error.message);
+        if (alive) {
+          setPlansError(true);
+          setMessage('Plans are unavailable. Please try again.');
+        }
       })
       .finally(() => {
         if (alive) setPlansLoading(false);
@@ -7564,7 +8489,7 @@ function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [plansRefreshKey]);
 
   const verifyPaymentOrder = useCallback(async (merchantOrderId, silent = false) => {
     if (!user || !merchantOrderId || verifyingOrderRef.current === merchantOrderId) return;
@@ -7706,35 +8631,40 @@ function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
 
       <View style={styles.creditsHero}>
         <View style={styles.creditsHeroCopy}>
-          <Text style={styles.creditsEyebrow}>{mode === 'top_up' ? 'ONE-TIME REFILL' : 'TOKEN ACCESS'}</Text>
-          <Text style={styles.creditsHeroTitle}>{mode === 'top_up' ? 'Top-ups' : 'Credits'}</Text>
+          <Text style={styles.creditsEyebrow}>YOUR ACCOUNT</Text>
+          <Text style={[styles.creditsHeroTitle, layout.windowWidth <= 340 && { fontSize: 37, lineHeight: 52 }]}>Your Credits</Text>
           {mode === 'top_up' ? (
             <TouchableOpacity activeOpacity={0.78} onPress={() => setMode('subscription')}>
-              <Text style={styles.creditsBackLink}>BACK TO MANDATE</Text>
+              <Text style={styles.creditsBackLink}>VIEW MONTHLY PLAN</Text>
             </TouchableOpacity>
           ) : null}
         </View>
         <Text style={styles.creditsHeroText}>
           {mode === 'top_up'
-            ? 'Choose a one-time credit pack when you want extra image try-ons or videos on top of the monthly membership.'
-            : `Pick the monthly mandate setup or open one-time top-ups. Starter accounts include ${creditCosts.starterCredits} credits, images use ${creditCosts.image} credit, and videos use ${creditCosts.video} credits.`}
+            ? 'Choose a one-time credit pack for more image try-ons and videos.'
+            : 'Create new looks whenever inspiration strikes.'}
         </Text>
       </View>
 
-      <View style={styles.creditsBalanceCard}>
-        <View style={styles.creditsBalanceIcon}>
-          <Ionicons name="sparkles" size={21} color="#9b5658" />
-        </View>
+      <View style={[styles.creditsBalanceCard, Platform.OS === 'ios' && styles.iosGlassCard]}>
+        <IosGlassBackdrop />
         <View style={styles.creditsBalanceCopy}>
-          <Text style={styles.creditsBalanceLabel}>Available credits</Text>
-          <Text style={styles.creditsBalanceHelp}>Images use {creditCosts.image} credit. Videos use {creditCosts.video} credits.</Text>
+          <Text style={styles.creditsBalanceLabel}>AVAILABLE CREDITS</Text>
+          <Text style={styles.creditsBalanceNumber} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} accessibilityLabel={creditBalance === null ? 'Credit balance unavailable' : `${creditBalanceLabel} available credits`}>{creditBalanceLabel}</Text>
+          <Text style={styles.creditsBalanceHelp}>{balanceRefreshing ? 'Checking your balance...' : balanceError ? 'Could not refresh balance. Last known value shown, if available.' : creditBalance === null ? 'Refresh your account to see your balance.' : `Image try-ons use ${creditCosts.image} credit${creditCosts.image === 1 ? '' : 's'}; videos use ${creditCosts.video} credits.`}</Text>
+          {balanceError || creditBalance === null ? <TouchableOpacity accessibilityRole="button" disabled={balanceRefreshing} onPress={refreshBalance}><Text style={styles.creditsRetryText}>Retry balance</Text></TouchableOpacity> : null}
         </View>
-        <Text style={styles.creditsBalanceNumber}>{creditBalanceLabel}</Text>
       </View>
 
       {plansLoading || (isAppleCheckout && appleStoreKit.loading) ? <ActivityIndicator style={styles.creditsLoader} size="small" color="#9b5658" /> : null}
+      {plansError ? <View style={styles.creditsStatePanel}><Text style={styles.creditsStateText}>Plans are unavailable. Please try again.</Text><TouchableOpacity accessibilityRole="button" onPress={() => setPlansRefreshKey((current) => current + 1)}><Text style={styles.creditsRetryText}>Retry plans</Text></TouchableOpacity></View> : null}
 
-      {mode === 'top_up' ? (
+      <View style={styles.creditsSectionIntro}>
+        <Text style={styles.creditsSectionHeading}>{mode === 'top_up' ? 'One-time credits' : 'Monthly plan'}</Text>
+        <Text style={styles.creditsSectionDescription}>{mode === 'top_up' ? 'Select a pack to see its store price and availability.' : 'Review the current plan and its billing terms.'}</Text>
+      </View>
+
+      {!plansError && !plansLoading && (mode === 'top_up' ? (
         isAppleCheckout ? (
           <View style={[styles.topUpGrid, layout.isTablet && styles.creditResponsiveGrid]}>
             {topUpPlans.map((planItem) => {
@@ -7757,6 +8687,8 @@ function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
               <TopUpCreditCard
                 key={planItem.id}
                 plan={planItem}
+                displayPrice={isAndroidCheckout ? creditPackageDisplayPrice('android', planItem, googlePlay.products[planItem.id]) : undefined}
+                hideRate={isAndroidCheckout}
                 selected={selectedPlan.id === planItem.id}
                 style={topUpCreditCardStyle}
                 onPress={() => setSelectedTopUpId(planItem.id)}
@@ -7773,49 +8705,47 @@ function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
               active={activeAppleMonthly}
               title="Lookmefy Premium Monthly"
               kicker="LOOKMEFY PREMIUM"
-              headline="150 credits every month"
+              headline={`${subscriptionPlan.credits} credits every month`}
               subhead="Auto-renewable monthly subscription"
               description="Renews through your Apple ID. Monthly credits are added once per verified Apple subscription period."
               style={creditChoiceCardStyle}
               onPress={() => setMode('subscription')}
             />
           ) : (
-            <MonthlyCreditCard plan={subscriptionPlan} selected={mode === 'subscription'} active={activeMonthly} style={creditChoiceCardStyle} onPress={() => setMode('subscription')} />
+            <MonthlyCreditCard plan={subscriptionPlan} selected={mode === 'subscription'} active={activeMonthly} style={creditChoiceCardStyle} showMandateTerms={showMandateTermsForPlatform(Platform.OS)} onPress={() => setMode('subscription')} />
           )}
-          <AddMoreCard selected={false} style={creditChoiceCardStyle} onPress={() => setMode('top_up')} />
+          <AddMoreCard selected={false} style={creditChoiceCardStyle} plans={topUpPlans} onPress={() => setMode('top_up')} />
         </View>
-      )}
+      ))}
+
+      {!plansError && !plansLoading && mode === 'subscription' ? <View style={styles.creditsSubscriptionStatus}><Text style={styles.creditsBalanceLabel}>SUBSCRIPTION STATUS</Text><Text style={styles.creditsSubscriptionStatusText}>{creditSubscriptionStatus(subscription)}</Text></View> : null}
 
       <View style={styles.creditsDivider} />
 
-      <Text style={styles.creditsSectionLabel}>Payment Method</Text>
+      <Text style={styles.creditsSectionLabel}>Billing Provider</Text>
       <View style={styles.paymentMethodCard}>
         <View style={styles.paymentMethodLeft}>
           {isAppleCheckout ? (
             <View style={styles.appStoreMark}>
               <Ionicons name="logo-apple" size={19} color="#ffffff" />
             </View>
-          ) : (
-            <View style={styles.phonePeMark}>
-              <Text style={styles.phonePeMarkText}>P</Text>
-            </View>
-          )}
-          <View>
-            <Text style={styles.paymentMethodText}>{isAppleCheckout ? 'App Store' : 'Razorpay'}</Text>
-            <Text style={styles.paymentMethodSubText}>{isAppleCheckout ? 'Apple ID billing' : 'UPI, cards, and net banking'}</Text>
+          ) : <View style={styles.appStoreMark}><Ionicons name="card-outline" size={19} color="#ffffff" /></View>}
+          <View style={styles.paymentMethodCopy}>
+            <Text style={styles.paymentMethodText}>{isAppleCheckout ? 'App Store' : isAndroidCheckout ? 'Google Play' : 'Razorpay'}</Text>
+            <Text style={styles.paymentMethodSubText}>{isAppleCheckout ? 'Apple ID billing' : isAndroidCheckout ? 'Google Play Billing' : 'UPI, cards, and net banking'}</Text>
           </View>
         </View>
-        <Text style={styles.paymentSelectedText}>Selected</Text>
+        <Text style={styles.paymentSelectedText}>{plansError || isAndroidCheckout && mode !== 'top_up' || !purchaseAvailability.available ? 'Unavailable' : 'Available'}</Text>
       </View>
 
-      <View style={styles.orderSummaryCard}>
+      {!plansError && !plansLoading ? <View style={styles.orderSummaryCard}>
         <Text style={styles.orderSummaryTitle}>Order Summary</Text>
         <Text style={styles.orderSummaryKicker}>SELECTED PACK</Text>
         <View style={styles.orderSummaryDivider} />
         {isAppleCheckout ? (
           <>
             <PaymentSummaryLine label="Credit Package" value={mode === 'top_up' ? `${selectedTopUp.credits} credit top-up` : storeKitProductTitle(appleStoreKit.subscriptionProduct, 'Lookmefy Premium Monthly')} strong />
-            <PaymentSummaryLine label="Tokens" value={mode === 'top_up' ? `${selectedTopUp.credits} credits` : '150 credits every month'} strong />
+            <PaymentSummaryLine label="Credits" value={mode === 'top_up' ? `${selectedTopUp.credits} credits` : `${subscriptionPlan.credits} credits every month`} strong />
             <PaymentSummaryLine label="Apple Price" value={appleSelectedPrice} strong />
             <PaymentSummaryLine label="Billing" value={mode === 'top_up' ? 'One-time consumable' : 'Monthly auto-renewing'} strong />
             <PaymentSummaryLine label="Product ID" value={appleSelectedProductId || 'Unavailable'} strong />
@@ -7823,60 +8753,85 @@ function TokensScreen({ user, setUser, onNavigate, onBack, onRequireAuth }) {
         ) : (
           <>
             <PaymentSummaryLine label="Credit Package" value={mode === 'top_up' ? 'Top-up' : subscriptionPlan.name} strong />
-            <PaymentSummaryLine label="Tokens" value={mode === 'top_up' ? `${selectedPlan.credits} credits` : `${subscriptionPlan.credits} credits every month`} strong />
-            <PaymentSummaryLine label="Rate" value={formatCreditRate(selectedPlan)} strong />
+            <PaymentSummaryLine label="Credits" value={mode === 'top_up' ? `${selectedPlan.credits} credits` : `${subscriptionPlan.credits} credits every month`} strong />
+            {!isAndroidCheckout && <PaymentSummaryLine label="Rate" value={formatCreditRate(selectedPlan)} strong />}
             {mode === 'top_up' ? (
               <>
                 <PaymentSummaryLine label="Billing" value="One-time" strong />
-                <PaymentSummaryLine label="Processing Fee" value="Free" strong />
+                {!isAndroidCheckout && <PaymentSummaryLine label="Processing Fee" value="Free" strong />}
               </>
+            ) : isAndroidCheckout ? (
+              <PaymentSummaryLine label="Billing" value="Monthly subscriptions are unavailable on Android." />
             ) : (
               <>
-                <PaymentSummaryLine label="First recurring payment" value={`${formatMoney(selectedAmount, selectedPlan.currency)} on ${firstPaymentDate}`} strong />
-                <PaymentSummaryLine label="Then" value={`${formatMoney(selectedAmount, selectedPlan.currency)}/month`} strong />
-                <PaymentSummaryLine label="Billing frequency" value="Monthly" strong />
+                <PaymentSummaryLine label="Setup charge" value={terms.valid ? formatMoney(terms.setup / 100, selectedPlan.currency) : terms.message} strong />
+                {terms.valid && <PaymentSummaryLine label="Recurring charge" value={`${formatMoney(terms.recurring / 100, selectedPlan.currency)}/${recurringPeriodLabel(terms.frequency)}`} strong />}
+                {terms.valid && <PaymentSummaryLine label="First renewal" value={terms.timing} />}
+                {terms.valid && <PaymentSummaryLine label="Renewal" value={terms.renewal} />}
+                {terms.valid && <PaymentSummaryLine label="Cancellation" value={terms.cancellation} />}
               </>
             )}
           </>
         )}
         <View style={styles.orderSummaryDivider} />
         <View style={styles.orderSummaryTotalRow}>
-          <Text style={styles.totalAmountLabel}>{isAppleCheckout ? 'APP STORE PRICE' : mode === 'top_up' ? 'TOTAL AMOUNT' : 'MONTHLY AMOUNT'}</Text>
-          <Text style={styles.totalAmountValue}>{isAppleCheckout ? appleSelectedPrice : formatMoney(selectedAmount, selectedPlan.currency)}</Text>
+          <Text style={styles.totalAmountLabel}>{isAppleCheckout ? 'APP STORE PRICE' : isAndroidCheckout ? 'GOOGLE PLAY PRICE' : mode === 'top_up' ? 'TOTAL AMOUNT' : 'SETUP CHARGE TODAY'}</Text>
+          <Text style={styles.totalAmountValue}>{isAppleCheckout ? appleSelectedPrice : isAndroidCheckout ? mode === 'top_up' ? creditPackageDisplayPrice('android', selectedTopUp, selectedStoreProduct) : 'Unavailable' : mode === 'top_up' ? formatMoney(selectedAmount, selectedPlan.currency) : terms.valid ? formatMoney(terms.setup / 100, selectedPlan.currency) : 'Unavailable'}</Text>
         </View>
-      </View>
+      </View> : null}
 
-      {!isAppleCheckout && activeMonthly && mode === 'subscription' ? (
+      {!isAppleCheckout && !isAndroidCheckout && activeMonthly && mode === 'subscription' ? (
         <TouchableOpacity style={[styles.cancelMandateButton, cancelLoading && styles.disabledButton]} activeOpacity={0.82} disabled={cancelLoading} onPress={cancelSubscription}>
           <Text style={styles.cancelMandateText}>{cancelLoading ? 'CANCELLING...' : 'CANCEL MONTHLY BILLING'}</Text>
         </TouchableOpacity>
       ) : null}
 
-      {visibleMessage ? <Text style={[styles.creditsMessage, messageIsError ? styles.errorText : null]}>{visibleMessage}</Text> : null}
+      {visibleMessage ? <Text accessibilityLiveRegion="polite" style={[styles.creditsMessage, messageIsError ? styles.errorText : null]}>{visibleMessage}</Text> : null}
 
       {isAppleCheckout ? (
-        <AppleStoreKitActions mode={mode} appleStoreKit={appleStoreKit} activeMonthly={activeAppleMonthly} selectedTopUp={selectedTopUp} />
+        <AppleStoreKitActions mode={mode} appleStoreKit={appleStoreKit} activeMonthly={activeAppleMonthly} selectedTopUp={selectedTopUp} plansError={plansError} plansLoading={plansLoading} />
+      ) : isAndroidCheckout ? (
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={googlePlay.busy ? 'Verifying purchase' : mode !== 'top_up' ? 'Monthly billing unavailable' : plansLoading ? 'Loading credit plans' : plansError || !purchaseAvailability.available ? 'Credit purchases unavailable' : 'Buy with Google Play'} accessibilityState={{ disabled: plansLoading || plansError || !purchaseAvailability.available || mode !== 'top_up', busy: googlePlay.busy }} style={[styles.secureCheckoutButton, (plansLoading || plansError || !purchaseAvailability.available || mode !== 'top_up') && styles.disabledButton]} activeOpacity={0.88} disabled={plansLoading || plansError || !purchaseAvailability.available || mode !== 'top_up'} onPress={() => googlePlay.purchase(selectedTopUp.id)}>
+          <Text style={styles.secureCheckoutText}>{googlePlay.busy ? 'VERIFYING PURCHASE' : mode !== 'top_up' ? 'MONTHLY BILLING UNAVAILABLE' : plansLoading ? 'LOADING PLANS' : plansError || !purchaseAvailability.available ? 'PURCHASES UNAVAILABLE' : 'BUY WITH GOOGLE PLAY'}</Text>
+        </TouchableOpacity>
       ) : (
-        <TouchableOpacity style={[styles.secureCheckoutButton, checkoutLoading && styles.disabledButton]} activeOpacity={0.88} disabled={checkoutLoading} onPress={startCheckout}>
-          <Text style={styles.secureCheckoutText}>{checkoutLoading ? 'OPENING RAZORPAY' : mode === 'top_up' ? 'SECURE CHECKOUT' : 'SET UP MONTHLY'}</Text>
+        <TouchableOpacity style={[styles.secureCheckoutButton, (plansLoading || plansError || checkoutLoading || (mode === 'subscription' && !terms.valid)) && styles.disabledButton]} activeOpacity={0.88} disabled={plansLoading || plansError || checkoutLoading || (mode === 'subscription' && !terms.valid)} onPress={startCheckout}>
+          <Text style={styles.secureCheckoutText}>{plansLoading ? 'LOADING PLANS' : checkoutLoading ? 'OPENING RAZORPAY' : mode === 'top_up' ? 'SECURE CHECKOUT' : 'SET UP MONTHLY'}</Text>
         </TouchableOpacity>
       )}
 
-      {!isAppleCheckout && pendingOrderId ? (
+      {!isAppleCheckout && !isAndroidCheckout && pendingOrderId ? (
         <TouchableOpacity style={styles.verifyPaymentButton} activeOpacity={0.82} onPress={() => verifyPaymentOrder(pendingOrderId)}>
           <Ionicons name="refresh" size={16} color="#5e3335" />
           <Text style={styles.verifyPaymentText}>VERIFY RAZORPAY PAYMENT</Text>
         </TouchableOpacity>
       ) : null}
 
+      <View style={styles.creditsHistorySection}>
+        <Text style={styles.creditsHistoryHeading}>Credit History</Text>
+        <Text style={styles.creditsSectionDescription}>Your recent verified credit activity.</Text>
+        {creditHistory.loading ? <CreditHistorySkeleton /> : null}
+        {!creditHistory.loading && creditHistory.error ? <><Text style={styles.creditsStateText}>Credit history is unavailable. Please try again.</Text><TouchableOpacity accessibilityRole="button" onPress={creditHistory.reload}><Text style={styles.creditsRetryText}>Retry history</Text></TouchableOpacity></> : null}
+        {!creditHistory.loading && !creditHistory.error && !creditEvents.length ? <Text style={styles.creditsStateText}>No credit activity yet.</Text> : null}
+        {!creditHistory.loading && !creditHistory.error ? creditEvents.map((event) => (
+          <View key={event.id} style={styles.creditsHistoryRow} accessibilityLabel={`${event.action || 'Credit activity'}, ${creditHistoryAmountLabel(event)} credits, ${formatDate(event.createdAt)}`}>
+            <View style={styles.creditsHistoryCopy}>
+              <Text style={styles.creditsHistoryTitle}>{event.action || 'Credit activity'}</Text>
+              <Text style={styles.creditsHistoryMeta}>{creditHistoryProductLabel(event)} · {formatDate(event.createdAt)}</Text>
+            </View>
+            <Text style={styles.creditsHistoryAmount}>{creditHistoryAmountLabel(event)}</Text>
+          </View>
+        )) : null}
+      </View>
+
       <View style={styles.creditsFooterLinks}>
-        <TouchableOpacity activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'returns' })}>
+        <TouchableOpacity accessibilityRole="link" accessibilityLabel="Refund policy" style={styles.releaseLegalAction} activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'returns' })}>
           <Text style={styles.creditsFooterLink}>REFUNDS</Text>
         </TouchableOpacity>
-        <TouchableOpacity activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'cancellation' })}>
+        <TouchableOpacity accessibilityRole="link" accessibilityLabel="Cancellation policy" style={styles.releaseLegalAction} activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'cancellation' })}>
           <Text style={styles.creditsFooterLink}>CANCELLATION</Text>
         </TouchableOpacity>
-        <TouchableOpacity activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'support' })}>
+        <TouchableOpacity accessibilityRole="link" accessibilityLabel="Help center" style={styles.releaseLegalAction} activeOpacity={0.75} onPress={() => onNavigate('info', { page: 'support' })}>
           <Text style={styles.creditsFooterLink}>HELP CENTER</Text>
         </TouchableOpacity>
       </View>
@@ -7936,15 +8891,20 @@ function wishlistSavedTime(product = {}, index = 0, total = 0) {
   return Number.isFinite(time) ? time : total - index;
 }
 
-function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], user, onRemoveFromWishlist, onCreateCollection }) {
+function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], wishlistReady, wishlistLoadError, wishlistMutatingId, onRetryWishlist, user, onRemoveFromWishlist, onCreateCollection }) {
+  const layout = useResponsiveLayout();
+  const { fontScale = 1 } = useWindowDimensions();
   const [activeFilter, setActiveFilter] = useState('all');
   const [wishlistViewMode, setWishlistViewMode] = useState('grid');
-  const [wishlistGridColumns, setWishlistGridColumns] = useState(2);
+  const [requestedGridColumns, setRequestedGridColumns] = useState(2);
   const [wishlistSortKey, setWishlistSortKey] = useState('recent');
   const [wishlistSortOpen, setWishlistSortOpen] = useState(false);
   const [collectionSheetVisible, setCollectionSheetVisible] = useState(false);
   const [collectionName, setCollectionName] = useState('');
   const [collectionProductIds, setCollectionProductIds] = useState([]);
+  const wishlistGridColumns = wishlistGridColumnsForWidth(layout.windowWidth, requestedGridColumns);
+  const forceReadableList = layout.windowWidth <= 340 && fontScale >= 1.2;
+  const displayedViewMode = forceReadableList ? 'list' : wishlistViewMode;
   const recommended = useProducts({ sort: 'newest', limit: 6 }, token);
   const activeFilterLabel = wishlistFilterTabs.find((tab) => tab.key === activeFilter)?.label || 'All Items';
   const activeSortLabel = wishlistSortOptions.find((option) => option.key === wishlistSortKey)?.label || 'Recently Added';
@@ -7960,8 +8920,13 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], user
       .filter((item) => activeFilter === 'all' || item.group === activeFilter)
       .sort((a, b) => {
         if (wishlistSortKey === 'oldest') return a.savedTime - b.savedTime || a.index - b.index;
-        if (wishlistSortKey === 'price-low') return (Number(a.product.price) || 0) - (Number(b.product.price) || 0) || a.index - b.index;
-        if (wishlistSortKey === 'price-high') return (Number(b.product.price) || 0) - (Number(a.product.price) || 0) || a.index - b.index;
+        if (wishlistSortKey === 'price-low' || wishlistSortKey === 'price-high') {
+          const aPrice = wishlistPriceValue(a.product.price);
+          const bPrice = wishlistPriceValue(b.product.price);
+          if (aPrice === null) return bPrice === null ? a.index - b.index : 1;
+          if (bPrice === null) return -1;
+          return (wishlistSortKey === 'price-low' ? aPrice - bPrice : bPrice - aPrice) || a.index - b.index;
+        }
         if (wishlistSortKey === 'brand') return String(a.product.displayLabel || a.product.brand || '').localeCompare(String(b.product.displayLabel || b.product.brand || '')) || a.index - b.index;
         return b.savedTime - a.savedTime || a.index - b.index;
       })
@@ -7998,26 +8963,25 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], user
         <PageBackRow onBack={onBack} />
 
         <View style={styles.wishlistBody}>
-          <Text style={styles.wishlistTitle}>My Wishlist <Text style={styles.wishlistCount}>({wishlistProducts.length})</Text></Text>
-          <View style={styles.wishlistActionRow}>
+          <Text style={styles.wishlistEyebrow}>YOUR SAVED EDIT</Text>
+          <Text style={styles.wishlistTitle}>My Wishlist</Text>
+          <Text style={styles.wishlistSubtitle}>Pieces you've saved, all in one place.</Text>
+          {wishlistReady && !wishlistLoadError ? <Text style={styles.wishlistCount}>{wishlistProducts.length} saved {wishlistProducts.length === 1 ? 'piece' : 'pieces'}</Text> : null}
+          {wishlistReady && !wishlistLoadError && wishlistProducts.length ? <View style={styles.wishlistActionRow}>
             <TouchableOpacity style={styles.wishlistCreateButton} activeOpacity={0.86} onPress={openCollectionSheet}>
               <Ionicons name="add" size={18} color="#ffffff" />
               <Text style={styles.wishlistCreateText}>Create Collection</Text>
             </TouchableOpacity>
-          <TouchableOpacity style={styles.wishlistShareButton}>
-            <Ionicons name="share-social-outline" size={16} color="#111111" />
-            <Text style={styles.wishlistShareText}>Share</Text>
-          </TouchableOpacity>
-        </View>
+          </View> : null}
 
-        <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.wishlistTabs}>
+        {wishlistReady && !wishlistLoadError && wishlistProducts.length ? <><ScrollView {...horizontalScrollProps} contentContainerStyle={styles.wishlistTabs}>
           {wishlistFilterTabs.map((tab) => (
             <TouchableOpacity
               key={tab.key}
               accessibilityRole="button"
               accessibilityState={{ selected: activeFilter === tab.key }}
               activeOpacity={0.78}
-              style={styles.wishlistTab}
+              style={[styles.wishlistTab, { minWidth: wishlistFilterTabMinWidth(tab.label, fontScale) }]}
               onPress={() => setActiveFilter(tab.key)}
             >
               <Text style={[styles.wishlistTabText, activeFilter === tab.key && styles.wishlistTabTextActive]}>{tab.label}</Text>
@@ -8030,30 +8994,31 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], user
           <View style={styles.wishlistViewToggle}>
             <TouchableOpacity
               accessibilityRole="button"
-              accessibilityLabel={`Change wishlist grid size, currently ${wishlistGridColumns} columns`}
-              accessibilityState={{ selected: wishlistViewMode === 'grid' }}
+              accessibilityLabel={forceReadableList ? 'Grid unavailable at this text size' : layout.windowWidth >= 600 ? `Change wishlist grid size, currently ${wishlistGridColumns} columns` : 'Show two-column wishlist grid'}
+              accessibilityState={{ selected: displayedViewMode === 'grid', disabled: forceReadableList }}
               activeOpacity={0.78}
-              style={[styles.wishlistViewButton, wishlistViewMode === 'grid' && styles.wishlistViewButtonActive]}
+              disabled={forceReadableList}
+              style={[styles.wishlistViewButton, displayedViewMode === 'grid' && styles.wishlistViewButtonActive]}
               onPress={() => {
                 setWishlistViewMode('grid');
-                setWishlistGridColumns((current) => (current === 2 ? 3 : 2));
+                if (layout.windowWidth >= 600) setRequestedGridColumns((current) => (current === 2 ? 3 : 2));
                 setWishlistSortOpen(false);
               }}
             >
-              <Ionicons name="grid-outline" size={17} color={wishlistViewMode === 'grid' ? '#ffffff' : '#3f3937'} />
+              <Ionicons name="grid-outline" size={17} color={displayedViewMode === 'grid' ? '#ffffff' : '#625C56'} />
             </TouchableOpacity>
             <TouchableOpacity
               accessibilityRole="button"
               accessibilityLabel="Organize wishlist"
-              accessibilityState={{ expanded: wishlistSortOpen, selected: wishlistViewMode === 'list' }}
+              accessibilityState={{ expanded: wishlistSortOpen, selected: displayedViewMode === 'list' }}
               activeOpacity={0.78}
-              style={[styles.wishlistViewButton, wishlistViewMode === 'list' && styles.wishlistViewButtonActive]}
+              style={[styles.wishlistViewButton, displayedViewMode === 'list' && styles.wishlistViewButtonActive]}
               onPress={() => {
                 setWishlistViewMode('list');
                 setWishlistSortOpen((current) => !current);
               }}
             >
-              <Ionicons name="list-outline" size={19} color={wishlistViewMode === 'list' ? '#ffffff' : '#3f3937'} />
+              <Ionicons name="list-outline" size={19} color={displayedViewMode === 'list' ? '#ffffff' : '#625C56'} />
             </TouchableOpacity>
           </View>
         </View>
@@ -8077,28 +9042,35 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], user
               </TouchableOpacity>
             ))}
           </View>
-        ) : null}
+        ) : null}</> : null}
 
-        <View style={[styles.wishlistGrid, wishlistViewMode === 'list' && styles.wishlistList]}>
+        {!wishlistReady ? <View style={styles.wishlistStatusPanel}><ActivityIndicator color="#9B5658" /><Text style={styles.wishlistStatusText}>Loading your saved pieces...</Text></View> : wishlistLoadError ? (
+          <View style={styles.wishlistStatusPanel}>
+            <Text style={styles.wishlistEmptyTitle}>Couldn't load your wishlist.</Text>
+            <Text style={styles.wishlistStatusText}>Your saved items are unchanged. Please try again.</Text>
+            <TouchableOpacity accessibilityRole="button" style={styles.wishlistEmptyAction} onPress={onRetryWishlist}><Text style={styles.wishlistEmptyActionText}>Retry</Text></TouchableOpacity>
+          </View>
+        ) : <View style={[styles.wishlistGrid, displayedViewMode === 'list' && styles.wishlistList]}>
           {displayedWishlistProducts.length ? displayedWishlistProducts.map((product) => (
-            <WishlistProductCard key={product.id} product={product} viewMode={wishlistViewMode} gridColumns={wishlistGridColumns} onPress={() => onNavigate('product', { id: product.id })} onRemove={() => onRemoveFromWishlist?.(product)} />
+            <WishlistProductCard key={product.id} product={product} removing={wishlistMutatingId === String(product.id)} viewMode={displayedViewMode} gridColumns={wishlistGridColumns} onPress={() => onNavigate('product', { id: product.id })} onRemove={() => onRemoveFromWishlist?.(product)} />
           )) : (
-            <EmptyStateCard
-              icon="heart-outline"
-              title={filteredEmpty ? `No ${activeFilterLabel.toLowerCase()} saved yet` : 'No saved styles yet'}
-              text={filteredEmpty ? `Items you save in ${activeFilterLabel.toLowerCase()} will appear here.` : 'Heart products while browsing and your favourites will stay here.'}
-              actionLabel="Start Shopping"
-              onAction={() => onNavigate('shop')}
-            />
+            <View style={styles.wishlistEmptyState}>
+              <View style={styles.wishlistEmptyIcon}><Ionicons name="heart-outline" size={25} color="#625C56" /></View>
+              <Text style={styles.wishlistEmptyTitle}>{filteredEmpty ? `No ${activeFilterLabel.toLowerCase()} saved yet.` : 'Your collection starts here.'}</Text>
+              <Text style={styles.wishlistEmptyText}>{filteredEmpty ? 'Try another category to see your saved pieces.' : 'Save pieces you love and revisit them anytime.'}</Text>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Explore styles" style={styles.wishlistEmptyAction} onPress={() => onNavigate('shop')}>
+                <Text style={styles.wishlistEmptyActionText}>Explore Styles</Text><Ionicons name="arrow-forward" size={17} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
           )}
-        </View>
+        </View>}
 
         <View style={styles.wishlistProCard}>
-          <Text style={styles.wishlistProBadge}>PRO FEATURE</Text>
-          <Text style={styles.wishlistProTitle}>Unlock Smart Wardrobe AI</Text>
-          <Text style={styles.wishlistProText}>Get virtual try-on access for all wishlist items and personalized fit recommendations.</Text>
+          <Text style={styles.wishlistProBadge}>STYLE STUDIO</Text>
+          <Text style={styles.wishlistProTitle}>See it your way.</Text>
+          <Text style={styles.wishlistProText}>Explore available AI try-on options and credits.</Text>
           <TouchableOpacity style={styles.wishlistUpgradeButton} onPress={() => onNavigate('tokens')}>
-            <Text style={styles.wishlistUpgradeText}>Upgrade Now</Text>
+            <Text style={styles.wishlistUpgradeText}>Explore Credits</Text>
           </TouchableOpacity>
         </View>
 
@@ -8117,12 +9089,12 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], user
           ) : recommended.error || !recommended.products.length ? (
             <StatusPanel error={recommended.error} empty={!recommended.products.length} text="No recommended products yet." />
           ) : recommended.products.slice(0, 4).map((product) => {
-            const price = Number(product.price);
+            const price = wishlistPriceValue(product.price);
             return (
             <TouchableOpacity key={product.id} style={styles.wishlistRecommendedCard} onPress={() => onNavigate('product', { id: product.id })}>
               <ProductImage product={product} style={styles.wishlistRecommendedImage} alt={product.title || product.name} />
               <Text style={styles.wishlistRecommendedBrand} numberOfLines={1}>{product.displayLabel || titleCase(product.category || 'Catalog')}</Text>
-              <Text style={styles.wishlistRecommendedPrice}>{Number.isFinite(price) ? formatMoney(price, product.currency) : 'Price unavailable'}</Text>
+              <Text style={styles.wishlistRecommendedPrice}>{price !== null ? formatMoney(price, product.currency) : 'Price unavailable'}</Text>
             </TouchableOpacity>
             );
           })}
@@ -8281,8 +9253,8 @@ function CollectionsScreen({ onNavigate, onBack, user, collections = [], wishlis
   );
 }
 
-function WishlistProductCard({ product, onPress, onRemove, viewMode = 'grid', gridColumns = 2 }) {
-  const price = Number(product?.price);
+function WishlistProductCard({ product, onPress, onRemove, removing = false, viewMode = 'grid', gridColumns = 2 }) {
+  const price = wishlistPriceValue(product?.price);
   const listMode = viewMode === 'list';
   const compactGrid = !listMode && gridColumns === 3;
   const handleRemove = (event) => {
@@ -8290,17 +9262,17 @@ function WishlistProductCard({ product, onPress, onRemove, viewMode = 'grid', gr
     onRemove?.();
   };
   return (
-    <TouchableOpacity style={[styles.wishlistProductCard, compactGrid && styles.wishlistProductCardCompact, listMode && styles.wishlistProductCardList]} activeOpacity={0.86} onPress={onPress}>
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${product?.title || product?.name || 'Saved product'}, ${price !== null ? formatMoney(price, product?.currency) : 'price unavailable'}`} style={[styles.wishlistProductCard, compactGrid && styles.wishlistProductCardCompact, listMode && styles.wishlistProductCardList]} activeOpacity={0.86} onPress={onPress}>
       <View style={[styles.wishlistProductImageWrap, listMode && styles.wishlistProductImageWrapList]}>
-        <ProductImage product={product} style={styles.wishlistProductImage} resizeMode="cover" alt={product?.title || product?.name} />
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Remove product from wishlist" activeOpacity={0.84} style={styles.wishlistHeartButton} onPress={handleRemove}>
-          <Ionicons name="heart" size={22} color="#9b5658" />
+        <ProductImage product={product} style={styles.wishlistProductImage} resizeMode="contain" alt={product?.title || product?.name} />
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Remove ${product?.title || product?.name || 'product'} from wishlist`} accessibilityState={{ selected: true, busy: removing, disabled: removing }} disabled={removing} activeOpacity={0.84} style={styles.wishlistHeartButton} onPress={handleRemove}>
+          {removing ? <ActivityIndicator size="small" color="#9B5658" /> : <Ionicons name="heart" size={21} color="#9B5658" />}
         </TouchableOpacity>
       </View>
       <View style={listMode && styles.wishlistProductCopyList}>
         <Text style={[styles.wishlistProductBrand, compactGrid && styles.wishlistProductBrandCompact, listMode && styles.wishlistProductBrandList]} numberOfLines={1}>{product?.displayLabel || titleCase(product?.category || 'Catalog')}</Text>
-        <Text style={[styles.wishlistProductName, compactGrid && styles.wishlistProductNameCompact]} numberOfLines={listMode ? 3 : 2}>{product?.title || product?.name}</Text>
-        <Text style={[styles.wishlistProductPrice, compactGrid && styles.wishlistProductPriceCompact]}>{Number.isFinite(price) ? formatMoney(price, product?.currency) : 'Price unavailable'}</Text>
+        <Text style={[styles.wishlistProductName, compactGrid && styles.wishlistProductNameCompact, listMode && styles.wishlistProductNameList]} numberOfLines={listMode ? 3 : 2}>{product?.title || product?.name}</Text>
+        <Text style={[styles.wishlistProductPrice, compactGrid && styles.wishlistProductPriceCompact]}>{price !== null ? formatMoney(price, product?.currency) : 'Price unavailable'}</Text>
         <TouchableOpacity style={[styles.wishlistMoveButton, compactGrid && styles.wishlistMoveButtonCompact, listMode && styles.wishlistMoveButtonList]} onPress={onPress}>
           <Text style={styles.wishlistMoveText}>View Product</Text>
         </TouchableOpacity>
@@ -8444,6 +9416,7 @@ function GenerationHistoryScreen({ user, setUser, setToken, token, onNavigate, o
         </Pressable>
         <View style={styles.generationGridCopy}>
           <Text style={styles.generationGridTitle} numberOfLines={2}>{item.title || 'Generated try-on'}</Text>
+          <ReportContentAction content={reportContentReference(item, ({ product: 'product_tryon', custom: 'custom_tryon', external: 'external_tryon' })[item.type])} />
           <Text style={styles.generationGridMeta} numberOfLines={1}>{item.subtitle || formatDate(item.createdAt)}</Text>
           <View style={styles.generationGridFooter}>
             <Text style={styles.generationGridDate}>{formatDate(item.createdAt)}</Text>
@@ -8532,15 +9505,14 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
   const [passwordMessage, setPasswordMessage] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [creditHistoryExpanded, setCreditHistoryExpanded] = useState(false);
-  const [avatarAdjustVisible, setAvatarAdjustVisible] = useState(false);
-  const [avatarCropDraft, setAvatarCropDraft] = useState(null);
-  const [avatarAdjustMessage, setAvatarAdjustMessage] = useState('');
-  const [avatarCropSaving, setAvatarCropSaving] = useState(false);
   const [accountDeleting, setAccountDeleting] = useState(false);
+  const deletionRequestRef = useRef(false);
   const [deleteSheetVisible, setDeleteSheetVisible] = useState(false);
   const [deleteStep, setDeleteStep] = useState('review');
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [deleteMessage, setDeleteMessage] = useState('');
+  const [deleteReceipt, setDeleteReceipt] = useState('');
+  const [deleteRequestId, setDeleteRequestId] = useState('');
   const profileScrollRef = useRef(null);
   const profileAvatarTourTarget = useTourTarget('profile-avatar', registerTourTarget, { request: tourFocusRequest, scrollRef: profileScrollRef, scrollOffset: 94 });
   const creditHistory = useApiState('/tryons/credit-history?limit=20', token, Boolean(user), { events: [] });
@@ -8551,32 +9523,24 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
   const avatarUri = userAvatarUrl(user);
   const previewUri = photo?.uri || (avatarUri ? imageUrl(avatarUri) : '');
   const photoSource = previewUri ? { uri: previewUri } : null;
-  const avatarAdjustmentUser = photo?.uri ? { ...user, bodyPhotoSource: 'upload', bodyPhotoUrl: '', avatarCrop: null } : user;
   const profilePhotoResizeMode = photo?.uri ? 'cover' : userAvatarResizeMode(user);
-  const profilePhotoImageStyle = photo?.uri ? styles.profileFaceImage : avatarImageStyleForUser(user, 76);
+  const profilePhotoImageStyle = photo?.uri ? styles.profileFaceImage : avatarImageStyleForUser(user, 88);
   const profilePhotoImageBaseStyle = photo?.uri ? null : avatarImageBaseStyleForUser(user);
-  const avatarAdjustCrop = avatarCropDraft || avatarCropForUser(avatarAdjustmentUser);
-  const avatarAdjustPreviewSize = 132;
-  const avatarAdjustPreviewResizeMode = userAvatarResizeMode(avatarAdjustmentUser);
-  const avatarAdjustPreviewImageStyle = avatarImageStyleForUser(avatarAdjustmentUser, avatarAdjustPreviewSize, avatarAdjustCrop);
-  const avatarAdjustPreviewImageBaseStyle = avatarImageBaseStyleForUser(avatarAdjustmentUser);
-  const avatarAdjustMoveStep = isGeneratedFullBodyAvatar(avatarAdjustmentUser) ? 8 : 5;
-  const avatarAdjustZoomStep = isGeneratedFullBodyAvatar(avatarAdjustmentUser) ? 0.16 : 0.08;
   const username = user.username || (user.email ? user.email.split('@')[0] : '');
   const displayName = user.name || username || 'Lookmefy member';
   const displayEmail = /@phone\.(?:fitlook|lookmefy)\.local$/i.test(user.email || '') ? '' : user.email;
   const accountPhone = authPhoneValue(user.phone || '');
   const accountPhoneLabel = accountPhone.length === 10 ? `mobile ending ${accountPhone.slice(-4)}` : 'your saved mobile number';
-  const remainingCredits = userCreditBalance(user);
+  const remainingCredits = knownCreditBalance(user);
   const monthlyAllowance = Number(user.subscription?.tokensPerMonth) || 0;
-  const creditTotal = monthlyAllowance > 0 ? Math.max(monthlyAllowance, remainingCredits) : null;
+  const creditTotal = typeof remainingCredits === 'number' && monthlyAllowance > 0 ? Math.max(monthlyAllowance, remainingCredits) : null;
   const creditProgress = `${creditTotal ? calculateCreditPercentage(remainingCredits, creditTotal) : 100}%`;
   const creditEvents = creditHistory.data?.events || [];
   const visibleCreditEvents = creditHistoryExpanded ? creditEvents : creditEvents.slice(0, profileCreditPreviewLimit);
   const hiddenCreditEvents = Math.max(0, creditEvents.length - visibleCreditEvents.length);
   const avatarPortraitUri = user.avatarPhotoUrl ? imageUrl(user.avatarPhotoUrl) : '';
   const bodyPortraitUri = user.bodyPhotoUrl ? imageUrl(user.bodyPhotoUrl) : '';
-  const canDeleteAccount = deleteConfirmation === 'DELETE' && !accountDeleting;
+  const canDeleteAccount = deleteStep === 'confirm' && deleteConfirmation === 'DELETE' && !accountDeleting;
   const portraitSeen = new Set();
   const portraitCards = [
     photo?.uri ? { uri: photo.uri, label: 'New photo', resizeMode: 'cover' } : null,
@@ -8599,64 +9563,6 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
     if (!selected) return;
     setPhoto(selected);
     setMessage('');
-    setAvatarAdjustVisible(false);
-    setAvatarCropDraft(null);
-  };
-
-  const openAvatarAdjuster = () => {
-    if (!photoSource) {
-      chooseProfilePhoto();
-      return;
-    }
-    setAvatarCropDraft(avatarCropForUser(avatarAdjustmentUser));
-    setAvatarAdjustMessage('');
-    setMessage('');
-    setAvatarAdjustVisible(true);
-  };
-
-  const updateAvatarCropDraft = (delta = {}) => {
-    setAvatarCropDraft((current) => {
-      const base = current || avatarCropForUser(avatarAdjustmentUser);
-      return avatarCropForUser(avatarAdjustmentUser, {
-        scale: base.scale + (delta.scale || 0),
-        translateX: base.translateX + (delta.translateX || 0),
-        translateY: base.translateY + (delta.translateY || 0)
-      });
-    });
-  };
-
-  const resetAvatarCropDraft = () => {
-    setAvatarCropDraft(defaultAvatarCrop(avatarAdjustmentUser));
-    setAvatarAdjustMessage('');
-  };
-
-  const saveAvatarCrop = async () => {
-    if (photo?.uri) {
-      setAvatarAdjustMessage('Save the new portrait before saving its position.');
-      return;
-    }
-    const crop = avatarCropForUser(user, avatarCropDraft || avatarCropForUser(user));
-    setAvatarCropSaving(true);
-    setAvatarAdjustMessage('Saving position...');
-    try {
-      const data = await api('/auth/avatar-crop', {
-        method: 'PATCH',
-        body: JSON.stringify({ avatarCrop: crop })
-      });
-      if (data.user) setUser(data.user);
-      setAvatarAdjustVisible(false);
-      setAvatarCropDraft(null);
-      setMessage('Profile photo position saved.');
-    } catch (error) {
-      setAvatarAdjustMessage(error.message);
-    } finally {
-      setAvatarCropSaving(false);
-    }
-  };
-
-  const replaceProfilePhotoFromAdjuster = async () => {
-    if (avatarCropSaving) return;
-    await chooseProfilePhoto();
   };
 
   const updatePhoto = async () => {
@@ -8838,13 +9744,52 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
     }
   };
 
+  const completeDeletionLocally = async () => {
+    let localSignOutFailed = false;
+    try { await clearToken(); } catch { localSignOutFailed = true; }
+    setDeleteSheetVisible(false);
+    setDeleteStep('review');
+    setDeleteConfirmation('');
+    setDeleteMessage('');
+    setDeleteReceipt('');
+    setDeleteRequestId('');
+    setToken(null);
+    setUser(null);
+    setMessage('');
+    Alert.alert('Account deletion confirmed', localSignOutFailed
+      ? 'The server confirmed account deletion, but saved sign-in details could not be cleared on this device. Do not reuse this session; close the app and contact support if it returns.'
+      : accountDeletionOutcome({ deleted: true }).message);
+    onNavigate('home');
+  };
+
+  const checkDeletionStatus = async () => {
+    if (!deleteReceipt || deletionRequestRef.current) return;
+    deletionRequestRef.current = true;
+    setAccountDeleting(true);
+    setDeleteMessage('Checking the server for your deletion status…');
+    try {
+      const data = await api('/auth/me/deletion-status', { noCache: true, timeoutMs: 15000,
+        headers: { 'Deletion-Receipt': deleteReceipt } });
+      const outcome = accountDeletionOutcome(data);
+      if (outcome.state === 'complete') await completeDeletionLocally();
+      else setDeleteMessage(outcome.message);
+    } catch {
+      setDeleteMessage('Could not verify the deletion status. Contact support with your request ID.');
+    } finally {
+      deletionRequestRef.current = false;
+      setAccountDeleting(false);
+    }
+  };
+
   const deleteAccount = async () => {
+    if (deletionRequestRef.current) return;
     if (!canDeleteAccount) {
-      setDeleteMessage('Type DELETE exactly to permanently delete your account.');
+      setDeleteMessage('Type DELETE exactly to confirm your deletion request.');
       return;
     }
+    deletionRequestRef.current = true;
     setAccountDeleting(true);
-    setDeleteMessage('Deleting account...');
+    setDeleteMessage('Requesting account deletion… Please keep this screen open.');
     let deleted = false;
     try {
       const data = await api('/auth/me', {
@@ -8852,32 +9797,34 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
         timeoutMs: 60000,
         body: JSON.stringify({ confirmation: 'DELETE' })
       });
-      if (!data?.deleted) throw new Error('We could not confirm account deletion. Please try again.');
-      await clearToken();
+      const outcome = accountDeletionOutcome(data);
+      if (outcome.state === 'pending') {
+        setDeleteReceipt(typeof data.deletionReceipt === 'string' ? data.deletionReceipt : '');
+        setDeleteRequestId(typeof data.requestId === 'string' ? data.requestId : '');
+        setDeleteStep('pending');
+        setDeleteMessage(outcome.message);
+        return;
+      }
+      if (outcome.state !== 'complete') throw new Error(outcome.message);
       deleted = true;
     } catch (error) {
-      setDeleteMessage(error.message);
+      setDeleteMessage(error?.code === 'timeout' || /timed out|network|connection/i.test(error?.message || '')
+        ? 'We could not confirm deletion because the connection was interrupted. Check your account status before trying again.'
+        : error.message || 'We could not confirm account deletion. Please contact support.');
     } finally {
+      deletionRequestRef.current = false;
       setAccountDeleting(false);
     }
 
-    if (deleted) {
-      setDeleteSheetVisible(false);
-      setDeleteStep('review');
-      setDeleteConfirmation('');
-      setDeleteMessage('');
-      setToken(null);
-      setUser(null);
-      setMessage('');
-      Alert.alert('Account deleted', 'Your Lookmefy account has been permanently deleted.');
-      onNavigate('home');
-    }
+    if (deleted) await completeDeletionLocally();
   };
 
   const confirmDeleteAccount = () => {
-    setDeleteStep('review');
-    setDeleteConfirmation('');
-    setDeleteMessage('');
+    if (deleteStep !== 'pending') {
+      setDeleteStep('review');
+      setDeleteConfirmation('');
+      setDeleteMessage('');
+    }
     setMessage('');
     setDeleteSheetVisible(true);
   };
@@ -8885,9 +9832,11 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
   const closeDeleteSheet = () => {
     if (accountDeleting) return;
     setDeleteSheetVisible(false);
-    setDeleteStep('review');
-    setDeleteConfirmation('');
-    setDeleteMessage('');
+    if (deleteStep !== 'pending') {
+      setDeleteStep('review');
+      setDeleteConfirmation('');
+      setDeleteMessage('');
+    }
   };
 
   return (
@@ -8896,33 +9845,43 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
       <ScrollView ref={profileScrollRef} style={styles.flex} contentContainerStyle={styles.profileContent} {...screenScrollProps}>
       <PageBackRow onBack={onBack} />
 
-      <View style={styles.profileHero}>
-        <TouchableOpacity ref={profileAvatarTourTarget.ref} onLayout={profileAvatarTourTarget.onLayout} style={styles.profilePhotoWrap} onPress={openAvatarAdjuster}>
-          {photoSource ? <ResilientImage source={photoSource} style={styles.profilePhoto} imageStyle={profilePhotoImageStyle} imageBaseStyle={profilePhotoImageBaseStyle} resizeMode={profilePhotoResizeMode} fallbackIcon="person-outline" /> : (
-            <InitialsAvatar user={user} style={[styles.profilePhoto, styles.profileAvatarFallback]} textStyle={styles.profileAvatarInitials} />
-          )}
+      <View style={styles.profileIntro}>
+        <Text style={styles.profilePageTitle}>Your Profile</Text>
+        <Text style={styles.profilePageSubtitle}>Your personal style space.</Text>
+      </View>
+      <View style={[styles.profileHero, Platform.OS === 'ios' && styles.iosGlassCard]}>
+        <IosGlassBackdrop />
+        <TouchableOpacity ref={profileAvatarTourTarget.ref} onLayout={profileAvatarTourTarget.onLayout} style={styles.profilePhotoWrap} onPress={chooseProfilePhoto} accessibilityRole="button" accessibilityLabel="Choose profile photo">
+          <View style={styles.profilePhotoFrame}>
+            {photoSource ? <ResilientImage source={photoSource} style={styles.profilePhoto} imageStyle={profilePhotoImageStyle} imageBaseStyle={profilePhotoImageBaseStyle} resizeMode={profilePhotoResizeMode} fallbackIcon="person-outline" /> : (
+              <InitialsAvatar user={user} style={[styles.profilePhoto, styles.profileAvatarFallback]} textStyle={styles.profileAvatarInitials} />
+            )}
+          </View>
           <View style={styles.profilePhotoAction}>
             <Ionicons name="create-outline" size={13} color="#ffffff" />
           </View>
         </TouchableOpacity>
-        <Text style={styles.profileName}>{displayName}</Text>
-        <Text style={styles.profileRole}>{titleCase(user.genderPreference || 'Lookmefy profile')}</Text>
-        <Text style={styles.profileBio}>{user.joinedAt ? `Member since ${formatDate(user.joinedAt)}.` : 'Your saved profile powers product previews and wardrobe try-ons.'}</Text>
-        <TouchableOpacity style={styles.profileEditButton} onPress={openProfileEditor}>
-          <Text style={styles.profileEditText}>Edit Profile</Text>
-        </TouchableOpacity>
+        <View style={styles.profileIdentityCopy}>
+          <Text style={styles.profileName}>{displayName}</Text>
+          {user.joinedAt ? <Text style={styles.profileBio}>Member since {formatDate(user.joinedAt)}</Text> : null}
+          <TouchableOpacity style={styles.profileEditButton} onPress={openProfileEditor} accessibilityRole="button">
+            <Text style={styles.profileEditText}>Edit Profile</Text>
+            <Ionicons name="arrow-forward" size={14} color="#211F1D" />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <View style={styles.profileCreditsCard}>
+      <View style={[styles.profileCreditsCard, Platform.OS === 'ios' && styles.iosGlassCard]}>
+        <IosGlassBackdrop />
         <View style={styles.profileCreditsHead}>
           <Text style={styles.profileCreditsLabel}>Remaining Credits</Text>
           <Ionicons name="sparkles" size={23} color="#9b5658" />
         </View>
         <View style={styles.profileCreditsAmountRow}>
-          <Text style={styles.profileCreditsAmount}>{user.devMode ? 'Unlimited' : remainingCredits}</Text>
-          <Text style={styles.profileCreditsTotal}>{user.devMode ? '' : creditTotal ? ` / ${creditTotal}` : ' available'}</Text>
+          <Text style={styles.profileCreditsAmount}>{remainingCredits === null ? 'Unavailable' : remainingCredits}</Text>
+          <Text style={styles.profileCreditsTotal}>{remainingCredits === null || user.devMode ? '' : creditTotal ? ` / ${creditTotal}` : ' available'}</Text>
         </View>
-        {!user.devMode ? (
+        {!user.devMode && creditTotal ? (
           <View style={styles.profileCreditTrack}>
             <View style={[styles.profileCreditFill, { width: creditProgress }]} />
           </View>
@@ -8940,20 +9899,15 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
               </TouchableOpacity>
             ) : null}
           </View>
-          <View style={styles.profileCreditHistoryHeaderRow}>
-            <Text style={[styles.profileCreditColumnLabel, styles.profileCreditActionColumn]}>Action</Text>
-            <Text style={[styles.profileCreditColumnLabel, styles.profileCreditProductColumn]}>Product</Text>
-            <Text style={[styles.profileCreditColumnLabel, styles.profileCreditDateColumn]}>Date</Text>
-            <Text style={[styles.profileCreditColumnLabel, styles.profileCreditTokenColumn]}>Tokens</Text>
-          </View>
           {creditHistory.error ? <Text style={[styles.profileCreditEmptyText, styles.errorText]}>{creditHistory.error}</Text> : null}
           {creditHistory.loading ? <CreditHistorySkeleton /> : null}
           {!creditHistory.loading && !creditHistory.error && visibleCreditEvents.length ? visibleCreditEvents.map((event) => (
             <View key={event.id} style={styles.profileCreditHistoryRow}>
-              <Text style={[styles.profileCreditCell, styles.profileCreditActionColumn]} numberOfLines={1}>{event.action || 'Try-on'}</Text>
-              <Text style={[styles.profileCreditCell, styles.profileCreditProductColumn]} numberOfLines={1}>{creditHistoryProductLabel(event)}</Text>
-              <Text style={[styles.profileCreditCell, styles.profileCreditDateColumn]} numberOfLines={1}>{formatDate(event.createdAt)}</Text>
-              <Text style={[styles.profileCreditCell, styles.profileCreditTokenColumn, event.direction === 'credit' ? styles.profileCreditAddedText : styles.profileCreditTokenText]} numberOfLines={1}>{creditHistoryAmountLabel(event)}</Text>
+              <View style={styles.profileCreditEventCopy}>
+                <Text style={styles.profileCreditEventTitle} numberOfLines={2}>{event.action || 'Try-on'}</Text>
+                <Text style={styles.profileCreditEventMeta}>{creditHistoryProductLabel(event)} · {formatDate(event.createdAt)}</Text>
+              </View>
+              <Text style={[styles.profileCreditCell, event.direction === 'credit' ? styles.profileCreditAddedText : styles.profileCreditTokenText]}>{creditHistoryAmountLabel(event)}</Text>
             </View>
           )) : null}
           {!creditHistory.loading && !creditHistory.error && !creditHistoryExpanded && hiddenCreditEvents ? (
@@ -9012,7 +9966,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
       </View>
 
       <View style={styles.profileQuickOptions}>
-        <TouchableOpacity style={styles.profileQuickCard} activeOpacity={0.86} onPress={() => onNavigate('orders')}>
+        <TouchableOpacity style={[styles.profileQuickCard, Platform.OS === 'ios' && styles.iosGlassCard]} activeOpacity={0.86} onPress={() => onNavigate('orders')}>
+          <IosGlassBackdrop />
           <View style={styles.profileQuickIcon}>
             <Ionicons name="receipt-outline" size={23} color="#9b5658" />
           </View>
@@ -9022,7 +9977,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
           </View>
           <Ionicons name="chevron-forward" size={20} color="#77716f" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.profileQuickCard} activeOpacity={0.86} onPress={() => onNavigate('wishlist')}>
+        <TouchableOpacity style={[styles.profileQuickCard, Platform.OS === 'ios' && styles.iosGlassCard]} activeOpacity={0.86} onPress={() => onNavigate('wishlist')}>
+          <IosGlassBackdrop />
           <View style={styles.profileQuickIcon}>
             <Ionicons name="heart-outline" size={23} color="#9b5658" />
           </View>
@@ -9032,7 +9988,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
           </View>
           <Ionicons name="chevron-forward" size={20} color="#77716f" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.profileQuickCard} activeOpacity={0.86} onPress={() => onNavigate('collections')}>
+        <TouchableOpacity style={[styles.profileQuickCard, Platform.OS === 'ios' && styles.iosGlassCard]} activeOpacity={0.86} onPress={() => onNavigate('collections')}>
+          <IosGlassBackdrop />
           <View style={styles.profileQuickIcon}>
             <Ionicons name="albums-outline" size={23} color="#9b5658" />
           </View>
@@ -9045,14 +10002,15 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
       </View>
 
       <View style={styles.profileSection}>
-        <Text style={styles.profileSectionTitle}>Payment Methods</Text>
-        <TouchableOpacity style={styles.profilePaymentCard} onPress={() => onNavigate('tokens')}>
-          <View style={styles.profileVisaBadge}>
-            <Text style={styles.profileVisaText}>PAY</Text>
+        <Text style={styles.profileSectionTitle}>Credits & Subscription</Text>
+        <TouchableOpacity style={[styles.profilePaymentCard, Platform.OS === 'ios' && styles.iosGlassCard]} onPress={() => onNavigate('tokens')}>
+          <IosGlassBackdrop />
+          <View style={styles.profilePaymentIcon}>
+            <Ionicons name="diamond-outline" size={21} color="#211F1D" />
           </View>
           <View style={styles.profilePaymentCopy}>
-            <Text style={styles.profilePaymentTitle}>Razorpay checkout</Text>
-            <Text style={styles.profilePaymentSub}>{user.subscription?.status === 'active' ? 'Monthly mandate active' : 'Add credits when needed'}</Text>
+            <Text style={styles.profilePaymentTitle}>Manage credits & plan</Text>
+            <Text style={styles.profilePaymentSub}>{user.subscription?.status === 'active' ? 'Subscription active' : 'View credits and plans'}</Text>
           </View>
           <Ionicons name="chevron-forward" size={22} color="#55514f" />
         </TouchableOpacity>
@@ -9061,23 +10019,24 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
       <ProfileSettingsSection
         title="Account Settings"
         rows={[
-          { label: 'Username', value: username ? `@${username}` : 'Not added' },
-          { label: 'Mobile Number', value: user.phone || 'Not added' },
-          { label: 'Email Address', value: displayEmail || 'Not added' },
-          { label: 'Change Password', value: 'OTP verification', onPress: openPasswordSheet }
+          { label: 'Username', icon: 'at-outline', value: username ? `@${username}` : 'Not added' },
+          { label: 'Gender Preference', icon: 'person-outline', value: user.genderPreference ? titleCase(user.genderPreference) : 'Not added' },
+          { label: 'Mobile Number', icon: 'call-outline', value: user.phone || 'Not added' },
+          { label: 'Email Address', icon: 'mail-outline', value: displayEmail || 'Not added' },
+          { label: 'Change Password', icon: 'lock-closed-outline', value: 'OTP verification', onPress: openPasswordSheet }
         ]}
       />
 
       <ProfileSettingsSection
         title="Security & Legal"
         rows={[
-          { label: 'Support Center', onPress: () => onNavigate('info', { page: 'support' }) },
-          { label: 'Return and Refund Policy', onPress: () => onNavigate('info', { page: 'returns' }) },
-          { label: 'Cancellation Policy', onPress: () => onNavigate('info', { page: 'cancellation' }) },
-          { label: 'Account & Data Deletion', onPress: () => onNavigate('info', { page: 'deletion' }) },
-          { label: 'Data & Privacy', onPress: () => onNavigate('info', { page: 'privacy' }) },
-          { label: 'Terms of Service', onPress: () => onNavigate('info', { page: 'terms' }) },
-          { label: 'Privacy Policy', onPress: () => onNavigate('info', { page: 'privacy' }) }
+          { label: 'Support Center', icon: 'help-circle-outline', onPress: () => onNavigate('info', { page: 'support' }) },
+          { label: 'Return and Refund Policy', icon: 'return-down-back-outline', onPress: () => onNavigate('info', { page: 'returns' }) },
+          { label: 'Cancellation Policy', icon: 'close-circle-outline', onPress: () => onNavigate('info', { page: 'cancellation' }) },
+          { label: 'Account & Data Deletion', icon: 'document-text-outline', onPress: () => onNavigate('info', { page: 'deletion' }) },
+          { label: 'Data & Privacy', icon: 'shield-checkmark-outline', onPress: () => onNavigate('info', { page: 'privacy' }) },
+          { label: 'Terms of Service', icon: 'reader-outline', onPress: () => onNavigate('info', { page: 'terms' }) },
+          { label: 'Privacy Policy', icon: 'eye-outline', onPress: () => onNavigate('info', { page: 'privacy' }) }
         ]}
       />
 
@@ -9091,14 +10050,15 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
           <Pressable style={styles.profileEditBackdrop} onPress={closeDeleteSheet} />
           <View style={[styles.profileEditSheet, styles.profileDeleteSheet]}>
+            <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled">
             <View style={styles.profileEditHandle} />
             <View style={styles.profileEditHead}>
-              <View>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={styles.profileDangerEyebrow}>Danger Zone</Text>
-                <Text style={styles.profileEditSheetTitle}>Delete your account?</Text>
-                <Text style={styles.profileEditSheetSub}>This permanently removes your Lookmefy account and associated account data. This action cannot be undone.</Text>
+                <Text accessibilityRole="header" style={styles.profileEditSheetTitle}>{deleteStep === 'pending' ? 'Deletion pending' : 'Delete your account?'}</Text>
+                <Text style={styles.profileEditSheetSub}>Request deletion of your account and associated data. We will only show completion after the server confirms it. Some records may be retained as explained in the deletion policy.</Text>
               </View>
-              <TouchableOpacity style={styles.profileEditClose} disabled={accountDeleting} onPress={closeDeleteSheet}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close account deletion" style={[styles.profileEditClose, { minWidth: 44, minHeight: 44 }]} disabled={accountDeleting} onPress={closeDeleteSheet}>
                 <Ionicons name="close" size={21} color="#2b2321" />
               </TouchableOpacity>
             </View>
@@ -9112,6 +10072,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
               ))}
             </View>
             <Text style={styles.profileDeleteWarning}>Any remaining credits will be permanently lost.</Text>
+            <TouchableOpacity accessibilityRole="link" style={styles.releaseLegalAction} onPress={() => openLegalPolicy('deletion')}><Text style={styles.releaseReportText}>Read account-deletion information</Text></TouchableOpacity>
+            <TouchableOpacity accessibilityRole="button" style={styles.releaseLegalAction} onPress={() => openSupportEmail('Account deletion status')}><Text style={styles.releaseReportText}>Contact support about deletion</Text></TouchableOpacity>
 
             {deleteStep === 'confirm' ? (
               <>
@@ -9120,6 +10082,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
                   style={styles.profileEditInput}
                   value={deleteConfirmation}
                   onChangeText={setDeleteConfirmation}
+                  accessibilityLabel="Type DELETE to confirm account deletion"
                   placeholder="DELETE"
                   placeholderTextColor="#9a918d"
                   autoCapitalize="characters"
@@ -9130,96 +10093,29 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
               </>
             ) : null}
 
-            {deleteMessage ? <Text style={[styles.profileEditMessage, /deleting/i.test(deleteMessage) ? null : styles.errorText]}>{deleteMessage}</Text> : null}
+            {deleteMessage ? <Text accessibilityLiveRegion="polite" style={[styles.profileEditMessage, accountDeleting || deleteStep === 'pending' ? null : styles.errorText]}>{deleteMessage}</Text> : null}
+            {deleteStep === 'pending' && deleteRequestId ? <Text selectable style={styles.profileEditMessage}>Request ID: {deleteRequestId}</Text> : null}
+            {deleteStep === 'pending' && deleteReceipt ? (
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Check account deletion status" accessibilityState={{ busy: accountDeleting }}
+                style={styles.releaseLegalAction} disabled={accountDeleting} onPress={checkDeletionStatus}>
+                <Text style={styles.releaseReportText}>Check deletion status</Text>
+              </TouchableOpacity>
+            ) : null}
 
+            </ScrollView>
             <View style={styles.profileEditActions}>
-              <TouchableOpacity style={styles.profileEditCancelButton} activeOpacity={0.84} disabled={accountDeleting} onPress={closeDeleteSheet}>
-                <Text style={styles.profileEditCancelText}>Cancel</Text>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={deleteStep === 'pending' ? 'Close deletion' : 'Cancel deletion'} style={styles.profileEditCancelButton} activeOpacity={0.84} disabled={accountDeleting} onPress={closeDeleteSheet}>
+                <Text style={styles.profileEditCancelText}>{deleteStep === 'pending' ? 'Close' : 'Cancel'}</Text>
               </TouchableOpacity>
               {deleteStep === 'review' ? (
-                <TouchableOpacity style={styles.profileEditSaveButton} activeOpacity={0.88} onPress={() => setDeleteStep('confirm')}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Continue deletion confirmation" style={styles.profileEditSaveButton} activeOpacity={0.88} onPress={() => setDeleteStep('confirm')}>
                   <Text style={styles.profileEditSaveText}>Continue</Text>
                 </TouchableOpacity>
-              ) : (
-                <TouchableOpacity style={[styles.profileDeleteFinalButton, !canDeleteAccount && styles.disabledButton]} activeOpacity={0.88} disabled={!canDeleteAccount} onPress={deleteAccount}>
+              ) : deleteStep === 'pending' ? null : (
+                <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled: !canDeleteAccount, busy: accountDeleting }} accessibilityLabel="Confirm account deletion" style={[styles.profileDeleteFinalButton, !canDeleteAccount && styles.disabledButton]} activeOpacity={0.88} disabled={!canDeleteAccount} onPress={deleteAccount}>
                   {accountDeleting ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={[styles.profileEditSaveText, styles.profileDeleteFinalText]} numberOfLines={2}>Permanently Delete Account</Text>}
                 </TouchableOpacity>
               )}
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-      <Modal visible={avatarAdjustVisible} transparent animationType="fade" onRequestClose={() => !avatarCropSaving && setAvatarAdjustVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
-          <Pressable style={styles.profileEditBackdrop} onPress={() => !avatarCropSaving && setAvatarAdjustVisible(false)} />
-          <View style={styles.profileEditSheet}>
-            <View style={styles.profileEditHandle} />
-            <View style={styles.profileEditHead}>
-              <View>
-                <Text style={styles.profileEditSheetTitle}>Adjust Profile Photo</Text>
-                <Text style={styles.profileEditSheetSub}>Move and zoom the image inside your profile circle.</Text>
-              </View>
-              <TouchableOpacity style={styles.profileEditClose} disabled={avatarCropSaving} onPress={() => setAvatarAdjustVisible(false)}>
-                <Ionicons name="close" size={21} color="#2b2321" />
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.avatarAdjustPreviewWrap}>
-              <View style={styles.avatarAdjustPreviewFrame}>
-                {photoSource ? (
-                  <ResilientImage
-                    source={photoSource}
-                    style={styles.avatarAdjustPreviewImage}
-                    imageStyle={avatarAdjustPreviewImageStyle}
-                    imageBaseStyle={avatarAdjustPreviewImageBaseStyle}
-                    resizeMode={avatarAdjustPreviewResizeMode}
-                    fallbackIcon="person-outline"
-                  />
-                ) : (
-                  <InitialsAvatar user={user} style={styles.avatarAdjustPreviewImage} textStyle={styles.profileAvatarInitials} />
-                )}
-              </View>
-            </View>
-
-            <View style={styles.avatarAdjustControls}>
-              <View style={styles.avatarAdjustRow}>
-                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ translateY: -avatarAdjustMoveStep })}>
-                  <Ionicons name="chevron-up" size={20} color="#2b2321" />
-                </TouchableOpacity>
-              </View>
-              <View style={styles.avatarAdjustRow}>
-                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ translateX: -avatarAdjustMoveStep })}>
-                  <Ionicons name="chevron-back" size={20} color="#2b2321" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ scale: -avatarAdjustZoomStep })}>
-                  <Ionicons name="remove" size={20} color="#2b2321" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ scale: avatarAdjustZoomStep })}>
-                  <Ionicons name="add" size={20} color="#2b2321" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ translateX: avatarAdjustMoveStep })}>
-                  <Ionicons name="chevron-forward" size={20} color="#2b2321" />
-                </TouchableOpacity>
-              </View>
-              <View style={styles.avatarAdjustRow}>
-                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={() => updateAvatarCropDraft({ translateY: avatarAdjustMoveStep })}>
-                  <Ionicons name="chevron-down" size={20} color="#2b2321" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.avatarAdjustIconButton} onPress={resetAvatarCropDraft}>
-                  <Ionicons name="refresh" size={18} color="#2b2321" />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {avatarAdjustMessage ? <Text style={[styles.profileEditMessage, /saving|saved/i.test(avatarAdjustMessage) ? null : styles.errorText]}>{avatarAdjustMessage}</Text> : null}
-
-            <View style={styles.profileEditActions}>
-              <TouchableOpacity style={styles.profileEditCancelButton} disabled={avatarCropSaving} onPress={replaceProfilePhotoFromAdjuster}>
-                <Text style={styles.profileEditCancelText}>Replace Photo</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.profileEditSaveButton, avatarCropSaving && styles.disabledButton]} disabled={avatarCropSaving} onPress={saveAvatarCrop}>
-                {avatarCropSaving ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileEditSaveText}>Save Position</Text>}
-              </TouchableOpacity>
             </View>
           </View>
         </KeyboardAvoidingView>
@@ -9387,12 +10283,13 @@ function ProfileSettingsSection({ title, rows }) {
           const item = Array.isArray(row) ? { label: row[0], value: row[1], onPress: row[2] } : row;
           const actionable = typeof item.onPress === 'function';
           return (
-            <TouchableOpacity key={item.label} style={styles.profileSettingsRow} activeOpacity={actionable ? 0.8 : 1} disabled={!actionable} onPress={item.onPress}>
+            <TouchableOpacity key={item.label} style={styles.profileSettingsRow} activeOpacity={actionable ? 0.8 : 1} disabled={!actionable} onPress={item.onPress} accessibilityRole={actionable ? 'button' : 'text'}>
+              {item.icon ? <View style={styles.profileSettingsIcon}><Ionicons name={item.icon} size={19} color="#625C56" /></View> : null}
               <View style={styles.profileSettingsCopy}>
                 <Text style={styles.profileSettingsLabel}>{item.label}</Text>
                 {item.value ? <Text style={styles.profileSettingsValue}>{item.value}</Text> : null}
               </View>
-              {actionable ? <Ionicons name="chevron-forward" size={21} color="#55514f" /> : null}
+              {actionable ? <Ionicons name="chevron-forward" size={18} color="#625C56" /> : null}
             </TouchableOpacity>
           );
         })}
@@ -9445,6 +10342,7 @@ function InfoScreen({ page, user, onNavigate, onBack }) {
             <Text style={styles.policyUpdated}>Last updated: {policy.updated}</Text>
             <Text style={styles.description}>{policy.lead}</Text>
             <AppButton label="Email Support" icon="mail-outline" onPress={() => openSupportEmail(emailSubject)} />
+            {['privacy', 'terms', 'deletion'].includes(page) ? <AppButton label="Open published policy" variant="secondary" onPress={() => openLegalPolicy(page)} /> : null}
           </View>
         </View>
 
@@ -9508,7 +10406,7 @@ function PolicyText({ text, emailSubject }) {
         <Text key={`${part}-${index}`}>
           {part}
           {index < parts.length - 1 ? (
-            <Text style={styles.policyEmail} onPress={() => openSupportEmail(emailSubject)}>{supportEmail}</Text>
+            <Text accessibilityRole="link" style={styles.policyEmail} onPress={() => openSupportEmail(emailSubject)}>{supportEmail}</Text>
           ) : null}
         </Text>
       ))}
@@ -9602,38 +10500,46 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
   const rawTarget = !intro && measuredMatchesRoute
     ? measuredTarget
     : (!intro && !waitingForMeasuredTarget && typeof active.target === 'function' ? active.target({ width, height }) : null);
-  const target = rawTarget ? {
-    x: clamp(rawTarget.x, 8, Math.max(8, width - 56)),
-    y: clamp(rawTarget.y, 28, Math.max(28, height - 80)),
-    width: clamp(rawTarget.width, 48, Math.max(48, width - 16)),
-    height: clamp(rawTarget.height, 48, Math.max(48, height - 56))
+  const focusedTarget = rawTarget && typeof active.focusTarget === 'function'
+    ? active.focusTarget(rawTarget, { width, height })
+    : rawTarget;
+  const modalSafeTop = Platform.OS === 'android' ? Math.max(12, NativeStatusBar.currentHeight || 0) : 12;
+  const modalSafeBottom = Platform.OS === 'ios' ? 28 : 16;
+  const measuredTargetOffsetY = Platform.OS === 'android' && measuredMatchesRoute
+    ? appTopInset
+    : 0;
+  const target = focusedTarget ? {
+    x: clamp(focusedTarget.x, 8, Math.max(8, width - 56)),
+    y: clamp(focusedTarget.y + measuredTargetOffsetY, modalSafeTop, Math.max(modalSafeTop, height - modalSafeBottom - 48)),
+    width: clamp(focusedTarget.width, 48, Math.max(48, width - 16)),
+    height: clamp(focusedTarget.height, 48, Math.max(48, height - modalSafeTop - modalSafeBottom))
   } : null;
   if (target) {
     target.width = Math.min(target.width, width - target.x - 8);
-    target.height = Math.min(target.height, height - target.y - 8);
+    target.height = Math.min(target.height, height - modalSafeBottom - target.y);
     if (target.height > height * 0.36) {
       const nextHeight = Math.max(96, Math.min(target.height, height * 0.3));
       target.y += (target.height - nextHeight) / 2;
       target.height = nextHeight;
     }
   }
-  const spotlightPadding = 8;
+  const spotlightPadding = 5;
   const spotlight = target ? {
     x: Math.max(8, target.x - spotlightPadding),
-    y: Math.max(28, target.y - spotlightPadding),
+    y: Math.max(modalSafeTop, target.y - spotlightPadding),
     width: Math.min(width - 16, target.width + spotlightPadding * 2),
-    height: Math.min(height - 36, target.height + spotlightPadding * 2)
+    height: Math.min(height - modalSafeTop - modalSafeBottom, target.height + spotlightPadding * 2)
   } : null;
   if (spotlight) {
     spotlight.width = Math.min(spotlight.width, width - spotlight.x - 8);
-    spotlight.height = Math.min(spotlight.height, height - spotlight.y - 8);
+    spotlight.height = Math.min(spotlight.height, height - modalSafeBottom - spotlight.y);
   }
   const shouldPlaceAbove = spotlight && (active.placement === 'above' || spotlight.y > height * 0.54);
   const measuredCardHeight = tourCardLayout.key === active.key ? tourCardLayout.height : 0;
-  const cardHeight = Math.max(measuredCardHeight, intro ? 286 : 372);
-  const cardGap = 18;
-  const cardSafeTop = 34;
-  const cardSafeBottom = bottomNavigationHeight + 18;
+  const cardHeight = Math.max(measuredCardHeight, intro ? 270 : 318);
+  const cardGap = 12;
+  const cardSafeTop = modalSafeTop + 8;
+  const cardSafeBottom = modalSafeBottom + 8;
   const maxCardTop = Math.max(cardSafeTop, height - cardSafeBottom - cardHeight);
   const aboveTop = spotlight ? spotlight.y - cardHeight - cardGap : undefined;
   const belowTop = spotlight ? spotlight.y + spotlight.height + cardGap : undefined;
@@ -9650,7 +10556,7 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
   const cardTop = spotlight
     ? clamp(preferredCardTop, cardSafeTop, maxCardTop)
     : undefined;
-  const cardWidth = Math.min(360, width - 40);
+  const cardWidth = Math.min(360, width - 32);
   const anchoredCardStyle = spotlight ? [styles.tourCardAnchored, { top: cardTop, left: (width - cardWidth) / 2, width: cardWidth }] : null;
   const handleTourCardLayout = useCallback((event) => {
     const nextHeight = event.nativeEvent.layout.height;
@@ -9670,6 +10576,10 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
             <View style={[styles.tourDimPiece, { left: 0, top: spotlight.y, width: spotlight.x, height: spotlight.height }]} />
             <View style={[styles.tourDimPiece, { left: spotlight.x + spotlight.width, right: 0, top: spotlight.y, height: spotlight.height }]} />
             <View style={[styles.tourDimPiece, { left: 0, right: 0, top: spotlight.y + spotlight.height, bottom: 0 }]} />
+            <View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerTopLeft, { left: spotlight.x, top: spotlight.y }]} />
+            <View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerTopRight, { left: spotlight.x + spotlight.width - 16, top: spotlight.y }]} />
+            <View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerBottomLeft, { left: spotlight.x, top: spotlight.y + spotlight.height - 16 }]} />
+            <View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerBottomRight, { left: spotlight.x + spotlight.width - 16, top: spotlight.y + spotlight.height - 16 }]} />
             <View pointerEvents="none" style={[styles.tourSpotlight, { left: spotlight.x, top: spotlight.y, width: spotlight.width, height: spotlight.height }]} />
           </>
         ) : <View style={styles.tourBackdrop} />}
@@ -9686,7 +10596,7 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
           {!intro ? (
             <View style={styles.tourHintRow}>
               <Ionicons name="scan-outline" size={16} color="#9b5658" />
-              <Text style={styles.tourHintText}>{waitingForMeasuredTarget ? 'Bringing this feature into view...' : 'The highlighted area is where this feature lives.'}</Text>
+              <Text style={styles.tourHintText}>{waitingForMeasuredTarget ? 'Bringing this feature into view...' : "You'll find this feature in the highlighted area."}</Text>
             </View>
           ) : null}
           <View style={styles.tourDots}>
@@ -9696,16 +10606,16 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
           </View>
           <View style={styles.tourActions}>
             {!intro ? (
-              <TouchableOpacity style={styles.tourSecondaryButton} activeOpacity={0.82} onPress={onBack}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Previous tour step" style={styles.tourSecondaryButton} activeOpacity={0.82} onPress={onBack}>
                 <Text style={styles.tourSecondaryText}>Back</Text>
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity style={[styles.tourPrimaryButton, intro && styles.tourPrimaryButtonFull]} activeOpacity={0.88} onPress={last ? onDone : onNext}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={last ? 'Finish onboarding tour' : 'Next tour step'} style={[styles.tourPrimaryButton, intro && styles.tourPrimaryButtonFull]} activeOpacity={0.88} onPress={last ? onDone : onNext}>
               <Text style={styles.tourPrimaryText}>{active.primary || 'Next'}</Text>
               {!last ? <Ionicons name="arrow-forward" size={18} color="#ffffff" /> : null}
             </TouchableOpacity>
           </View>
-          <TouchableOpacity style={styles.tourSkipButton} activeOpacity={0.75} onPress={onSkip}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Skip onboarding tour" style={styles.tourSkipButton} activeOpacity={0.75} onPress={onSkip}>
             <Text style={styles.tourSkipText}>Skip this tour</Text>
           </TouchableOpacity>
         </View>
@@ -9717,8 +10627,8 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
 function AuthPromptModal({ visible, message, onContinue, onClose }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.authPromptBackdrop} onPress={onClose}>
-        <Pressable style={styles.authPromptSheet} onPress={(event) => event.stopPropagation()}>
+      <Pressable accessible={false} style={styles.authPromptBackdrop} onPress={onClose}>
+        <Pressable accessible={false} accessibilityViewIsModal style={styles.authPromptSheet} onPress={(event) => event.stopPropagation()}>
           <BrandLogo
             compact
             style={styles.authPromptBrand}
@@ -9741,11 +10651,11 @@ function AuthPromptModal({ visible, message, onContinue, onClose }) {
               <Text style={styles.authPromptChipText}>Try-on</Text>
             </View>
           </View>
-          <TouchableOpacity style={styles.authPromptPrimary} activeOpacity={0.88} onPress={onContinue}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Continue to login" style={styles.authPromptPrimary} activeOpacity={0.88} onPress={onContinue}>
             <Text style={styles.authPromptPrimaryText}>Continue</Text>
             <Ionicons name="arrow-forward" size={19} color="#ffffff" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.authPromptSecondary} activeOpacity={0.75} onPress={onClose}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Dismiss sign-in prompt" style={styles.authPromptSecondary} activeOpacity={0.75} onPress={onClose}>
             <Text style={styles.authPromptSecondaryText}>Not now</Text>
           </TouchableOpacity>
         </Pressable>
@@ -9761,22 +10671,35 @@ function ImageLightbox({ uri, onClose }) {
         <TouchableOpacity style={styles.closeButton} onPress={onClose}>
           <Ionicons name="close" size={24} color="#fff" />
         </TouchableOpacity>
-        {uri ? <Image source={{ uri }} style={styles.lightboxImage} resizeMode="contain" /> : null}
+        {uri ? <ResilientImage source={{ uri }} style={styles.lightboxImage} resizeMode="contain" /> : null}
       </Pressable>
     </Modal>
   );
 }
 
-export default function App() {
+function LookmefyApp() {
+  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const responsiveLayout = useMemo(() => responsiveLayoutForWindow(width), [width]);
   const [fontsLoaded, fontLoadError] = useFonts(fontAssets);
   const [routeStack, setRouteStack] = useState([{ name: 'home', params: {} }]);
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
+  const [photoConsentNotice, setPhotoConsentNotice] = useState(null);
+  useEffect(() => {
+    photoConsentGate.setPresenter(setPhotoConsentNotice);
+    return () => photoConsentGate.setPresenter(null);
+  }, [token, user?.id, user?._id]);
   const [ready, setReady] = useState(false);
   const [wishlistProducts, setWishlistProducts] = useState([]);
   const [wishlistReady, setWishlistReady] = useState(false);
+  const [wishlistLoadError, setWishlistLoadError] = useState(false);
+  const [wishlistRefreshKey, setWishlistRefreshKey] = useState(0);
+  const [wishlistMutatingId, setWishlistMutatingId] = useState('');
+  const wishlistProductsRef = useRef([]);
+  const wishlistMutationRef = useRef(false);
+  const wishlistUserRef = useRef(null);
+  wishlistUserRef.current = user;
   const [collections, setCollections] = useState([]);
   const [collectionsReady, setCollectionsReady] = useState(false);
   const [authPrompt, setAuthPrompt] = useState(null);
@@ -9904,34 +10827,47 @@ export default function App() {
     }
     return false;
   }, [routeStack]);
+  const canGestureBack = Platform.OS === 'ios' && (routeStack.length > 1 || currentRoute.name !== 'home')
+    && !authPrompt && !onboardingVisible && !photoConsentNotice;
+  const backSwipeResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_, gesture) => shouldStartBackSwipe(gesture, canGestureBack),
+    onPanResponderRelease: (_, gesture) => {
+      if (shouldFinishBackSwipe(gesture)) goBack();
+    },
+    onPanResponderTerminationRequest: () => true
+  }), [canGestureBack, goBack]);
   useEffect(() => {
     let alive = true;
     if (!user) {
+      wishlistProductsRef.current = [];
       setWishlistProducts([]);
       setWishlistReady(false);
+      setWishlistLoadError(false);
       return undefined;
     }
     setWishlistReady(false);
+    setWishlistLoadError(false);
+    wishlistProductsRef.current = [];
+    setWishlistProducts([]);
     AsyncStorage.getItem(wishlistStorageKey(user))
       .then((raw) => {
         if (!alive) return;
         const parsed = raw ? JSON.parse(raw) : [];
         const products = Array.isArray(parsed) ? parsed.map((item) => normalizeProduct(item)).filter((item) => item?.id) : [];
+        wishlistProductsRef.current = products;
         setWishlistProducts(products);
         setWishlistReady(true);
       })
       .catch(() => {
-        if (alive) setWishlistReady(true);
+        if (alive) {
+          setWishlistLoadError(true);
+          setWishlistReady(true);
+        }
       });
     return () => {
       alive = false;
     };
-  }, [user?.id, user?.phone, user?.email]);
-
-  useEffect(() => {
-    if (!user || !wishlistReady) return;
-    AsyncStorage.setItem(wishlistStorageKey(user), JSON.stringify(wishlistProducts.slice(0, 100))).catch(() => {});
-  }, [user, user?.id, user?.phone, user?.email, wishlistProducts, wishlistReady]);
+  }, [user?.id, user?.phone, user?.email, wishlistRefreshKey]);
 
   useEffect(() => {
     let alive = true;
@@ -9972,17 +10908,44 @@ export default function App() {
     AsyncStorage.setItem(collectionStorageKey(user), JSON.stringify(collections.slice(0, 60))).catch(() => {});
   }, [collections, collectionsReady, user, user?.email, user?.id, user?.phone]);
 
-  const addToWishlist = useCallback((product) => {
+  const commitWishlistChange = useCallback(async (product, removeOnly = false) => {
     if (!product?.id) return;
     if (!user) {
       requestAuth('Log in with your mobile number to save products to your wishlist.');
       return;
     }
-    setWishlistProducts((current) => {
-      if (current.some((item) => String(item.id) === String(product.id))) return current.filter((item) => String(item.id) !== String(product.id));
-      return [{ ...normalizeProduct(product), wishlistAddedAt: new Date().toISOString() }, ...current].slice(0, 100);
-    });
-  }, [requestAuth, user]);
+    if (!wishlistReady || wishlistLoadError) {
+      Alert.alert('Wishlist unavailable', 'Your saved items could not be loaded. Please try again.');
+      return;
+    }
+    if (wishlistMutationRef.current) return;
+    const ownerKey = wishlistStorageKey(user);
+    const current = wishlistProductsRef.current;
+    const alreadySaved = current.some((item) => String(item.id) === String(product.id));
+    const next = removeOnly || alreadySaved
+      ? removeWishlistProduct(current, product.id)
+      : [{ ...normalizeProduct(product), wishlistAddedAt: new Date().toISOString() }, ...current].slice(0, 100);
+    if (next.length === current.length && (removeOnly || alreadySaved)) return;
+    wishlistMutationRef.current = true;
+    setWishlistMutatingId(String(product.id));
+    try {
+      await persistWishlistProducts(AsyncStorage, ownerKey, next);
+      if (wishlistUserRef.current && wishlistStorageKey(wishlistUserRef.current) === ownerKey) {
+        wishlistProductsRef.current = next;
+        setWishlistProducts(next);
+      }
+    } catch {
+      if (wishlistUserRef.current && wishlistStorageKey(wishlistUserRef.current) === ownerKey) {
+        Alert.alert('Could not update wishlist', 'Your saved items are unchanged. Please try again.');
+      }
+    } finally {
+      wishlistMutationRef.current = false;
+      setWishlistMutatingId('');
+    }
+  }, [requestAuth, user, wishlistReady, wishlistLoadError]);
+
+  const addToWishlist = useCallback((product) => commitWishlistChange(product), [commitWishlistChange]);
+  const removeFromWishlist = useCallback((product) => commitWishlistChange(product, true), [commitWishlistChange]);
 
   const createCollection = useCallback(({ name, productIds }) => {
     const cleanName = String(name || '').trim();
@@ -10157,9 +11120,14 @@ export default function App() {
     setOnboardingVisible(false);
     setOnboardingStep(0);
     try {
-      const writes = [AsyncStorage.removeItem(onboardingPendingStorageKey)];
-      if (user) writes.push(AsyncStorage.setItem(onboardingSeenStorageKey(user), '1'));
-      await Promise.all(writes);
+      if (!user) return;
+      const seenKey = onboardingSeenStorageKey(user);
+      // Persist completion first so a failed write still allows restart recovery.
+      await AsyncStorage.setItem(seenKey, '1');
+      const pending = await AsyncStorage.getItem(onboardingPendingStorageKey);
+      if (pending === '1' || pending === seenKey) {
+        await AsyncStorage.removeItem(onboardingPendingStorageKey);
+      }
     } catch {
       // A storage failure should not trap the user in the tour.
     }
@@ -10189,21 +11157,21 @@ export default function App() {
       case 'search':
         return <SearchScreen initial={routeParams} user={user} token={token} onNavigate={guardedNavigate} onBack={goBack} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'tryon':
-        return <CustomTryOnScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} refreshUser={refreshUser} />;
+        return <CustomTryOnScreen initial={routeParams} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} refreshUser={refreshUser} />;
       case 'closet':
         return <ClosetScreen initial={routeParams} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
       case 'custom':
-        return <CustomTryOnScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} refreshUser={refreshUser} />;
+        return <CustomTryOnScreen initial={routeParams} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} refreshUser={refreshUser} />;
       case 'stylebot':
         return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioActiveChatId={aiStudioActiveChatId} setAiStudioActiveChatId={setAiStudioActiveChatId} aiStudioChatHistory={aiStudioChatHistory} setAiStudioChatHistory={setAiStudioChatHistory} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
       case 'tokens':
-        return <TokensScreen user={user} setUser={setUser} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} />;
+        return <TokensScreen user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} />;
       case 'profile':
         return <ProfileScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onLogout={logout} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
       case 'generation-history':
         return user ? <GenerationHistoryScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'wishlist':
-        return user ? <WishlistScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} token={token} wishlistProducts={wishlistProducts} user={user} onRemoveFromWishlist={addToWishlist} onCreateCollection={createCollection} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <WishlistScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} token={token} wishlistProducts={wishlistProducts} wishlistReady={wishlistReady} wishlistLoadError={wishlistLoadError} wishlistMutatingId={wishlistMutatingId} onRetryWishlist={() => setWishlistRefreshKey((current) => current + 1)} user={user} onRemoveFromWishlist={removeFromWishlist} onCreateCollection={createCollection} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'collections':
         return user ? <CollectionsScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} user={user} collections={collections} wishlistProducts={wishlistProducts} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
       case 'orders':
@@ -10211,9 +11179,9 @@ export default function App() {
       case 'product':
         return routeParams.id ? <ProductScreen id={routeParams.id} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={scrollPositionsRef.current[currentRouteKey] || 0} onScrollPositionChange={rememberCurrentScrollY} />;
       case 'signup':
-        return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} onAuthenticated={() => replaceRoute('home')} />;
       case 'login':
-        return <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} onAuthenticated={() => replaceRoute('home')} />;
       case 'how':
         return <HowItWorksScreen user={user} onNavigate={navigate} />;
       case 'info':
@@ -10221,7 +11189,7 @@ export default function App() {
       default:
         return <InfoScreen page="missing" user={user} onNavigate={navigate} onBack={routeStack.length > 1 ? goBack : null} />;
     }
-  }, [currentRoute.name, routeParamsKey, currentRouteKey, user, token, navigate, guardedNavigate, requestAuth, requireFreshLogin, addToWishlist, createCollection, collections, wishlistIds, wishlistProducts, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioActiveChatId, aiStudioChatHistory, aiStudioTryOns, aiStudioTryOnErrors, refreshUser, routeStack.length, goBack, rememberCurrentScrollY]);
+  }, [currentRoute.name, routeParamsKey, currentRouteKey, user, token, navigate, replaceRoute, guardedNavigate, requestAuth, requireFreshLogin, addToWishlist, removeFromWishlist, createCollection, collections, wishlistIds, wishlistProducts, wishlistReady, wishlistLoadError, wishlistMutatingId, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioActiveChatId, aiStudioChatHistory, aiStudioTryOns, aiStudioTryOnErrors, refreshUser, routeStack.length, goBack, rememberCurrentScrollY]);
 
   if (!ready || (!fontsLoaded && !fontLoadError)) {
     return (
@@ -10253,18 +11221,36 @@ export default function App() {
   const collectionsRoute = currentRoute.name === 'collections';
   const ordersRoute = currentRoute.name === 'orders';
   const accountChildRoute = wishlistRoute || collectionsRoute || ordersRoute || generationHistoryRoute;
+  const showBottomNav = !(authOnlyRoute || searchRoute || closetAddRoute || aiStudioRoute || tokensRoute);
 
   return (
     <ResponsiveLayoutContext.Provider value={responsiveLayout}>
-    <SafeAreaView style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe]}>
+    <PrivateMediaSessionContext.Provider key={String(user?.id || user?._id || 'guest')} value={user ? token || '' : ''}>
+    <ContentReportingContext.Provider value={String(user?.id || user?._id || '')}>
+    <InsetSafeAreaView edges={showBottomNav ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']} style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe, Platform.OS === 'ios' && !welcomeRoute && styles.iosGlassRoot]} {...backSwipeResponder.panHandlers} onAccessibilityEscape={goBack}>
+      {Platform.OS === 'ios' && !welcomeRoute ? <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+        <View style={styles.iosGlassGlowTop} />
+        <View style={styles.iosGlassGlowBottom} />
+      </View> : null}
       <StatusBar style={welcomeRoute ? 'light' : 'dark'} />
+      <PhotoConsentModal
+        notice={photoConsentNotice}
+        onAllow={() => photoConsentGate.respond(true)}
+        onCancel={() => photoConsentGate.respond(false)}
+        onPrivacy={() => { photoConsentGate.respond(false); openLegalPolicy('privacy'); }}
+      />
       {authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={!tryOnRoute} />}
-      <View style={[styles.content, responsiveLayout.contentFrameStyle]}>
+      <View style={[styles.content, Platform.OS === 'ios' && styles.iosGlassTransparent, responsiveLayout.contentFrameStyle]}>
         <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
           {screen}
         </ScreenErrorBoundary>
       </View>
-      {authOnlyRoute || searchRoute || closetAddRoute || aiStudioRoute || tokensRoute ? null : <View style={styles.bottomNavFrame}><BottomNav route={currentRoute} onNavigate={guardedNavigate} /></View>}
+      {showBottomNav ? <View style={[styles.bottomNavFrame, { bottom: Platform.OS === 'ios' ? Math.max(insets.bottom - 10, 10) : Math.max(insets.bottom, 10) }]}>
+        <View style={styles.bottomNavGlass}>
+          <BlurView pointerEvents="none" intensity={42} tint="systemUltraThinMaterialLight" style={StyleSheet.absoluteFillObject} />
+          <BottomNav route={currentRoute} onNavigate={guardedNavigate} />
+        </View>
+      </View> : null}
       <AuthPromptModal
         visible={Boolean(authPrompt)}
         message={authPrompt?.message}
@@ -10284,15 +11270,68 @@ export default function App() {
         onSkip={completeOnboarding}
         onDone={completeOnboarding}
       />
-    </SafeAreaView>
+    </InsetSafeAreaView>
+    </ContentReportingContext.Provider>
+    </PrivateMediaSessionContext.Provider>
     </ResponsiveLayoutContext.Provider>
   );
 }
 
+export default function App() {
+  return <SafeAreaProvider><LookmefyApp /></SafeAreaProvider>;
+}
+
 const styles = StyleSheet.create({
+  releaseConsentOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, backgroundColor: 'rgba(20,16,14,0.48)' },
+  releaseConsentCard: { width: '100%', maxWidth: 520, maxHeight: '90%', borderRadius: 12, backgroundColor: '#fffdfb', overflow: 'hidden' },
+  releaseConsentBody: { padding: 20, gap: 12 },
+  releaseConsentTitle: { ...typography.h3, fontSize: 21, lineHeight: 28, color: '#2b2321' },
+  releaseConsentCopy: { ...typography.body, fontSize: 14, lineHeight: 21, color: '#5f5853' },
+  releaseConsentActions: { paddingHorizontal: 20, paddingBottom: 20, gap: 10 },
+  releaseConsentButton: { minHeight: 48, paddingVertical: 12 },
+  releaseReportAction: { minHeight: 44, paddingVertical: 10, paddingHorizontal: 4, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  releaseReportText: { ...typography.caption, color: '#8c4d50', fontSize: 13, lineHeight: 19, flexShrink: 1 },
+  releaseLegalAction: { minHeight: 44, justifyContent: 'center' },
   safe: {
     flex: 1,
     backgroundColor: '#f8fafc'
+  },
+  iosGlassRoot: {
+    backgroundColor: '#f7f3eb'
+  },
+  iosGlassTransparent: {
+    backgroundColor: 'transparent'
+  },
+  iosGlassGlowTop: {
+    position: 'absolute',
+    top: 110,
+    right: -85,
+    width: 270,
+    height: 270,
+    borderRadius: 135,
+    backgroundColor: 'rgba(207, 187, 150, 0.18)'
+  },
+  iosGlassGlowBottom: {
+    position: 'absolute',
+    bottom: 115,
+    left: -90,
+    width: 290,
+    height: 290,
+    borderRadius: 145,
+    backgroundColor: 'rgba(215, 195, 160, 0.2)'
+  },
+  iosGlassBackdrop: {
+    borderRadius: 18,
+    overflow: 'hidden'
+  },
+  iosGlassCard: {
+    borderColor: 'rgba(255, 255, 255, 0.78)',
+    borderWidth: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
+    shadowColor: '#6b5651',
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 }
   },
   authEntrySafe: {
     backgroundColor: '#111111'
@@ -10372,57 +11411,40 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 5,
     paddingBottom: 6,
-    backgroundColor: '#fbf7f6',
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.36)' : '#fbf7f6',
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'flex-start',
     gap: 10
-  },
-  pageBackButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#ece5e1',
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#1f1714',
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 8
   },
   categorySearchDock: {
     flex: 1,
     minWidth: 0
   },
   categorySearchBox: {
-    minHeight: 46,
-    borderRadius: 0,
-    borderWidth: 0,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e6ddd9',
-    backgroundColor: '#ffffff',
-    paddingLeft: 14,
-    paddingRight: 0,
+    minHeight: 44,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: '#e8e1da',
+    backgroundColor: '#fffdfb',
+    paddingLeft: 10,
+    paddingRight: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
-    shadowColor: '#1f1714',
-    shadowOpacity: 0,
-    shadowRadius: 0,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 0
+    gap: 6
+  },
+  categorySearchBoxFocused: {
+    borderColor: '#b9ada5',
+    backgroundColor: '#ffffff'
   },
   categorySearchInput: {
     ...typography.body,
     flex: 1,
-    minHeight: 46,
+    minHeight: 42,
     paddingVertical: 0,
-    color: '#1f1b1a',
+    color: '#211f1d',
     fontSize: 14,
-    lineHeight: 17,
+    lineHeight: 19,
     fontWeight: '500'
   },
   categorySearchIconButton: {
@@ -10434,9 +11456,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f7f0ed'
   },
   categorySearchSubmit: {
-    width: 46,
-    height: 46,
-    borderRadius: 0,
+    width: 38,
+    height: 36,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#111111'
@@ -10499,33 +11521,36 @@ const styles = StyleSheet.create({
   },
   appHeader: {
     minHeight: Platform.OS === 'android' ? appTopInset + 58 : 60,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingTop: Platform.OS === 'android' ? appTopInset + 10 : 8,
     paddingBottom: 8,
-    backgroundColor: '#fbf7f6',
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.36)' : '#faf8f5',
     borderBottomWidth: 1,
-    borderBottomColor: '#ece5e1',
+    borderBottomColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.78)' : '#ece5e1',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between'
   },
   appHeaderCompact: {
-    minHeight: Platform.OS === 'android' ? (NativeStatusBar.currentHeight || 24) + 42 : 52,
+    minHeight: Platform.OS === 'android' ? (NativeStatusBar.currentHeight || 24) + 46 : 56,
     paddingTop: Platform.OS === 'android' ? Math.max(8, (NativeStatusBar.currentHeight || 24) - 10) : 6,
-    paddingBottom: 4,
+    paddingBottom: 6,
     zIndex: 10
   },
+  appHeaderNarrow: {
+    paddingHorizontal: 10
+  },
   appHeaderAction: {
-    width: 34,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center'
   },
   appHeaderCreditAction: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     paddingHorizontal: 0,
     flexDirection: 'row',
     backgroundColor: '#fff3df',
@@ -10542,10 +11567,11 @@ const styles = StyleSheet.create({
     maxWidth: 27
   },
   appHeaderSide: {
-    width: 178,
-    minHeight: 38,
+    width: 'auto',
+    minHeight: 40,
     flexDirection: 'row',
-    alignItems: 'center'
+    alignItems: 'center',
+    gap: 2
   },
   appHeaderLeftSide: {
     justifyContent: 'flex-start'
@@ -10553,14 +11579,33 @@ const styles = StyleSheet.create({
   appHeaderRightSide: {
     justifyContent: 'flex-end'
   },
+  appHeaderRightSideNarrow: {
+    gap: 0
+  },
   appHeaderBrandWrap: {
-    minHeight: 42,
+    minHeight: 44,
     justifyContent: 'center',
     alignItems: 'center',
     flex: 1
   },
   appHeaderBrandWrapLeft: {
     alignItems: 'flex-start'
+  },
+  appHeaderBrandWrapNarrow: {
+    flex: 0,
+    width: 38
+  },
+  appHeaderNarrowLogo: {
+    width: 30,
+    height: 30
+  },
+  aiStudioHeaderBrandLogo: {
+    maxWidth: 118,
+    gap: 4
+  },
+  aiStudioHeaderBrandText: {
+    fontSize: 18,
+    lineHeight: 22
   },
   appHeaderBrand: {
     ...typography.h3,
@@ -10615,9 +11660,11 @@ const styles = StyleSheet.create({
     color: '#ffffff'
   },
   appHeaderAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e4ddd8'
   },
   appHeaderAvatarInitials: {
     fontSize: 12,
@@ -10680,18 +11727,24 @@ const styles = StyleSheet.create({
     lineHeight: 16
   },
   bottomNavFrame: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     zIndex: 40,
-    width: '100%',
     alignItems: 'center',
-    backgroundColor: 'transparent',
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 18 : 12,
+    paddingHorizontal: 12,
+    backgroundColor: 'transparent'
+  },
+  bottomNavGlass: {
+    width: '100%',
+    maxWidth: 560,
+    borderRadius: 25,
+    overflow: 'hidden',
     shadowColor: '#1f1714',
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.14,
     shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 12
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 9
   },
   bottomNav: {
     width: '100%',
@@ -10699,13 +11752,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    minHeight: 68,
-    borderRadius: 34,
+    minHeight: 66,
+    borderRadius: 25,
     borderWidth: 1,
-    borderColor: '#dedede',
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.96)'
+    borderColor: 'rgba(255, 255, 255, 0.7)',
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)'
+  },
+  bottomNavCompact: {
+    paddingHorizontal: 4
   },
   bottomNavTablet: {
     paddingHorizontal: 18
@@ -10715,30 +11771,35 @@ const styles = StyleSheet.create({
     minWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    minHeight: 52
+    gap: 3,
+    minHeight: 50
   },
   navIconWrap: {
-    width: 34,
-    height: 30,
-    borderRadius: 15,
+    width: 38,
+    height: 29,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent'
   },
   navIconWrapCenter: {
-    width: 34,
-    height: 30,
-    borderRadius: 15,
-    borderWidth: 0,
-    backgroundColor: '#f2f2f2'
+    width: 38,
+    height: 29,
+    borderRadius: 12,
+    backgroundColor: 'transparent'
   },
   navText: {
     ...typography.nav,
-    fontSize: 10,
-    lineHeight: 12,
-    color: '#4d4a48',
-    fontWeight: '700'
+    fontSize: 10.5,
+    lineHeight: 13,
+    width: '100%',
+    textAlign: 'center',
+    color: '#66605c',
+    fontWeight: '600'
+  },
+  navTextCompact: {
+    fontSize: 9,
+    lineHeight: 11
   },
   navTextActive: {
     color: '#050505',
@@ -10746,10 +11807,10 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
   navActiveUnderline: {
-    width: 18,
+    width: 16,
     height: 2,
     borderRadius: 1,
-    marginTop: 1,
+    marginTop: 0,
     backgroundColor: 'transparent'
   },
   navActiveUnderlineVisible: {
@@ -10757,19 +11818,396 @@ const styles = StyleSheet.create({
   },
   homeScreen: {
     flex: 1,
-    backgroundColor: '#ffffff'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   homeScroll: {
     flex: 1,
-    backgroundColor: '#ffffff'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   homeContent: {
     paddingTop: 0,
     paddingBottom: bottomNavigationHeight + screenBottomInset + 52,
-    backgroundColor: '#ffffff'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   homeContentTablet: {
     paddingBottom: screenBottomInset + 12
+  },
+  homeStudioHero: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    height: 228,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#21170f',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.16)',
+    position: 'relative'
+  },
+  homeStudioHeroCompact: {
+    marginHorizontal: 16,
+    height: 220
+  },
+  homeStudioHeroImage: {
+    position: 'absolute',
+    left: -16,
+    top: 0,
+    width: '116%',
+    height: '100%'
+  },
+  homeStudioHeroImageTablet: {
+    left: 0,
+    width: '100%'
+  },
+  homeStudioHeroTextScrim: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: '67%',
+    backgroundColor: 'rgba(17, 10, 7, 0.2)'
+  },
+  homeStudioHeroCopy: {
+    width: '72%',
+    height: '100%',
+    justifyContent: 'center',
+    paddingLeft: 18,
+    paddingRight: 4,
+    zIndex: 2
+  },
+  homeStudioHeroCopyCompact: {
+    paddingLeft: 16
+  },
+  homeStudioHeroCopyTablet: {
+    width: '50%',
+    paddingLeft: 26
+  },
+  homeStudioKicker: {
+    ...typography.label,
+    color: '#fffaf5',
+    fontSize: 9,
+    lineHeight: 14,
+    fontWeight: '600',
+    letterSpacing: 1.8
+  },
+  homeStudioKickerTablet: {
+    fontSize: 11,
+    lineHeight: 16,
+    letterSpacing: 2.2
+  },
+  homeStudioTitle: {
+    fontFamily: fontFamilies.hero,
+    marginTop: 7,
+    color: '#fffaf5',
+    fontSize: 29,
+    lineHeight: 34,
+    letterSpacing: 0
+  },
+  homeStudioTitleCompact: {
+    fontSize: 26,
+    lineHeight: 31
+  },
+  homeStudioTitleTablet: {
+    fontSize: 43,
+    lineHeight: 50
+  },
+  homeStudioText: {
+    ...typography.body,
+    marginTop: 9,
+    maxWidth: 160,
+    color: '#fffaf5',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '400'
+  },
+  homeStudioTextTablet: {
+    marginTop: 13,
+    maxWidth: 280,
+    fontSize: 16,
+    lineHeight: 23
+  },
+  homeStudioPrimaryButton: {
+    marginTop: 14,
+    width: 150,
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: '#fffaf6',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10
+  },
+  homeStudioPrimaryButtonLargeText: {
+    width: 174
+  },
+  homeStudioPrimaryButtonTablet: {
+    marginTop: 20,
+    width: 220,
+    minHeight: 54
+  },
+  homeStudioPrimaryText: {
+    fontFamily: fontFamilies.bodyBold,
+    color: '#15100d',
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: '600',
+    letterSpacing: 0
+  },
+  homeStudioPrimaryTextTablet: {
+    fontSize: 16,
+    lineHeight: 22
+  },
+  homeStudioPanel: {
+    marginTop: 22,
+    paddingHorizontal: 20
+  },
+  homeStyleStudioPanel: {
+    marginTop: 18
+  },
+  homeStudioSectionHead: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12
+  },
+  homeStudioSectionCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  homeStudioSectionTitle: {
+    fontFamily: fontFamilies.bodyBold,
+    color: '#211f1d',
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '800',
+    letterSpacing: 0
+  },
+  homeStudioSectionSubtitle: {
+    ...typography.caption,
+    marginTop: 2,
+    color: '#77716c',
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: '500',
+    letterSpacing: 0
+  },
+  homeStudioSeeAll: {
+    minHeight: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3
+  },
+  homeStudioSeeAllText: {
+    ...typography.caption,
+    color: '#111111',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    letterSpacing: 0
+  },
+  homeStudioActionGrid: {
+    marginTop: 10,
+    flexDirection: 'row',
+    gap: 10
+  },
+  homeStudioActionGridNarrow: {
+    flexDirection: 'column'
+  },
+  homeStudioActionTile: {
+    flex: 1,
+    minHeight: 122,
+    borderRadius: 12,
+    borderWidth: 0,
+    backgroundColor: '#f1ece6',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingTop: 13,
+    paddingBottom: 12
+  },
+  homeStudioActionTileNarrow: {
+    minHeight: 72,
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10
+  },
+  homeStudioActionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#faf8f5',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  homeStudioActionIconNarrow: {
+    flexShrink: 0
+  },
+  homeStudioActionCopyNarrow: {
+    flex: 1,
+    minWidth: 0,
+    marginLeft: 12
+  },
+  homeStudioActionTitle: {
+    fontFamily: fontFamilies.bodyBold,
+    marginTop: 8,
+    minHeight: 32,
+    color: '#211f1d',
+    fontSize: 12.5,
+    lineHeight: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: 0
+  },
+  homeStudioActionTitleNarrow: {
+    minHeight: 0,
+    marginTop: 0,
+    textAlign: 'left',
+    fontSize: 13
+  },
+  homeStudioActionText: {
+    ...typography.caption,
+    marginTop: 4,
+    color: '#625d58',
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '500',
+    textAlign: 'center',
+    letterSpacing: 0
+  },
+  homeStudioActionTextNarrow: {
+    marginTop: 2,
+    textAlign: 'left'
+  },
+  homeStudioWardrobeBanner: {
+    marginTop: 16,
+    marginHorizontal: 20,
+    minHeight: 126,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e8e1da',
+    backgroundColor: '#f1ebe4',
+    flexDirection: 'row'
+  },
+  homeStudioWardrobeBannerCopy: {
+    flex: 0,
+    width: '62%',
+    minWidth: 0,
+    paddingLeft: 16,
+    paddingRight: 8,
+    paddingVertical: 13
+  },
+  homeStudioBannerTitle: {
+    fontFamily: fontFamilies.bodyBold,
+    color: '#211f1d',
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '800',
+    letterSpacing: 0
+  },
+  homeStudioBannerText: {
+    ...typography.caption,
+    marginTop: 5,
+    color: '#77716c',
+    fontSize: 11.5,
+    lineHeight: 15,
+    fontWeight: '500',
+    letterSpacing: 0
+  },
+  homeStudioBannerButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    minHeight: 34,
+    borderRadius: 9,
+    backgroundColor: '#050505',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 15
+  },
+  homeStudioBannerButtonText: {
+    fontFamily: fontFamilies.bodyBold,
+    color: '#ffffff',
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '700',
+    letterSpacing: 0
+  },
+  homeStudioBannerImage: {
+    flex: 1,
+    height: '100%',
+    alignSelf: 'stretch',
+    backgroundColor: '#eee5dc'
+  },
+  homeStudioSavedPreview: {
+    flex: 1,
+    minHeight: 126,
+    paddingRight: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end'
+  },
+  homeStudioSavedImage: {
+    width: 66,
+    height: 88,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#faf8f5',
+    backgroundColor: '#e8e1da'
+  },
+  homeStudioSavedImageOverlap: {
+    marginLeft: -38
+  },
+  homeStudioSavedPreviewFallback: {
+    flex: 1,
+    minHeight: 124,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  homeStudioLookRow: {
+    marginTop: 10,
+    gap: 12,
+    paddingRight: 4,
+    paddingBottom: 2
+  },
+  homeStudioLookCard: {
+    flexShrink: 0,
+    minWidth: 134
+  },
+  homeStudioLookCardCompact: {
+    minHeight: 134
+  },
+  homeStudioLookImageWrap: {
+    aspectRatio: 0.78,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#f6f2ed',
+    position: 'relative'
+  },
+  homeStudioLookImage: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#f6f2ed'
+  },
+  homeStudioLookTitle: {
+    fontFamily: fontFamilies.bodySemiBold,
+    marginTop: 7,
+    color: '#211f1d',
+    minHeight: 34,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '700',
+    letterSpacing: 0
+  },
+  homeStudioLookMeta: {
+    ...typography.caption,
+    marginTop: 2,
+    color: '#5d5752',
+    fontSize: 12.5,
+    lineHeight: 16,
+    fontWeight: '700',
+    letterSpacing: 0
   },
   homeEditorialHeader: {
     paddingHorizontal: 24,
@@ -11787,7 +13225,17 @@ const styles = StyleSheet.create({
     rowGap: 30
   },
   homeProductCard: {
-    width: '46.5%'
+    width: '46.5%',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e9e1db',
+    backgroundColor: '#fffdfb',
+    padding: 8,
+    shadowColor: '#2c211b',
+    shadowOpacity: 0.055,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2
   },
   homeProductCardRail: {
     width: 156,
@@ -11795,7 +13243,7 @@ const styles = StyleSheet.create({
   },
   homeProductImageWrap: {
     aspectRatio: productImageAspectRatio,
-    borderRadius: 8,
+    borderRadius: 11,
     overflow: 'hidden',
     backgroundColor: '#eee7e2',
     position: 'relative'
@@ -11825,9 +13273,9 @@ const styles = StyleSheet.create({
     top: 8,
     paddingHorizontal: 7,
     paddingVertical: 4,
-    borderRadius: 4,
+    borderRadius: 6,
     overflow: 'hidden',
-    backgroundColor: '#ffd21f',
+    backgroundColor: '#f8d964',
     color: '#2a211d',
     fontSize: 8,
     lineHeight: 10,
@@ -11836,24 +13284,25 @@ const styles = StyleSheet.create({
   },
   homeProductEyebrow: {
     ...typography.caption,
-    marginTop: 8,
-    color: '#a39b96',
-    fontSize: 9,
+    marginTop: 10,
+    color: '#8c7167',
+    fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0
   },
   homeProductTitle: {
     ...typography.productTitle,
-    marginTop: 3,
-    color: '#171717',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '500',
+    marginTop: 4,
+    minHeight: 36,
+    color: '#211b18',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
     letterSpacing: 0
   },
   homeProductPriceRow: {
-    marginTop: 3,
-    minHeight: 17,
+    marginTop: 7,
+    minHeight: 20,
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
@@ -11861,8 +13310,8 @@ const styles = StyleSheet.create({
   },
   homeProductPrice: {
     ...typography.price,
-    color: '#171717',
-    fontSize: 12,
+    color: '#211b18',
+    fontSize: 13,
     fontWeight: '700'
   },
   homeProductComparePrice: {
@@ -11875,15 +13324,15 @@ const styles = StyleSheet.create({
     letterSpacing: 0
   },
   homeProductActionRow: {
-    marginTop: 8,
-    minHeight: 70,
-    gap: 7
+    marginTop: 11,
+    minHeight: 86,
+    gap: 6
   },
   homeProductTryOnButton: {
     width: '100%',
-    height: 32,
-    borderRadius: 7,
-    backgroundColor: '#050505',
+    minHeight: 40,
+    borderRadius: 10,
+    backgroundColor: '#211b18',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -11891,8 +13340,8 @@ const styles = StyleSheet.create({
   },
   homeProductVideoButton: {
     width: '100%',
-    height: 32,
-    borderRadius: 7,
+    minHeight: 40,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#d8d1cc',
     backgroundColor: '#fffdfb',
@@ -12016,7 +13465,7 @@ const styles = StyleSheet.create({
     height: '100%'
   },
   homeCommerceSection: {
-    marginTop: 34
+    marginTop: 38
   },
   homeCommerceHead: {
     paddingHorizontal: 22,
@@ -12029,37 +13478,37 @@ const styles = StyleSheet.create({
     minWidth: 0
   },
   homeCommerceTitle: {
-    ...typography.h2,
-    color: '#1f1b19',
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '600',
+    fontFamily: fontFamilies.logo,
+    color: '#211b18',
+    fontSize: 27,
+    lineHeight: 33,
+    fontWeight: '400',
     letterSpacing: 0
   },
   homeCommerceSubtitle: {
     ...typography.label,
-    marginTop: 3,
-    color: '#9d928c',
+    marginTop: 4,
+    color: '#8d7168',
     fontSize: 10,
-    lineHeight: 13,
+    lineHeight: 14,
     fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0
+    letterSpacing: 1
   },
   homeCommerceTrack: {
-    paddingTop: 20,
-    paddingHorizontal: 22,
+    paddingTop: 18,
+    paddingHorizontal: 18,
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    rowGap: 24
+    rowGap: 16
   },
   homeJournalBand: {
     marginTop: 34,
     paddingTop: 26,
     paddingHorizontal: 16,
     paddingBottom: 28,
-    backgroundColor: '#f6efeb'
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 251, 248, 0.33)' : '#f6efeb'
   },
   homeJournalHead: {
     flexDirection: 'row',
@@ -12118,11 +13567,16 @@ const styles = StyleSheet.create({
   },
   homeJournalProductCard: {
     width: '47.6%',
-    borderRadius: 10,
+    borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#eadfdb',
-    backgroundColor: '#fffdfb'
+    borderColor: '#e8ddd7',
+    backgroundColor: '#fffdfb',
+    shadowColor: '#2c211b',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2
   },
   homeJournalImageFrame: {
     width: '100%',
@@ -12156,38 +13610,39 @@ const styles = StyleSheet.create({
     letterSpacing: 0
   },
   homeJournalProductBody: {
-    minHeight: 166,
-    paddingHorizontal: 10,
-    paddingTop: 9,
-    paddingBottom: 11
+    minHeight: 190,
+    paddingHorizontal: 11,
+    paddingTop: 11,
+    paddingBottom: 12
   },
   homeJournalProductLabel: {
     ...typography.caption,
     color: '#9b5658',
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0
   },
   homeJournalProductTitle: {
     ...typography.productTitle,
-    marginTop: 3,
+    marginTop: 5,
+    minHeight: 36,
     color: '#211c1a',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '700'
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600'
   },
   homeJournalProductPrice: {
     ...typography.price,
-    marginTop: 4,
+    marginTop: 6,
     color: '#211c1a',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700'
   },
   homeJournalTryOnButton: {
-    minHeight: 30,
-    marginTop: 9,
-    borderRadius: 7,
-    backgroundColor: '#111111',
+    minHeight: 40,
+    marginTop: 11,
+    borderRadius: 10,
+    backgroundColor: '#211b18',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -12202,9 +13657,9 @@ const styles = StyleSheet.create({
     letterSpacing: 0
   },
   homeJournalVideoButton: {
-    minHeight: 30,
-    marginTop: 7,
-    borderRadius: 7,
+    minHeight: 40,
+    marginTop: 6,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#d8d1cc',
     backgroundColor: '#fffdfb',
@@ -12221,28 +13676,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0
   },
-  homeJournalSeeMoreButton: {
-    width: '100%',
-    minHeight: 46,
-    marginTop: 0,
-    borderRadius: 23,
-    backgroundColor: '#111111',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7
-  },
-  homeJournalSeeMoreText: {
-    ...typography.caption,
-    color: '#ffffff',
-    fontSize: 13,
-    lineHeight: 16,
-    fontWeight: '800',
-    letterSpacing: 0
-  },
   shopScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
   },
   shopContent: {
     paddingBottom: screenBottomInset,
@@ -12250,7 +13686,7 @@ const styles = StyleSheet.create({
   },
   categoryScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
   },
   categoryTopBar: {
     minHeight: Platform.OS === 'android' ? appTopInset + 64 : 66,
@@ -12258,7 +13694,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     paddingLeft: 22,
     paddingRight: 12,
-    backgroundColor: '#ffffff',
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.48)' : '#ffffff',
     borderBottomWidth: 1,
     borderBottomColor: '#dad9df',
     flexDirection: 'row',
@@ -12286,7 +13722,7 @@ const styles = StyleSheet.create({
   categoryBrowser: {
     flex: 1,
     flexDirection: 'row',
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   categoryRail: {
     width: 78,
@@ -12294,12 +13730,12 @@ const styles = StyleSheet.create({
     flexBasis: 78,
     flexGrow: 0,
     flexShrink: 0,
-    backgroundColor: '#f7efed',
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(246, 239, 234, 0.62)' : '#f3eee8',
     borderRightWidth: 1,
-    borderRightColor: '#e3dad6'
+    borderRightColor: '#e8e1da'
   },
   categoryRailContent: {
-    paddingTop: 4,
+    paddingTop: 6,
     paddingBottom: bottomNavigationHeight + screenBottomInset + 132
   },
   categoryRailContentTablet: {
@@ -12311,22 +13747,17 @@ const styles = StyleSheet.create({
     flexBasis: 96
   },
   categoryRailItem: {
-    minHeight: 90,
-    paddingVertical: 10,
+    minHeight: 88,
+    paddingVertical: 9,
     paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5dad6',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e1d9d2',
     position: 'relative'
   },
   categoryRailItemActive: {
-    backgroundColor: '#ffffff',
-    shadowColor: '#5a3734',
-    shadowOpacity: 0.08,
-    shadowRadius: 9,
-    shadowOffset: { width: 3, height: 0 },
-    elevation: 2
+    backgroundColor: '#faf8f5'
   },
   categoryRailAccent: {
     position: 'absolute',
@@ -12336,22 +13767,22 @@ const styles = StyleSheet.create({
     width: 3,
     borderTopRightRadius: 5,
     borderBottomRightRadius: 5,
-    backgroundColor: '#a84f59'
+    backgroundColor: '#211f1d'
   },
   categoryRailImageFrame: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fffdfb',
+    backgroundColor: '#faf7f3',
     borderWidth: 1,
     borderColor: '#eee3df'
   },
   categoryRailImageFrameActive: {
-    backgroundColor: '#fff5f1',
-    borderColor: '#efcfc8'
+    backgroundColor: '#ffffff',
+    borderColor: '#b9ada5'
   },
   categoryRailImage: {
     width: '100%',
@@ -12360,25 +13791,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#f6f1ef'
   },
   categoryRailLabel: {
-    marginTop: 6,
-    color: '#6f696f',
-    fontSize: 9.5,
-    lineHeight: 12,
-    fontWeight: '700',
+    marginTop: 7,
+    color: '#625c56',
+    fontSize: 11.25,
+    lineHeight: 15,
+    fontFamily: fontFamilies.bodyMedium,
+    fontWeight: '500',
     textAlign: 'center',
     letterSpacing: 0
   },
   categoryRailLabelActive: {
-    color: '#a84f59',
-    fontWeight: '800'
+    color: '#211f1d',
+    fontFamily: fontFamilies.bodySemiBold,
+    fontWeight: '600'
   },
   categoryMain: {
     flex: 1,
-    backgroundColor: '#fffefe'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   categoryMainContent: {
-    paddingTop: 14,
-    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingHorizontal: 12,
     paddingBottom: bottomNavigationHeight + screenBottomInset + 164
   },
   categoryMainContentTablet: {
@@ -12387,31 +13820,27 @@ const styles = StyleSheet.create({
   },
   categoryFeatureBand: {
     marginHorizontal: 0,
-    paddingHorizontal: 10,
-    paddingTop: 16,
-    paddingBottom: 17,
-    borderRadius: 10,
-    backgroundColor: '#fff7f3',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 12,
+    borderRadius: 16,
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.34)' : '#f3eee8',
     borderWidth: 1,
-    borderColor: '#f1e0db',
-    shadowColor: '#4d332e',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2
+    borderColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.74)' : '#e8e1da'
   },
   categoryKickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginBottom: 8
+    marginBottom: 6
   },
   categoryKicker: {
-    color: '#a18d91',
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: '800',
-    letterSpacing: 1.1
+    color: '#77716c',
+    fontSize: 10,
+    lineHeight: 14,
+    fontFamily: fontFamilies.bodySemiBold,
+    fontWeight: '600',
+    letterSpacing: 1.2
   },
   categoryKickerLine: {
     flex: 1,
@@ -12419,117 +13848,108 @@ const styles = StyleSheet.create({
     backgroundColor: '#e3d9d5'
   },
   categoryHeadline: {
-    color: '#272225',
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '800',
+    color: '#211f1d',
+    fontFamily: fontFamilies.logo,
+    fontSize: 21,
+    lineHeight: 27,
+    fontWeight: '400',
     letterSpacing: 0
   },
   categoryFeaturedGrid: {
-    marginTop: 16,
+    marginTop: 13,
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'flex-start',
-    columnGap: 8,
-    rowGap: 14
+    columnGap: 10,
+    rowGap: 12
   },
   categoryFeaturedTile: {
-    width: '44%',
-    minHeight: 86,
+    minHeight: 94,
     minWidth: 0,
     alignItems: 'center',
     justifyContent: 'flex-start'
   },
   categoryFeaturedImageFrame: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 64,
+    height: 64,
+    borderRadius: 18,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fffdfb',
+    backgroundColor: '#faf8f5',
     borderWidth: 1,
-    borderColor: '#ecd9d2',
-    shadowColor: '#573830',
-    shadowOpacity: 0.12,
-    shadowRadius: 11,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3
+    borderColor: '#e4dcd5'
   },
   categoryFeaturedImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 25,
-    backgroundColor: '#f8eeeb'
+    borderRadius: 17,
+    backgroundColor: '#f3eee8'
   },
   categoryFeaturedLabel: {
     width: '100%',
     marginTop: 7,
-    color: '#4d464d',
-    fontSize: 8.5,
-    lineHeight: 11,
-    fontWeight: '800',
+    color: '#393532',
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamilies.bodySemiBold,
+    fontWeight: '600',
     textAlign: 'center',
     letterSpacing: 0
   },
   categoryTileGrid: {
-    marginTop: 20,
+    marginTop: 17,
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'flex-start',
-    columnGap: 8,
-    rowGap: 24
+    columnGap: 10,
+    rowGap: 18
   },
   categoryTileGridTablet: {
     rowGap: 26
   },
   categoryTile: {
-    width: '30.8%',
-    minHeight: 126,
+    minHeight: 116,
     alignItems: 'center',
     paddingTop: 3
   },
   categoryContentImageFrame: {
-    width: 74,
-    height: 74,
-    borderRadius: 37,
+    width: 76,
+    height: 76,
+    borderRadius: 20,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fbf3ef',
+    backgroundColor: '#f3eee8',
     borderWidth: 1,
-    borderColor: '#eee3df',
-    shadowColor: '#4d3a35',
-    shadowOpacity: 0.09,
-    shadowRadius: 9,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2
+    borderColor: '#e8e1da'
   },
   categoryContentImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 35,
-    backgroundColor: '#f7f1ef'
+    borderRadius: 19,
+    backgroundColor: '#f3eee8'
   },
   categoryTileLabel: {
     width: '100%',
     marginTop: 9,
-    color: '#5a545d',
-    fontSize: 13,
+    color: '#393532',
+    fontSize: 12.5,
     lineHeight: 16,
-    fontWeight: '700',
+    fontFamily: fontFamilies.bodyMedium,
+    fontWeight: '500',
     textAlign: 'center',
     letterSpacing: 0
   },
   categorySectionTitle: {
-    ...typography.h2,
-    color: '#272225',
-    fontSize: 21,
-    lineHeight: 27,
-    fontWeight: '800'
+    color: '#211f1d',
+    fontFamily: fontFamilies.logo,
+    fontSize: 19,
+    lineHeight: 25,
+    fontWeight: '400'
   },
   categorySectionHeader: {
-    marginTop: 30,
+    marginTop: 24,
     paddingHorizontal: 2,
     flexDirection: 'row',
     alignItems: 'center',
@@ -12921,16 +14341,17 @@ const styles = StyleSheet.create({
   },
   wardrobeScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   wardrobeContent: {
-    paddingBottom: bottomNavigationHeight + screenBottomInset + 104,
-    backgroundColor: '#fbf7f6'
+    flexGrow: 1,
+    paddingBottom: 20,
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   wardrobeTopBar: {
     height: 86,
     paddingHorizontal: 28,
-    backgroundColor: '#fbf7f6',
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.38)' : '#fbf7f6',
     borderBottomWidth: 1,
     borderBottomColor: '#ece5e1',
     flexDirection: 'row',
@@ -12969,40 +14390,69 @@ const styles = StyleSheet.create({
   },
   wardrobeHeroHead: {
     paddingHorizontal: 18,
-    paddingTop: 28,
+    paddingTop: 18,
+    paddingBottom: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 18
+    gap: 12
+  },
+  wardrobeHeroHeadCompact: {
+    gap: 9
+  },
+  wardrobeHeroCopy: {
+    flex: 1,
+    minWidth: 0
   },
   wardrobeTitle: {
-    ...typography.h1,
-    color: '#1b1715',
-    fontSize: 26,
-    lineHeight: 32
+    fontFamily: fontFamilies.logo,
+    color: '#211f1d',
+    fontSize: 29,
+    lineHeight: 34,
+    fontWeight: '400',
+    letterSpacing: -0.2
+  },
+  wardrobeTitleCompact: {
+    fontSize: 25,
+    lineHeight: 30
   },
   wardrobeSubtitle: {
-    ...typography.body,
-    marginTop: 4,
-    color: '#514f4e',
-    fontSize: 15,
-    lineHeight: 20
+    ...typography.smallBody,
+    marginTop: 2,
+    color: '#77716c',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600'
+  },
+  wardrobeSubtitleCompact: {
+    fontSize: 11,
+    lineHeight: 15
   },
   wardrobeAddButton: {
-    minHeight: 38,
-    borderRadius: 19,
-    backgroundColor: '#050505',
-    paddingHorizontal: 14,
+    minHeight: 42,
+    borderRadius: 21,
+    backgroundColor: '#111111',
+    paddingHorizontal: 13,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 9
+    gap: 6
+  },
+  wardrobeAddButtonCompact: {
+    flexShrink: 0,
+    minHeight: 40,
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    gap: 4
   },
   wardrobeAddText: {
     ...typography.label,
     color: '#ffffff',
     fontSize: 13,
     fontWeight: '700'
+  },
+  wardrobeAddTextCompact: {
+    fontSize: 12
   },
   wardrobeCategoryTrack: {
     paddingHorizontal: 18,
@@ -13012,110 +14462,110 @@ const styles = StyleSheet.create({
   },
   wardrobeCategoryRail: {
     position: 'absolute',
-    top: 22,
-    bottom: 22,
+    top: 18,
+    bottom: 18,
     justifyContent: 'space-evenly',
     alignItems: 'center',
-    zIndex: 3
+    zIndex: 4
   },
   wardrobeCategoryRailCompact: {
-    top: 10,
-    bottom: 10
+    top: 12,
+    bottom: 12
   },
   wardrobeCategoryRailLeft: {
-    left: 10
+    left: 5
   },
   wardrobeCategoryRailRight: {
-    right: 10
+    right: 5
   },
   wardrobeCategoryButton: {
-    width: 88,
-    alignItems: 'center'
+    width: 76,
+    minHeight: 68,
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   wardrobeCategoryButtonCompact: {
-    width: 70
+    width: 64,
+    minHeight: 60
   },
   wardrobeCategoryIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.86)',
-    backgroundColor: 'rgba(255,255,255,0.94)',
+    borderColor: '#ded6cf',
+    backgroundColor: '#fffdfb',
     alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2
+    justifyContent: 'center'
   },
   wardrobeCategoryIconCompact: {
     width: 42,
     height: 42,
     borderRadius: 21
   },
-  wardrobeCategoryIconActive: {
-    borderWidth: 3,
-    borderColor: '#a84f59'
+  wardrobeCategoryIconSelected: {
+    borderWidth: 1.5,
+    borderColor: '#5b514b',
+    backgroundColor: '#e8dfd7'
+  },
+  wardrobeCategoryIconPressed: {
+    backgroundColor: '#e4dad2',
+    transform: [{ scale: 0.96 }]
   },
   wardrobeCategoryAssetIcon: {
-    width: 30,
-    height: 30
+    width: 23,
+    height: 23
   },
   wardrobeCategoryLabel: {
     ...typography.caption,
-    marginTop: 6,
-    minHeight: 24,
-    maxWidth: 84,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    color: '#292625',
+    marginTop: 5,
+    minHeight: 14,
+    maxWidth: 76,
+    color: '#514b47',
     textAlign: 'center',
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: 10.5,
+    lineHeight: 13,
     fontWeight: '700'
   },
   wardrobeCategoryLabelCompact: {
     marginTop: 3,
-    minHeight: 18,
-    maxWidth: 68,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 9,
+    minHeight: 12,
+    maxWidth: 62,
     fontSize: 9,
-    lineHeight: 12
+    lineHeight: 11
   },
-  wardrobeCategoryLabelActive: {
-    color: '#a84f59',
+  wardrobeCategoryLabelSelected: {
+    color: '#211f1d',
     fontFamily: fontFamilies.bodyBold,
-    fontWeight: '700'
+    fontWeight: '800'
   },
   wardrobePreviewWrap: {
     marginHorizontal: 18,
-    gap: 16,
-    marginBottom: bottomNavigationHeight + 16
+    gap: 12,
+    marginBottom: 0
   },
   wardrobePreviewStage: {
     position: 'relative',
-    marginBottom: 0
+    marginBottom: 0,
+    paddingVertical: 0,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#e8e1da',
+    backgroundColor: '#f3eee8',
+    overflow: 'hidden'
   },
   wardrobePreviewStageCompact: {
-    marginBottom: 0
+    paddingVertical: 0
   },
   wardrobePreviewCard: {
     width: '100%',
-    borderRadius: 16,
+    alignSelf: 'center',
+    borderRadius: 0,
     overflow: 'hidden',
-    backgroundColor: '#f3f1f0',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2
+    backgroundColor: '#f3eee8'
+  },
+  wardrobePreviewCardCompact: {
+    width: '100%'
   },
   wardrobePreviewImage: {
     width: '100%',
@@ -13123,33 +14573,52 @@ const styles = StyleSheet.create({
   },
   wardrobeTryButton: {
     alignSelf: 'center',
-    minHeight: 42,
-    minWidth: 112,
-    borderRadius: 21,
-    backgroundColor: '#050505',
+    minHeight: 48,
+    minWidth: 148,
+    borderRadius: 24,
+    backgroundColor: '#111111',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20
+    gap: 8,
+    paddingHorizontal: 24
   },
   wardrobeTryButtonCompact: {
-    minHeight: 36,
-    minWidth: 102,
-    borderRadius: 18,
-    paddingHorizontal: 16
+    minHeight: 44,
+    minWidth: 138,
+    borderRadius: 22,
+    paddingHorizontal: 20
+  },
+  wardrobeTryButtonDisabled: {
+    borderWidth: 1,
+    borderColor: '#d8d0ca',
+    backgroundColor: '#e7e1dc'
   },
   wardrobeTryButtonDock: {
-    marginTop: 14,
+    marginTop: 0,
     zIndex: 5,
     alignItems: 'center'
   },
   wardrobeTryButtonDockCompact: {
-    marginTop: 10
+    marginTop: 0
   },
   wardrobeTryText: {
     ...typography.caption,
     color: '#ffffff',
     fontSize: 13,
     fontWeight: '700'
+  },
+  wardrobeTryTextDisabled: {
+    color: '#77716c'
+  },
+  wardrobeTryHint: {
+    ...typography.caption,
+    marginTop: 7,
+    color: '#77716c',
+    fontSize: 10.5,
+    lineHeight: 14,
+    fontWeight: '600',
+    textAlign: 'center'
   },
   wardrobeRecommendationsHead: {
     paddingHorizontal: 18,
@@ -13255,15 +14724,16 @@ const styles = StyleSheet.create({
   },
   addStudioScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
   },
   addStudioContent: {
-    paddingBottom: 132,
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 118,
     backgroundColor: '#fbf7f6'
   },
   addStudioTopBar: {
-    height: 62,
+    height: Platform.OS === 'android' ? 74 : 66,
     paddingHorizontal: 14,
+    paddingTop: Platform.OS === 'android' ? 12 : 4,
     borderBottomWidth: 1,
     borderBottomColor: '#e7dfdb',
     backgroundColor: '#fbf7f6',
@@ -13282,7 +14752,7 @@ const styles = StyleSheet.create({
   },
   addStudioIntro: {
     paddingHorizontal: 20,
-    paddingTop: 35
+    paddingTop: 24
   },
   addStudioTitle: {
     ...typography.h1,
@@ -13300,9 +14770,9 @@ const styles = StyleSheet.create({
     fontWeight: '500'
   },
   addStudioUploadBox: {
-    marginTop: 44,
+    marginTop: 26,
     marginHorizontal: 20,
-    height: 424,
+    height: 318,
     borderRadius: 12,
     borderWidth: 1.5,
     borderStyle: 'dashed',
@@ -13349,13 +14819,13 @@ const styles = StyleSheet.create({
   },
   addStudioThumbRow: {
     paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingTop: 12,
     flexDirection: 'row',
     gap: 12
   },
   addStudioAddThumb: {
-    width: 80,
-    height: 96,
+    width: 70,
+    height: 82,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#d0d0d0',
@@ -13364,8 +14834,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   addStudioThumbWrap: {
-    width: 80,
-    height: 96,
+    width: 70,
+    height: 82,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: '#d0d0d0',
@@ -13549,7 +15019,7 @@ const styles = StyleSheet.create({
   },
   addStudioArchiveHead: {
     paddingHorizontal: 20,
-    paddingTop: 52
+    paddingTop: 26
   },
   addStudioArchiveTitle: {
     ...typography.h2,
@@ -13566,7 +15036,7 @@ const styles = StyleSheet.create({
   },
   addStudioSectionLabel: {
     ...typography.label,
-    marginTop: 38,
+    marginTop: 28,
     paddingHorizontal: 20,
     color: '#4f4a48',
     fontSize: 14,
@@ -13723,19 +15193,19 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    minHeight: 96,
+    minHeight: 84,
     borderTopWidth: 1,
     borderTopColor: '#e1dad7',
     backgroundColor: '#fbf7f6',
     paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 14,
+    paddingTop: 14,
+    paddingBottom: Platform.OS === 'ios' ? 18 : 12,
     flexDirection: 'row',
     gap: 16
   },
   addStudioDiscardButton: {
     flex: 1,
-    minHeight: 56,
+    minHeight: 48,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#9b5658',
@@ -13751,7 +15221,7 @@ const styles = StyleSheet.create({
   },
   addStudioSaveButton: {
     flex: 1,
-    minHeight: 56,
+    minHeight: 48,
     borderRadius: 10,
     backgroundColor: '#050505',
     alignItems: 'center',
@@ -13880,25 +15350,28 @@ const styles = StyleSheet.create({
     gap: 12,
     alignItems: 'stretch'
   },
-  productGridSeeMoreButton: {
-    width: '100%',
-    minHeight: 48,
-    marginTop: 8,
-    marginBottom: 8,
-    borderRadius: 24,
-    backgroundColor: '#111111',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7
+  shopProductListContent: {
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 112
   },
-  productGridSeeMoreText: {
+  shopProductListHeader: {
+    paddingHorizontal: 16
+  },
+  shopProductGridRow: {
+    paddingHorizontal: 32,
+    gap: 12,
+    marginBottom: 12
+  },
+  shopProductLoadingMore: {
+    marginVertical: 24
+  },
+  shopProductRetry: {
+    alignItems: 'center',
+    padding: 18
+  },
+  shopProductRetryText: {
     ...typography.caption,
-    color: '#ffffff',
-    fontSize: 13,
-    lineHeight: 16,
-    fontWeight: '800',
-    letterSpacing: 0
+    color: '#9b3f3b',
+    fontSize: 13
   },
   productCard: {
     flexGrow: 1,
@@ -14164,7 +15637,7 @@ const styles = StyleSheet.create({
   },
   searchScreen: {
     flex: 1,
-    backgroundColor: '#ffffff'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#ffffff'
   },
   searchTopBar: {
     minHeight: Platform.OS === 'android' ? appTopInset + 58 : 64,
@@ -14816,7 +16289,7 @@ const styles = StyleSheet.create({
   },
   productDetailScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
   },
   productDetailContent: {
     paddingBottom: bottomNavigationHeight + screenBottomInset + 72,
@@ -14846,16 +16319,16 @@ const styles = StyleSheet.create({
   },
   productHeroMedia: {
     marginHorizontal: 14,
-    borderRadius: 7,
+    borderRadius: 16,
     overflow: 'hidden',
-    backgroundColor: '#f2f0ef'
+    backgroundColor: '#f3eee8'
   },
   productMediaTrack: {
     alignItems: 'stretch'
   },
   productMediaSlide: {
     height: '100%',
-    backgroundColor: '#f2f0ef',
+    backgroundColor: '#f3eee8',
     position: 'relative'
   },
   productHeroImage: {
@@ -14865,7 +16338,7 @@ const styles = StyleSheet.create({
   productHeroVideo: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#f2f0ef'
+    backgroundColor: '#f3eee8'
   },
   videoSurface: {
     overflow: 'hidden',
@@ -14906,10 +16379,12 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 13,
     top: 14,
-    width: 39,
-    height: 39,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.88)',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(232, 225, 218, 0.96)',
+    backgroundColor: 'rgba(255, 253, 251, 0.94)',
     alignItems: 'center',
     justifyContent: 'center'
   },
@@ -14934,140 +16409,175 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   productSummary: {
-    paddingHorizontal: 14,
-    paddingTop: 19,
-    paddingBottom: 24
-  },
-  productSummaryTop: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 14
-  },
-  productSummaryTitleBlock: {
-    flex: 1
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 22
   },
   productBrandLabel: {
-    color: '#9b5658',
-    fontSize: 10,
+    ...typography.caption,
+    color: '#756c67',
+    fontSize: 11,
+    lineHeight: 15,
     fontWeight: '700',
-    letterSpacing: 0
+    letterSpacing: 1.1,
+    textTransform: 'uppercase'
   },
   productNameText: {
-    marginTop: 4,
-    color: '#171412',
-    fontSize: 13,
-    lineHeight: 17,
+    marginTop: 7,
+    color: '#211f1d',
+    fontSize: 17,
+    lineHeight: 23,
     fontWeight: '600'
   },
-  productPriceBlock: {
-    alignItems: 'flex-end'
+  productTitleDisclosure: {
+    alignSelf: 'flex-start',
+    minHeight: 32,
+    marginTop: 2,
+    marginLeft: -6,
+    paddingHorizontal: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4
+  },
+  productTitleDisclosureText: {
+    color: '#625a55',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    textDecorationLine: 'underline'
+  },
+  productValueRow: {
+    marginTop: 13,
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
   },
   productDetailPrice: {
-    color: '#171412',
-    fontSize: 12,
+    color: '#211f1d',
+    fontSize: 19,
+    lineHeight: 25,
     fontWeight: '700'
   },
   productRatingLine: {
-    marginTop: 5,
+    minHeight: 28,
+    paddingHorizontal: 9,
+    borderRadius: 14,
+    backgroundColor: '#f3eee8',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3
+    gap: 4
   },
   productRatingText: {
-    color: '#5b5551',
-    fontSize: 11,
+    color: '#514b47',
+    fontSize: 12,
     fontWeight: '700'
   },
-  productTagRow: {
-    marginTop: 13,
+  productMetadataRow: {
+    marginTop: 17,
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 9
-  },
-  productSoftTag: {
-    minHeight: 22,
-    borderRadius: 11,
-    overflow: 'hidden',
-    backgroundColor: '#eee9e7',
-    color: '#7a716d',
-    paddingHorizontal: 12,
-    paddingTop: 5,
-    fontSize: 10,
-    fontWeight: '700'
-  },
-  productCategoryMeta: {
-    alignSelf: 'flex-start',
-    marginTop: 10,
-    minHeight: 28,
-    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#eadfdb',
+    borderColor: '#e8e1da',
+    borderRadius: 12,
     backgroundColor: '#fffdfb',
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6
+    overflow: 'hidden'
+  },
+  productMetadataItem: {
+    flex: 1,
+    minHeight: 54,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    justifyContent: 'center'
   },
   productCategoryMetaLabel: {
-    color: '#8c817c',
-    fontSize: 10,
-    fontWeight: '700'
+    color: '#8a817b',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    letterSpacing: 0.7
   },
   productCategoryMetaValue: {
-    color: '#4f4a48',
-    fontSize: 10,
-    fontWeight: '700'
+    marginTop: 3,
+    color: '#312d2a',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600'
   },
   productActionRow: {
-    marginTop: 24,
-    flexDirection: 'row',
-    gap: 8
+    marginTop: 17,
+    gap: 9
   },
-  productActionButton: {
+  productPrimaryAction: {
+    minHeight: 52,
+    borderRadius: 12,
+    backgroundColor: '#111111',
+    paddingHorizontal: 17,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9
+  },
+  productPrimaryActionText: {
     flex: 1,
-    minHeight: 48,
-    borderRadius: 8,
+    color: '#ffffff',
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700',
+    textAlign: 'center'
+  },
+  productSecondaryActionRow: {
+    flexDirection: 'row',
+    gap: 9
+  },
+  productSecondaryAction: {
+    flex: 1.15,
+    minHeight: 46,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#d4c8c4',
-    backgroundColor: '#fbf7f6',
+    borderColor: '#dcd3cc',
+    backgroundColor: '#fffdfb',
+    paddingHorizontal: 13,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7
   },
-  productActionButtonActive: {
-    backgroundColor: '#050505',
-    borderColor: '#050505'
-  },
-  productActionText: {
-    color: '#4f4a48',
+  productSecondaryActionText: {
+    color: '#211f1d',
     fontSize: 12,
+    lineHeight: 16,
     fontWeight: '700'
   },
-  productActionTextActive: {
-    color: '#ffffff'
-  },
-  productAccordion: {
-    paddingHorizontal: 14,
-    paddingTop: 29
-  },
-  productAccordionRow: {
-    minHeight: 42,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e6dfdb',
+  productVideoAction: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 12,
+    backgroundColor: '#f3eee8',
+    paddingHorizontal: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between'
+    justifyContent: 'center',
+    gap: 6
   },
-  productAccordionText: {
-    color: '#3a3532',
-    fontSize: 12,
+  productVideoActionWide: {
+    flex: 1
+  },
+  productVideoActionText: {
+    color: '#514b47',
+    fontSize: 11,
+    lineHeight: 15,
     fontWeight: '700'
   },
+  productCommerceUnavailable: {
+    color: '#817872',
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: 'center'
+  },
   productStorySection: {
-    paddingHorizontal: 14,
-    paddingTop: 61
+    paddingHorizontal: 18,
+    paddingTop: 36
   },
   productStoryTitle: {
     ...typography.h3,
@@ -15084,16 +16594,37 @@ const styles = StyleSheet.create({
     lineHeight: 23,
     fontWeight: '500'
   },
-  productStoryImage: {
-    marginTop: 46,
-    width: '100%',
-    height: 388,
-    borderRadius: 7,
-    backgroundColor: '#eee8e3'
+  productFacts: {
+    marginTop: 22,
+    borderTopWidth: 1,
+    borderTopColor: '#e8e1da'
+  },
+  productFactRow: {
+    minHeight: 46,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e8e1da',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14
+  },
+  productFactLabel: {
+    width: 82,
+    color: '#817872',
+    fontSize: 11,
+    lineHeight: 17,
+    fontWeight: '700'
+  },
+  productFactValue: {
+    flex: 1,
+    color: '#312d2a',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500'
   },
   completeLookSection: {
-    paddingHorizontal: 14,
-    paddingTop: 120
+    paddingHorizontal: 18,
+    paddingTop: 54
   },
   completeLookHead: {
     flexDirection: 'row',
@@ -15248,16 +16779,15 @@ const styles = StyleSheet.create({
   },
   aiStudioScreen: {
     flex: 1,
-    backgroundColor: '#faf5f3'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   aiStudioContent: {
-    paddingTop: 14,
+    paddingTop: 18,
     paddingBottom: screenBottomInset + 104,
-    paddingHorizontal: 16,
-    backgroundColor: '#faf5f3'
+    paddingHorizontal: 20,
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   aiStudioMenuButton: {
-    marginLeft: 'auto',
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -15394,31 +16924,8 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   aiStudioHero: {
-    minHeight: 76,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#eadbd6',
-    backgroundColor: '#fffdfb',
-    paddingHorizontal: 15,
-    paddingVertical: 13,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 13,
-    shadowColor: '#3d2924',
-    shadowOpacity: 0.07,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4
-  },
-  aiStudioHeroIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#f8efed',
-    borderWidth: 1,
-    borderColor: '#eadbd6',
-    alignItems: 'center',
-    justifyContent: 'center'
+    paddingTop: 8,
+    paddingBottom: 4
   },
   aiStudioHeroCopy: {
     flex: 1,
@@ -15426,19 +16933,29 @@ const styles = StyleSheet.create({
   },
   aiStudioHeroLabel: {
     ...typography.label,
-    color: '#a56a65',
-    fontSize: 9,
-    lineHeight: 12,
-    fontWeight: '800',
-    letterSpacing: 1.4
+    color: '#8f5d59',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    letterSpacing: 1.55
   },
   aiStudioHeroTitle: {
-    ...typography.h2,
-    marginTop: 4,
-    color: '#211c1a',
-    fontSize: 22,
-    lineHeight: 27,
-    fontWeight: '800'
+    fontFamily: fontFamilies.logo,
+    marginTop: 7,
+    color: '#211f1d',
+    fontSize: 27,
+    lineHeight: 34,
+    fontWeight: '400',
+    letterSpacing: -0.35
+  },
+  aiStudioHeroText: {
+    ...typography.smallBody,
+    maxWidth: 330,
+    marginTop: 8,
+    color: '#625c56',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '400'
   },
   aiHeroPanel: {
     minHeight: 92,
@@ -15535,68 +17052,49 @@ const styles = StyleSheet.create({
     fontWeight: '500'
   },
   aiStarterPanel: {
-    marginTop: 16
+    marginTop: 22
   },
   aiStarterTitle: {
     ...typography.label,
-    color: '#9b5658',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase'
+    color: '#211f1d',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+    letterSpacing: 0
   },
   aiStarterGrid: {
-    marginTop: 10,
-    gap: 9
+    paddingTop: 10,
+    paddingBottom: 3,
+    paddingRight: 20,
+    gap: 8
   },
   aiStarterCard: {
-    minHeight: 62,
-    borderRadius: 12,
+    minHeight: 46,
+    borderRadius: 23,
     borderWidth: 1,
-    borderColor: '#eaded9',
-    backgroundColor: '#fffdfb',
-    paddingHorizontal: 13,
-    paddingVertical: 10,
+    borderColor: '#e8e1da',
+    backgroundColor: '#f3eee8',
+    paddingLeft: 16,
+    paddingRight: 13,
     flexDirection: 'row',
+    flexShrink: 0,
     alignItems: 'center',
-    gap: 13,
-    shadowColor: '#3d2924',
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2
-  },
-  aiStarterIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f8efed',
-    borderWidth: 1,
-    borderColor: '#f0ded9',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  aiStarterCopy: {
-    flex: 1,
-    minWidth: 0
+    justifyContent: 'center',
+    gap: 7
   },
   aiStarterCardTitle: {
-    ...typography.productTitle,
-    color: '#211c1a',
-    fontSize: 14,
-    lineHeight: 17,
-    fontWeight: '800'
-  },
-  aiStarterCardText: {
     ...typography.caption,
-    marginTop: 3,
-    color: '#706762',
-    fontSize: 11,
-    lineHeight: 13,
+    flexShrink: 0,
+    color: '#211f1d',
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '600'
   },
+  aiStarterArrow: {
+    transform: [{ rotate: '45deg' }]
+  },
   aiChatThread: {
-    paddingTop: 12,
+    paddingTop: 14,
     gap: 10
   },
   aiMessageBlock: {
@@ -15604,10 +17102,10 @@ const styles = StyleSheet.create({
   },
   aiMessageBubble: {
     maxWidth: '91%',
-    minHeight: 38,
+    minHeight: 42,
     borderRadius: 14,
-    paddingHorizontal: 13,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 9
@@ -15622,46 +17120,75 @@ const styles = StyleSheet.create({
   aiMessageBubbleIntro: {
     maxWidth: '100%',
     width: '100%',
-    borderRadius: 13,
-    borderBottomLeftRadius: 13,
-    paddingHorizontal: 13,
-    paddingVertical: 11,
-    backgroundColor: '#fff8f4',
-    borderColor: '#ead8d1'
+    minHeight: 0,
+    borderWidth: 0,
+    borderRadius: 0,
+    paddingHorizontal: 0,
+    paddingTop: 4,
+    paddingBottom: 0,
+    backgroundColor: 'transparent'
   },
   aiMessageBubbleUser: {
     alignSelf: 'flex-end',
     borderBottomRightRadius: 5,
-    backgroundColor: '#252221'
+    backgroundColor: '#252221',
+    paddingHorizontal: 14,
+    paddingVertical: 10
   },
   aiMessageBubbleError: {
-    borderColor: '#efc7c7',
-    backgroundColor: '#fff7f7'
+    maxWidth: '88%',
+    borderColor: '#e2d8d1',
+    backgroundColor: '#f3eee8',
+    paddingHorizontal: 13,
+    paddingVertical: 10
   },
   aiMessageText: {
     ...typography.body,
     flexShrink: 1,
-    color: '#2d2927',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500'
+    color: '#211f1d',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '400'
   },
-  aiMessageSparkBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#efded7',
-    alignItems: 'center',
-    justifyContent: 'center'
+  aiMessageTextIntro: {
+    maxWidth: 332,
+    color: '#625c56',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '400'
   },
   aiMessageTextUser: {
     color: '#ffffff',
-    fontWeight: '600'
+    fontWeight: '500'
   },
   aiMessageTextError: {
-    color: '#b4232a',
+    color: '#4f4945',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500'
+  },
+  aiMessageErrorIcon: {
+    marginTop: 1
+  },
+  aiRetryButton: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    marginTop: -3,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#ded3cb',
+    backgroundColor: '#faf8f5',
+    paddingHorizontal: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7
+  },
+  aiRetryButtonText: {
+    ...typography.caption,
+    color: '#4f4945',
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: '700'
   },
   aiSuggestionProductsTrack: {
@@ -15674,18 +17201,20 @@ const styles = StyleSheet.create({
     gap: 8
   },
   aiFollowUpChip: {
-    minHeight: 34,
-    borderRadius: 17,
+    minHeight: 44,
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#e3d9d4',
-    backgroundColor: '#fffdfb',
-    paddingHorizontal: 12,
+    borderColor: '#ded4cc',
+    backgroundColor: '#f3eee8',
+    paddingHorizontal: 15,
     alignItems: 'center',
     justifyContent: 'center'
   },
   aiFollowUpText: {
     ...typography.caption,
-    color: '#9b5658',
+    color: '#4f4945',
+    fontSize: 13,
+    lineHeight: 18,
     fontWeight: '700'
   },
   aiOutfitList: {
@@ -15710,8 +17239,8 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     color: '#211c1a',
-    fontSize: 14,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 21,
     fontWeight: '800'
   },
   aiOutfitSource: {
@@ -15730,10 +17259,10 @@ const styles = StyleSheet.create({
   },
   aiOutfitReason: {
     ...typography.caption,
-    color: '#625b57',
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600'
+    color: '#625c56',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '400'
   },
   aiOutfitItems: {
     gap: 8,
@@ -15840,25 +17369,25 @@ const styles = StyleSheet.create({
   conciergeSuggestionName: {
     ...typography.productTitle,
     marginTop: 5,
-    minHeight: 34,
+    minHeight: 40,
     color: '#171412',
-    fontSize: 13,
-    lineHeight: 17,
-    fontWeight: '700',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
     letterSpacing: 0
   },
   conciergeSuggestionPrice: {
     ...typography.price,
     marginTop: 5,
     color: '#171412',
-    fontSize: 13,
-    lineHeight: 17,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '700'
   },
   conciergeShopButton: {
     marginTop: 9,
     alignSelf: 'flex-start',
-    minHeight: 34,
+    minHeight: 44,
     borderRadius: 8,
     backgroundColor: '#050505',
     paddingHorizontal: 12,
@@ -15868,8 +17397,9 @@ const styles = StyleSheet.create({
   conciergeShopText: {
     ...typography.caption,
     color: '#ffffff',
-    fontSize: 11,
-    fontWeight: '700'
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600'
   },
   conciergeExternalLink: {
     marginTop: 8
@@ -15951,39 +17481,43 @@ const styles = StyleSheet.create({
   aiComposer: {
     position: 'absolute',
     zIndex: 45,
-    left: 14,
-    right: 14,
+    left: 16,
+    right: 16,
     bottom: Platform.OS === 'ios' ? 16 : 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e8ddd8',
-    backgroundColor: 'rgba(255, 253, 251, 0.98)',
-    padding: 6,
+    borderColor: '#e8e1da',
+    backgroundColor: '#fffdfb',
+    padding: 5,
     shadowColor: '#1a1412',
-    shadowOpacity: 0.13,
-    shadowRadius: 22,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 9
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5
+  },
+  aiComposerFocused: {
+    borderColor: '#77716c',
+    shadowOpacity: 0.12
   },
   aiComposerInput: {
     ...typography.body,
     flex: 1,
-    minHeight: 42,
-    borderRadius: 13,
-    backgroundColor: '#f7f1ef',
+    minHeight: 46,
+    borderRadius: 12,
+    backgroundColor: '#faf8f5',
     paddingHorizontal: 15,
-    color: '#171412',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500'
+    color: '#211f1d',
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '400'
   },
   aiSendButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
+    width: 46,
+    height: 46,
+    borderRadius: 12,
     backgroundColor: '#1a1716',
     alignItems: 'center',
     justifyContent: 'center',
@@ -15992,6 +17526,11 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3
+  },
+  aiSendButtonDisabled: {
+    backgroundColor: '#e1dbd6',
+    shadowOpacity: 0,
+    elevation: 0
   },
   detailMedia: {
     margin: 16,
@@ -16126,11 +17665,16 @@ const styles = StyleSheet.create({
   },
   authEntryScroll: {
     flex: 1,
-    backgroundColor: '#111111'
+    backgroundColor: '#faf8f5'
   },
   authEntryContent: {
     flexGrow: 1,
-    justifyContent: 'center'
+    backgroundColor: '#faf8f5'
+  },
+  authEntryHero: {
+    position: 'relative',
+    overflow: 'hidden',
+    backgroundColor: '#d9d3cc'
   },
   authEntryBackground: {
     ...StyleSheet.absoluteFillObject,
@@ -16139,87 +17683,180 @@ const styles = StyleSheet.create({
   },
   authEntryImageWash: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(17, 17, 17, 0.18)'
+    backgroundColor: 'rgba(20, 17, 15, 0.28)'
   },
-  authEntryShadow: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.38)'
-  },
-  authEntryMain: {
-    flex: 1,
-    justifyContent: 'space-between',
-    alignItems: 'stretch',
-    paddingTop: 8,
-    paddingBottom: 22
-  },
-  authEntryMainCompact: {
-    paddingTop: 2,
-    paddingBottom: 12
-  },
-  authEntryBrand: {
-    alignItems: 'center'
+  authEntryHeroTop: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    top: Platform.OS === 'android' ? appTopInset + 12 : 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
   },
   authEntryLogoMark: {
-    justifyContent: 'center',
-    marginBottom: 4
+    justifyContent: 'center'
   },
-  authEntryTagline: {
-    ...typography.body,
-    color: 'rgba(255, 255, 255, 0.82)',
-    textAlign: 'center'
+  authEntryLogoSymbol: {
+    width: 34,
+    height: 34
   },
-  authEntryFeatureList: {},
-  authEntryFeature: {
-    borderRadius: 12,
+  authEntryLogoDivider: {
+    height: 28
+  },
+  authEntryLogoText: {
+    fontSize: 24,
+    lineHeight: 30
+  },
+  authEntrySignInTop: {
+    minHeight: 44,
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-    backgroundColor: 'rgba(25, 25, 25, 0.34)',
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
-  authEntryCheck: {
-    backgroundColor: '#ffb5b5',
+    borderColor: 'rgba(255, 255, 255, 0.62)',
+    backgroundColor: 'rgba(17, 17, 17, 0.24)',
+    paddingHorizontal: 17,
     alignItems: 'center',
     justifyContent: 'center'
   },
-  authEntryFeatureText: {
-    ...typography.body,
+  authEntrySignInTopText: {
+    ...typography.label,
+    color: '#ffffff',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600'
+  },
+  authEntryHeroCaption: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 24,
+    maxWidth: 330
+  },
+  authEntryEyebrow: {
+    ...typography.label,
+    color: 'rgba(255, 255, 255, 0.88)',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 2
+  },
+  authEntryHeroTitle: {
+    marginTop: 8,
+    color: '#ffffff',
+    fontFamily: fontFamilies.logo,
+    fontWeight: '400',
+    letterSpacing: -0.3
+  },
+  authEntryHeroText: {
+    ...typography.smallBody,
+    maxWidth: 290,
+    marginTop: 9,
+    color: 'rgba(255, 255, 255, 0.92)',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '400'
+  },
+  authEntryMain: {
+    paddingTop: 20,
+    paddingBottom: 0
+  },
+  authEntryMainCompact: {
+    paddingTop: 16
+  },
+  authEntryIntro: {
+    maxWidth: 350
+  },
+  authEntryIntroTitle: {
+    color: '#211f1d',
+    fontFamily: fontFamilies.logo,
+    fontSize: 24,
+    lineHeight: 30,
+    fontWeight: '400'
+  },
+  authEntryIntroText: {
+    ...typography.smallBody,
+    marginTop: 4,
+    color: '#625c56',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '400'
+  },
+  authEntryFeatureList: {
+    marginTop: 16,
+    gap: 8
+  },
+  authEntryFeature: {
+    minHeight: 52,
+    borderRadius: 12,
+    backgroundColor: '#f3eee8',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 11
+  },
+  authEntryFeatureIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#faf8f5',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  authEntryFeatureCopy: {
     flex: 1,
-    color: '#fff',
+    minWidth: 0
+  },
+  authEntryFeatureTitle: {
+    ...typography.label,
+    color: '#211f1d',
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600'
+  },
+  authEntryFeatureText: {
+    ...typography.caption,
+    marginTop: 1,
+    color: '#625c56',
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '400'
   },
   authEntryCta: {
-    backgroundColor: '#fff',
+    minHeight: 52,
+    marginTop: 18,
+    borderRadius: 12,
+    backgroundColor: '#111111',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 24
+    gap: 9,
+    paddingHorizontal: 20
   },
   authEntryCtaText: {
     ...typography.button,
-    color: '#151515',
+    color: '#ffffff',
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '600'
   },
   authEntryExplore: {
     alignSelf: 'center',
+    minHeight: 44,
     paddingHorizontal: 18,
-    paddingVertical: 2
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   authEntryExploreText: {
     ...typography.smallBody,
-    color: 'rgba(255, 255, 255, 0.76)',
-    fontWeight: '400'
-  },
-  authEntryHomeIndicator: {
-    alignSelf: 'center',
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255, 255, 255, 0.28)'
+    color: '#625c56',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600'
   },
   signupScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
   },
   signupContent: {
     flexGrow: 1,
@@ -16464,7 +18101,7 @@ const styles = StyleSheet.create({
   },
   loginScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
   },
   loginContent: {
     flexGrow: 1,
@@ -16507,7 +18144,7 @@ const styles = StyleSheet.create({
   loginPanel: {
     paddingTop: 60,
     paddingBottom: 38,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.36)' : '#fbf7f6'
   },
   loginTitle: {
     ...typography.h1,
@@ -16737,10 +18374,10 @@ const styles = StyleSheet.create({
   signupDetailsCard: {
     width: '100%',
     maxWidth: 520,
-    borderRadius: 8,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#eaded9',
-    backgroundColor: '#fffdfb',
+    borderColor: '#e8e1da',
+    backgroundColor: '#faf8f5',
     paddingHorizontal: 24,
     paddingVertical: 26,
     shadowColor: '#2a211d',
@@ -16749,9 +18386,26 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 2
   },
+  signupDetailsEyebrow: {
+    ...typography.label,
+    color: '#77716c',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 1.8
+  },
+  signupDetailsTitle: {
+    marginTop: 7,
+    color: '#211f1d',
+    fontFamily: fontFamilies.logo,
+    fontSize: 29,
+    lineHeight: 35,
+    fontWeight: '400',
+    letterSpacing: -0.25
+  },
   signupDetailsFieldStack: {
-    marginTop: 26,
-    gap: 18
+    marginTop: 24,
+    gap: 16
   },
   signupDetailsLabel: {
     ...typography.label,
@@ -16768,10 +18422,10 @@ const styles = StyleSheet.create({
   signupDetailsGenderButton: {
     flex: 1,
     minHeight: 48,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e2d7d2',
-    backgroundColor: '#fbf7f6',
+    borderColor: '#e8e1da',
+    backgroundColor: '#f3eee8',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -16779,8 +18433,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8
   },
   signupDetailsGenderButtonActive: {
-    borderColor: '#9b5658',
-    backgroundColor: '#9b5658'
+    borderColor: '#211f1d',
+    backgroundColor: '#211f1d'
   },
   signupDetailsGenderText: {
     ...typography.caption,
@@ -16793,19 +18447,20 @@ const styles = StyleSheet.create({
     color: '#ffffff'
   },
   signupDetailsUploadBox: {
-    height: 250,
-    borderRadius: 8,
-    borderWidth: 1.4,
+    height: 224,
+    borderRadius: 14,
+    borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: '#cdbbb5',
+    borderColor: '#cfc3ba',
     overflow: 'hidden',
-    backgroundColor: '#fbf7f6',
+    backgroundColor: '#f3eee8',
     alignItems: 'center',
     justifyContent: 'center'
   },
   signupDetailsUploadImage: {
     width: '100%',
-    height: '100%'
+    height: '100%',
+    backgroundColor: '#f3eee8'
   },
   signupDetailsUploadOverlay: {
     position: 'absolute',
@@ -16830,26 +18485,39 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28
   },
   signupDetailsUploadIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#fff5f3',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#faf8f5',
     alignItems: 'center',
     justifyContent: 'center'
   },
   signupDetailsUploadTitle: {
     ...typography.productTitle,
-    marginTop: 13,
-    color: '#2b2321',
-    fontWeight: '700',
+    marginTop: 12,
+    color: '#211f1d',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '600',
     textAlign: 'center'
   },
   signupDetailsUploadText: {
     ...typography.smallBody,
     marginTop: 6,
-    color: '#6d625e',
+    maxWidth: 270,
+    color: '#625c56',
     textAlign: 'center',
-    fontWeight: '500'
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '400'
+  },
+  signupDetailsUploadMeta: {
+    ...typography.caption,
+    marginTop: 9,
+    color: '#77716c',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600'
   },
   signupDetailsLegalText: {
     ...typography.caption,
@@ -17112,40 +18780,59 @@ const styles = StyleSheet.create({
   },
   customTryOnScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+  },
+  customTryOnScroll: {
+    flex: 1,
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
   },
   customTryOnContent: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: bottomNavigationHeight + screenBottomInset + 164
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 112
   },
   customTryOnContentCompact: {
     paddingTop: 8
   },
   customHeroPanel: {
-    padding: 18,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#eaded9',
-    backgroundColor: '#fffdfb',
-    shadowColor: '#2a211d',
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
-    gap: 10
-  },
-  customHeroPanelCompact: {
-    padding: 14,
+    paddingHorizontal: 2,
+    paddingTop: 4,
+    paddingBottom: 2,
     gap: 7
   },
-  customHeroTitleCompact: {
-    fontSize: 24,
-    lineHeight: 28
+  customHeroPanelCompact: {
+    paddingTop: 0,
+    gap: 5
   },
-  customHeroDescriptionCompact: {
+  customHeroEyebrow: {
+    ...typography.label,
+    color: '#8c5557',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 2
+  },
+  customHeroTitle: {
+    fontFamily: fontFamilies.logo,
+    color: '#211f1d',
+    fontSize: 31,
+    lineHeight: 37,
+    fontWeight: '400',
+    letterSpacing: -0.25
+  },
+  customHeroTitleCompact: {
+    fontSize: 27,
+    lineHeight: 32
+  },
+  customHeroDescription: {
+    ...typography.smallBody,
+    color: '#5f5955',
     fontSize: 14,
     lineHeight: 20
+  },
+  customHeroDescriptionCompact: {
+    fontSize: 13,
+    lineHeight: 18
   },
   customHeroMetaRow: {
     minHeight: 28,
@@ -17155,12 +18842,12 @@ const styles = StyleSheet.create({
     gap: 12
   },
   customTokenPill: {
-    minHeight: 28,
-    borderRadius: 14,
+    minHeight: 26,
+    borderRadius: 13,
     borderWidth: 1,
-    borderColor: '#eaded9',
-    backgroundColor: '#fbf7f6',
-    paddingHorizontal: 10,
+    borderColor: '#e8e1da',
+    backgroundColor: '#f3eee8',
+    paddingHorizontal: 9,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5
@@ -17173,33 +18860,29 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
   customUploadRow: {
-    marginTop: 14,
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
+    marginTop: 18,
     flexDirection: 'row',
-    gap: 12
+    alignItems: 'stretch',
+    gap: 10
   },
   customUploadRowCompact: {
     marginTop: 10,
     gap: 10
   },
   customUploadRowTablet: {
-    gap: 16
+    gap: 14
   },
   customProfileCard: {
-    width: 116,
-    height: 232,
-    borderRadius: 10,
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#eaded9',
-    backgroundColor: '#fffdfb',
+    borderColor: '#e8e1da',
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.34)' : '#f3eee8',
     overflow: 'hidden'
-  },
-  customProfileCardCompact: {
-    width: 92,
-    height: 176
-  },
-  customProfileCardTablet: {
-    width: 160,
-    height: 260
   },
   customProfileImage: {
     width: '100%',
@@ -17210,12 +18893,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
-    backgroundColor: '#f2ece9'
+    backgroundColor: '#f3eee8'
   },
   customProfileEmptyText: {
     ...typography.caption,
     marginTop: 8,
-    color: '#77716f',
+    color: '#625c57',
     textAlign: 'center',
     fontSize: 11,
     lineHeight: 15,
@@ -17226,8 +18909,8 @@ const styles = StyleSheet.create({
     left: 8,
     right: 8,
     bottom: 8,
-    borderRadius: 8,
-    backgroundColor: 'rgba(255, 253, 251, 0.9)',
+    borderRadius: 9,
+    backgroundColor: 'rgba(250, 248, 245, 0.94)',
     paddingHorizontal: 8,
     paddingVertical: 7
   },
@@ -17241,50 +18924,62 @@ const styles = StyleSheet.create({
   customProfileSub: {
     ...typography.caption,
     marginTop: 2,
-    color: '#77716f',
+    color: '#625c57',
     fontSize: 9,
     lineHeight: 12,
     fontWeight: '700',
     textTransform: 'uppercase'
   },
+  customCardBadge: {
+    position: 'absolute',
+    left: 9,
+    top: 9,
+    minHeight: 24,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    backgroundColor: 'rgba(250, 248, 245, 0.92)',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  customCardBadgeText: {
+    ...typography.caption,
+    color: '#5f5853',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    letterSpacing: 0.8
+  },
   customGarmentDrop: {
     flex: 1,
     minWidth: 0,
-    height: 232,
-    borderRadius: 10,
-    borderWidth: 1.5,
+    borderRadius: 14,
+    borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: '#cdbbb5',
-    backgroundColor: '#fffdfb',
+    borderColor: '#cfc2b9',
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.34)' : '#f3eee8',
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center'
   },
-  customGarmentDropCompact: {
-    height: 176
-  },
-  customGarmentDropTablet: {
-    height: 260
-  },
   customGarmentDropReady: {
     borderStyle: 'solid',
-    borderColor: '#9b5658'
+    borderColor: '#e8e1da'
   },
   customGarmentCopy: {
     alignItems: 'center',
-    paddingHorizontal: 18
+    paddingHorizontal: 12
   },
   customGarmentIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#fff5f3',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#faf8f5',
     alignItems: 'center',
     justifyContent: 'center'
   },
   customGarmentTitle: {
     ...typography.productTitle,
-    marginTop: 13,
+    marginTop: 11,
     color: '#2b2321',
     textAlign: 'center',
     fontWeight: '800'
@@ -17292,15 +18987,16 @@ const styles = StyleSheet.create({
   customGarmentHelp: {
     ...typography.caption,
     marginTop: 6,
-    color: '#6d625e',
+    color: '#625c57',
     textAlign: 'center',
-    fontSize: 11,
+    fontSize: 10.5,
     lineHeight: 16,
     fontWeight: '600'
   },
   customGarmentImage: {
     width: '100%',
-    height: '100%'
+    height: '100%',
+    backgroundColor: '#f3eee8'
   },
   customGarmentOverlay: {
     position: 'absolute',
@@ -17323,15 +19019,15 @@ const styles = StyleSheet.create({
     fontWeight: '800'
   },
   customResultCard: {
-    marginTop: 14,
-    borderRadius: 10,
+    marginTop: 18,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#eaded9',
-    backgroundColor: '#fffdfb',
+    borderColor: '#e8e1da',
+    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.34)' : '#faf8f5',
     overflow: 'hidden'
   },
   customResultHead: {
-    minHeight: 62,
+    minHeight: 58,
     paddingHorizontal: 14,
     paddingVertical: 12,
     flexDirection: 'row',
@@ -17339,9 +19035,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 12
   },
+  customResultCopy: {
+    flex: 1,
+    minWidth: 0
+  },
   customResultTitle: {
     ...typography.productTitle,
-    color: '#2b2321',
+    color: '#211f1d',
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '800'
@@ -17349,7 +19049,7 @@ const styles = StyleSheet.create({
   customResultSub: {
     ...typography.caption,
     marginTop: 2,
-    color: '#77716f',
+    color: '#625c57',
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '600'
@@ -17363,14 +19063,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   customResultFrame: {
-    minHeight: 368,
-    backgroundColor: '#f2ece9',
+    backgroundColor: '#f3eee8',
     alignItems: 'center',
     justifyContent: 'center'
   },
   customResultImage: {
     width: '100%',
-    height: 368
+    backgroundColor: '#f3eee8'
   },
   customResultState: {
     ...StyleSheet.absoluteFillObject,
@@ -17380,7 +19079,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20
   },
   customResultStateOverlay: {
-    backgroundColor: 'rgba(251, 247, 246, 0.72)'
+    backgroundColor: 'rgba(250, 248, 245, 0.82)'
+  },
+  customResultIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#faf8f5',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  customResultPlaceholder: {
+    ...typography.caption,
+    color: '#5f5955',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600'
   },
   customTryOnMessage: {
     marginTop: 12,
@@ -17430,8 +19144,22 @@ const styles = StyleSheet.create({
     textAlign: 'center'
   },
   customGenerateButton: {
-    marginTop: 16,
-    width: '100%'
+    marginTop: 0,
+    width: '100%',
+    minHeight: 52,
+    borderRadius: 12,
+    backgroundColor: '#111111'
+  },
+  customActionDock: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 12,
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 10,
+    backgroundColor: 'rgba(250, 248, 245, 0.97)'
   },
   debugText: {
     marginHorizontal: 16,
@@ -17537,33 +19265,33 @@ const styles = StyleSheet.create({
   },
   creditsScreen: {
     flex: 1,
-    backgroundColor: '#fbf8f7'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#FAF8F5'
   },
   creditsContent: {
     paddingBottom: 34
   },
   creditsHero: {
     paddingHorizontal: 24,
-    paddingTop: 34,
-    paddingBottom: 16,
-    gap: 24
+    paddingTop: 24,
+    paddingBottom: 18,
+    gap: 8
   },
   creditsHeroCopy: {
     gap: 10
   },
   creditsEyebrow: {
     ...typography.label,
-    color: '#a86164',
-    fontSize: 12,
+    color: '#9B5658',
+    fontSize: 11,
     lineHeight: 16,
-    letterSpacing: 0,
+    letterSpacing: 1.5,
     textTransform: 'uppercase'
   },
   creditsHeroTitle: {
-    ...typography.display,
-    color: '#171414',
-    fontSize: 54,
-    lineHeight: 58
+    fontFamily: fontFamilies.logo,
+    color: '#211F1D',
+    fontSize: 43,
+    lineHeight: 51
   },
   creditsBackLink: {
     ...typography.label,
@@ -17574,26 +19302,21 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase'
   },
   creditsHeroText: {
-    ...typography.label,
-    color: '#6f6967',
-    fontSize: 13,
-    lineHeight: 20,
-    letterSpacing: 0,
-    textTransform: 'uppercase'
+    ...typography.body,
+    color: '#625C56',
+    fontSize: 14,
+    lineHeight: 26
   },
   creditsBalanceCard: {
-    marginTop: 4,
+    marginTop: 6,
     marginHorizontal: 24,
-    minHeight: 86,
-    borderRadius: 8,
+    minHeight: 148,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#ead8bf',
-    backgroundColor: '#fff3df',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 13
+    borderColor: '#E8E1DA',
+    backgroundColor: '#F3EEE8',
+    paddingHorizontal: 20,
+    paddingVertical: 20
   },
   creditsBalanceIcon: {
     width: 42,
@@ -17604,31 +19327,85 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   creditsBalanceCopy: {
-    flex: 1,
     minWidth: 0
   },
   creditsBalanceLabel: {
     ...typography.label,
-    color: '#9b5658',
+    color: '#625C56',
     fontSize: 11,
     lineHeight: 15,
-    letterSpacing: 0,
+    letterSpacing: 1.2,
     textTransform: 'uppercase'
   },
   creditsBalanceHelp: {
     ...typography.caption,
-    marginTop: 4,
-    color: '#5f5550',
+    marginTop: 8,
+    color: '#625C56',
     fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600'
+    lineHeight: 24
   },
   creditsBalanceNumber: {
     ...typography.display,
-    color: '#171414',
-    fontSize: 36,
-    lineHeight: 40,
-    textAlign: 'right'
+    color: '#211F1D',
+    fontSize: 46,
+    lineHeight: 55,
+    marginTop: 8
+  },
+  creditsStatePanel: {
+    marginHorizontal: 24,
+    marginTop: 14,
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E8E1DA',
+    backgroundColor: '#FFFFFF',
+    gap: 8
+  },
+  creditsStateText: {
+    ...typography.body,
+    color: '#625C56',
+    fontSize: 13,
+    lineHeight: 20
+  },
+  creditsRetryText: {
+    ...typography.label,
+    color: '#211F1D',
+    fontSize: 13,
+    textDecorationLine: 'underline'
+  },
+  creditsSectionIntro: {
+    paddingHorizontal: 24,
+    paddingTop: 27,
+    gap: 5
+  },
+  creditsSectionHeading: {
+    fontFamily: fontFamilies.logo,
+    color: '#211F1D',
+    fontSize: 29,
+    lineHeight: 36
+  },
+  creditsSectionDescription: {
+    ...typography.body,
+    color: '#625C56',
+    fontSize: 13,
+    lineHeight: 24
+  },
+  creditsSubscriptionStatus: {
+    marginHorizontal: 24,
+    marginTop: 15,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E8E1DA',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    gap: 5
+  },
+  creditsSubscriptionStatusText: {
+    ...typography.body,
+    color: '#211F1D',
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '600'
   },
   creditsLoader: {
     marginTop: 8
@@ -17650,18 +19427,18 @@ const styles = StyleSheet.create({
     width: '31.8%'
   },
   creditMandateCard: {
-    minHeight: 252,
+    minHeight: 216,
     paddingHorizontal: 20,
     paddingVertical: 22,
-    borderRadius: 8,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#dccfcb',
-    backgroundColor: '#fffdfc',
-    overflow: 'hidden',
+    borderColor: '#E8E1DA',
+    backgroundColor: '#FFFFFF',
+    overflow: 'visible',
     gap: 10
   },
   creditMandateCardSelected: {
-    borderColor: '#b56b6c',
+    borderColor: '#211F1D',
     borderWidth: 1.3
   },
   creditSelectedRow: {
@@ -17680,7 +19457,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#1f1d1c',
     color: '#ffffff',
     fontSize: 9,
-    lineHeight: 12,
+    lineHeight: 17,
     fontWeight: '700'
   },
   creditActivePill: {
@@ -17706,9 +19483,9 @@ const styles = StyleSheet.create({
   },
   creditMandateTitle: {
     ...typography.display,
-    color: '#1c1919',
-    fontSize: 40,
-    lineHeight: 44
+    color: '#211F1D',
+    fontSize: 31,
+    lineHeight: 46
   },
   creditMandateSub: {
     ...typography.body,
@@ -17736,23 +19513,23 @@ const styles = StyleSheet.create({
     marginTop: 6,
     color: '#5e5956',
     fontSize: 13,
-    lineHeight: 19
+    lineHeight: 24
   },
   creditAddMoreCard: {
-    minHeight: 210,
+    minHeight: 176,
     paddingHorizontal: 20,
     paddingVertical: 24,
-    borderRadius: 8,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#e2d8d5',
-    backgroundColor: '#fffdfc',
+    borderColor: '#E8E1DA',
+    backgroundColor: '#FFFFFF',
     gap: 10
   },
   creditAddMoreTitle: {
     ...typography.display,
     color: '#1c1919',
     fontSize: 38,
-    lineHeight: 42
+    lineHeight: 53
   },
   topUpGrid: {
     paddingHorizontal: 24,
@@ -17760,15 +19537,29 @@ const styles = StyleSheet.create({
     gap: 14
   },
   topUpCreditCard: {
-    minHeight: 210,
-    paddingHorizontal: 20,
-    paddingVertical: 24,
-    borderRadius: 8,
+    minHeight: 132,
+    paddingHorizontal: 18,
+    paddingVertical: 17,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#ded5d2',
-    backgroundColor: '#fffdfc',
-    gap: 9,
-    overflow: 'hidden'
+    borderColor: '#E8E1DA',
+    backgroundColor: '#FFFFFF',
+    gap: 5,
+    overflow: 'visible'
+  },
+  creditPackageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  creditPackageQuantity: {
+    ...typography.body,
+    color: '#211F1D',
+    fontSize: 21,
+    lineHeight: 28,
+    fontWeight: '700'
   },
   topUpBestValue: {
     ...typography.caption,
@@ -17787,10 +19578,11 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   topUpPrice: {
-    ...typography.display,
-    color: '#1c1919',
-    fontSize: 42,
-    lineHeight: 48
+    ...typography.body,
+    color: '#211F1D',
+    fontSize: 20,
+    lineHeight: 27,
+    fontWeight: '700'
   },
   creditsDivider: {
     marginHorizontal: 24,
@@ -17886,18 +19678,23 @@ const styles = StyleSheet.create({
     minHeight: 64,
     paddingHorizontal: 15,
     paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#272323',
-    backgroundColor: '#fffdfc',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between'
+    borderColor: '#E8E1DA',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'stretch',
+    gap: 10
   },
   paymentMethodLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12
+    gap: 12,
+    flex: 1,
+    minWidth: 0
+  },
+  paymentMethodCopy: {
+    flex: 1,
+    minWidth: 0
   },
   phonePeMark: {
     width: 32,
@@ -17940,7 +19737,8 @@ const styles = StyleSheet.create({
     color: '#a45d5f',
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: '700'
+    fontWeight: '700',
+    alignSelf: 'stretch'
   },
   addPaymentCard: {
     marginTop: 10,
@@ -17964,13 +19762,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 24,
     paddingHorizontal: 22,
     paddingVertical: 26,
-    borderRadius: 8,
-    backgroundColor: '#fffdfc',
-    shadowColor: '#000000',
-    shadowOpacity: 0.05,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 3,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E8E1DA',
+    backgroundColor: '#FFFFFF',
     gap: 0
   },
   orderSummaryTitle: {
@@ -17994,10 +19789,7 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     borderBottomWidth: 1,
     borderBottomColor: '#eee5e2',
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 16
+    gap: 4
   },
   paymentSummaryLabel: {
     ...typography.body,
@@ -18011,8 +19803,7 @@ const styles = StyleSheet.create({
     color: '#2e2927',
     fontSize: 14,
     lineHeight: 20,
-    flex: 1,
-    textAlign: 'right'
+    textAlign: 'left'
   },
   paymentSummaryValueStrong: {
     fontWeight: '700'
@@ -18036,24 +19827,23 @@ const styles = StyleSheet.create({
   },
   orderSummaryTotalRow: {
     marginTop: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12
+    gap: 7
   },
   totalAmountLabel: {
     ...typography.label,
     color: '#111111',
     fontSize: 15,
     letterSpacing: 0,
-    fontWeight: '500'
+    fontWeight: '500',
+    flexShrink: 1
   },
   totalAmountValue: {
     ...typography.h3,
     color: '#111111',
-    fontSize: 32,
-    lineHeight: 39,
-    fontWeight: '700'
+    fontSize: 28,
+    lineHeight: 36,
+    fontWeight: '700',
+    flexShrink: 1
   },
   cancelMandateButton: {
     marginTop: 16,
@@ -18085,15 +19875,11 @@ const styles = StyleSheet.create({
     marginTop: 28,
     marginHorizontal: 24,
     height: 52,
-    borderRadius: 8,
-    backgroundColor: '#050505',
+    borderRadius: 12,
+    backgroundColor: '#111111',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000000',
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 7 },
-    elevation: 5
+    minHeight: 52
   },
   secureCheckoutText: {
     color: '#ffffff',
@@ -18138,6 +19924,55 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 8
+  },
+  creditsHistorySection: {
+    marginTop: 36,
+    marginHorizontal: 24,
+    padding: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E8E1DA',
+    backgroundColor: '#FFFFFF',
+    gap: 9
+  },
+  creditsHistoryHeading: {
+    fontFamily: fontFamilies.logo,
+    color: '#211F1D',
+    fontSize: 28,
+    lineHeight: 35
+  },
+  creditsHistoryRow: {
+    paddingVertical: 13,
+    borderTopWidth: 1,
+    borderTopColor: '#E8E1DA',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12
+  },
+  creditsHistoryCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3
+  },
+  creditsHistoryTitle: {
+    ...typography.body,
+    color: '#211F1D',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600'
+  },
+  creditsHistoryMeta: {
+    ...typography.caption,
+    color: '#625C56',
+    fontSize: 12,
+    lineHeight: 18
+  },
+  creditsHistoryAmount: {
+    ...typography.body,
+    color: '#211F1D',
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '700'
   },
   creditsFooterLinks: {
     marginTop: 16,
@@ -18341,7 +20176,7 @@ const styles = StyleSheet.create({
   },
   generationHistoryScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
   },
   generationHistoryContent: {
     paddingHorizontal: 18,
@@ -18505,10 +20340,26 @@ const styles = StyleSheet.create({
   },
   profileScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#FAF8F5'
   },
   profileContent: {
-    paddingBottom: screenBottomInset
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 24
+  },
+  profileIntro: {
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 22
+  },
+  profilePageTitle: {
+    fontFamily: fontFamilies.logo,
+    fontSize: 32,
+    lineHeight: 42,
+    color: '#211F1D'
+  },
+  profilePageSubtitle: {
+    ...typography.smallBody,
+    marginTop: 2,
+    color: '#625C56'
   },
   profileTopBar: {
     height: 58,
@@ -18536,24 +20387,30 @@ const styles = StyleSheet.create({
     color: '#111111'
   },
   profileHero: {
-    paddingTop: 26,
-    paddingHorizontal: 22,
+    marginHorizontal: 18,
+    paddingVertical: 22,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: '#E8E1DA',
+    borderRadius: 12,
+    backgroundColor: '#fffdfb',
+    flexDirection: 'row',
     alignItems: 'center',
-    minHeight: 268
+    gap: 18
   },
   profilePhotoWrap: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
+    width: 88,
+    height: 88,
+    position: 'relative'
+  },
+  profilePhotoFrame: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     overflow: 'hidden',
-    backgroundColor: '#efe7e4',
-    borderWidth: 3,
-    borderColor: '#ffffff',
-    shadowColor: '#000000',
-    shadowOpacity: 0.09,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3
+    backgroundColor: '#F3EEE8',
+    borderWidth: 2,
+    borderColor: '#E8E1DA'
   },
   profilePhoto: {
     width: '100%',
@@ -18572,25 +20429,24 @@ const styles = StyleSheet.create({
   },
   profilePhotoAction: {
     position: 'absolute',
-    right: -1,
-    bottom: 1,
-    width: 21,
-    height: 21,
-    borderRadius: 11,
+    right: -3,
+    bottom: -3,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: '#050505',
     borderWidth: 2,
     borderColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center'
   },
-  profileCopy: {
+  profileIdentityCopy: {
     flex: 1
   },
   profileName: {
     ...typography.h3,
-    marginTop: 18,
-    color: '#2b2321',
-    textAlign: 'center'
+    color: '#211F1D',
+    lineHeight: 30
   },
   profileRole: {
     ...typography.caption,
@@ -18602,28 +20458,25 @@ const styles = StyleSheet.create({
   },
   profileBio: {
     ...typography.caption,
-    marginTop: 12,
-    maxWidth: 320,
-    color: '#5d5754',
-    textAlign: 'center',
+    marginTop: 5,
+    color: '#625C56',
     fontSize: 12,
-    lineHeight: 18,
-    fontWeight: '500'
+    lineHeight: 22
   },
   profileEditButton: {
-    marginTop: 16,
-    minWidth: 132,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#050505',
+    marginTop: 13,
+    minHeight: 44,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center'
+    gap: 6
   },
   profileEditText: {
     ...typography.caption,
-    color: '#ffffff',
+    color: '#211F1D',
     fontSize: 12,
-    fontWeight: '700'
+    fontWeight: '700',
+    textDecorationLine: 'underline'
   },
   profileEditOverlay: {
     flex: 1,
@@ -18650,6 +20503,7 @@ const styles = StyleSheet.create({
     elevation: 8
   },
   profileDeleteSheet: {
+    maxHeight: '90%',
     borderColor: '#edd1ce',
     backgroundColor: '#fffafa'
   },
@@ -18696,48 +20550,6 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     backgroundColor: '#f5efec',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  avatarAdjustPreviewWrap: {
-    marginTop: 18,
-    alignItems: 'center'
-  },
-  avatarAdjustPreviewFrame: {
-    width: 132,
-    height: 132,
-    borderRadius: 66,
-    overflow: 'hidden',
-    borderWidth: 4,
-    borderColor: '#ffffff',
-    backgroundColor: '#eee9e6',
-    shadowColor: '#000000',
-    shadowOpacity: 0.11,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4
-  },
-  avatarAdjustPreviewImage: {
-    width: '100%',
-    height: '100%'
-  },
-  avatarAdjustControls: {
-    marginTop: 18,
-    gap: 8,
-    alignItems: 'center'
-  },
-  avatarAdjustRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 10
-  },
-  avatarAdjustIconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    borderWidth: 1,
-    borderColor: '#ded3ce',
-    backgroundColor: '#fbf7f6',
     alignItems: 'center',
     justifyContent: 'center'
   },
@@ -18905,19 +20717,14 @@ const styles = StyleSheet.create({
   },
   profileCreditsCard: {
     marginHorizontal: 18,
-    marginTop: 4,
+    marginTop: 18,
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 18,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e5dcd9',
-    backgroundColor: '#fbf7f6',
-    shadowColor: '#000000',
-    shadowOpacity: 0.03,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 1
+    borderColor: '#E8E1DA',
+    backgroundColor: '#F3EEE8'
   },
   profileCreditsHead: {
     flexDirection: 'row',
@@ -19026,11 +20833,30 @@ const styles = StyleSheet.create({
     borderBottomColor: '#efe4df'
   },
   profileCreditHistoryRow: {
-    minHeight: 36,
+    minHeight: 54,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#f3e9e5'
+  },
+  profileCreditEventCopy: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 8
+  },
+  profileCreditEventTitle: {
+    ...typography.smallBody,
+    color: '#211F1D',
+    fontWeight: '700',
+    lineHeight: 24
+  },
+  profileCreditEventMeta: {
+    ...typography.caption,
+    color: '#625C56',
+    marginTop: 2,
+    lineHeight: 21
   },
   profileCreditColumnLabel: {
     ...typography.caption,
@@ -19092,11 +20918,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between'
   },
   profileSectionTitle: {
-    ...typography.h2,
-    color: '#2b2321',
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '600'
+    fontFamily: fontFamilies.logo,
+    color: '#211F1D',
+    fontSize: 25,
+    lineHeight: 34
   },
   profilePhotoCount: {
     ...typography.caption,
@@ -19222,10 +21047,10 @@ const styles = StyleSheet.create({
     gap: 12
   },
   profileQuickCard: {
-    minHeight: 72,
-    borderRadius: 8,
+    minHeight: 68,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#e5dcd9',
+    borderColor: '#E8E1DA',
     backgroundColor: '#fffdfc',
     paddingHorizontal: 18,
     flexDirection: 'row',
@@ -19236,7 +21061,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: '#f4eeee',
+    backgroundColor: '#F3EEE8',
     alignItems: 'center',
     justifyContent: 'center'
   },
@@ -19257,11 +21082,13 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   profilePaymentCard: {
-    marginTop: 24,
-    minHeight: 82,
-    borderRadius: 8,
-    backgroundColor: '#f0eaea',
-    paddingHorizontal: 22,
+    marginTop: 16,
+    minHeight: 74,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E8E1DA',
+    backgroundColor: '#fffdfb',
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 18
@@ -19271,6 +21098,14 @@ const styles = StyleSheet.create({
     height: 27,
     borderRadius: 4,
     backgroundColor: '#111111',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  profilePaymentIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#F3EEE8',
     alignItems: 'center',
     justifyContent: 'center'
   },
@@ -19297,19 +21132,32 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   profileSettingsList: {
-    marginTop: 24
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E8E1DA'
   },
   profileSettingsRow: {
-    minHeight: 77,
+    minHeight: 68,
     borderBottomWidth: 1,
-    borderBottomColor: '#e9e1de',
+    borderBottomColor: '#E8E1DA',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between'
   },
+  profileSettingsIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#F3EEE8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 13
+  },
   profileSettingsCopy: {
     flex: 1,
-    paddingRight: 20
+    minWidth: 0,
+    paddingRight: 12,
+    paddingVertical: 10
   },
   profileSettingsLabel: {
     ...typography.smallBody,
@@ -19320,9 +21168,10 @@ const styles = StyleSheet.create({
   profileSettingsValue: {
     ...typography.smallBody,
     marginTop: 4,
-    color: '#3f3937',
-    fontSize: 14,
-    fontWeight: '700'
+    color: '#211F1D',
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 22
   },
   profileLogoutButton: {
     marginTop: 58,
@@ -19360,7 +21209,7 @@ const styles = StyleSheet.create({
   },
   collectionsScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
   },
   collectionsContent: {
     paddingBottom: bottomNavigationHeight + screenBottomInset + 28
@@ -19664,7 +21513,7 @@ const styles = StyleSheet.create({
   },
   wishlistScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#FAF8F5'
   },
   wishlistContent: {
     paddingBottom: screenBottomInset
@@ -19700,20 +21549,32 @@ const styles = StyleSheet.create({
     gap: 12
   },
   wishlistBody: {
-    paddingHorizontal: 35,
-    paddingTop: 31
+    paddingHorizontal: 18,
+    paddingTop: 20
+  },
+  wishlistEyebrow: {
+    ...typography.label,
+    color: '#9B5658',
+    fontSize: 10,
+    letterSpacing: 1.4,
+    marginBottom: 7
   },
   wishlistTitle: {
-    ...typography.h1,
-    color: '#2b2321',
-    fontSize: 26,
-    lineHeight: 32,
-    fontWeight: '700'
+    fontFamily: fontFamilies.logo,
+    color: '#211F1D',
+    fontSize: 32,
+    lineHeight: 42
+  },
+  wishlistSubtitle: {
+    ...typography.body,
+    color: '#625C56',
+    lineHeight: 26,
+    marginTop: 3
   },
   wishlistCount: {
-    ...typography.body,
-    color: '#77716f',
-    fontSize: 15
+    ...typography.caption,
+    color: '#625C56',
+    marginTop: 9
   },
   wishlistActionRow: {
     marginTop: 14,
@@ -19752,11 +21613,12 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   wishlistTabs: {
-    paddingTop: 42,
-    gap: 28
+    paddingTop: 25,
+    gap: 22
   },
   wishlistTab: {
     minHeight: 22,
+    flexShrink: 0,
     justifyContent: 'center'
   },
   wishlistTabText: {
@@ -19764,14 +21626,15 @@ const styles = StyleSheet.create({
     color: '#4b4644',
     fontSize: 14,
     fontWeight: '700',
+    flexShrink: 0,
     letterSpacing: 0
   },
   wishlistTabTextActive: {
     color: '#111111'
   },
   wishlistSortRow: {
-    marginTop: 27,
-    paddingBottom: 28,
+    marginTop: 18,
+    paddingBottom: 19,
     borderTopWidth: 1,
     borderTopColor: '#eee7e4',
     paddingTop: 12,
@@ -19781,9 +21644,11 @@ const styles = StyleSheet.create({
   },
   wishlistSortText: {
     ...typography.caption,
-    color: '#77716f',
+    color: '#625C56',
     fontSize: 12,
-    fontWeight: '700'
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8
   },
   wishlistSortStrong: {
     color: '#3f3937'
@@ -19845,7 +21710,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    rowGap: 30
+    rowGap: 24
   },
   wishlistList: {
     flexDirection: 'column',
@@ -19854,7 +21719,8 @@ const styles = StyleSheet.create({
     rowGap: 14
   },
   wishlistProductCard: {
-    width: '47%'
+    width: '48%',
+    minWidth: 0
   },
   wishlistProductCardCompact: {
     width: '31%'
@@ -19873,9 +21739,9 @@ const styles = StyleSheet.create({
   wishlistProductImageWrap: {
     width: '100%',
     aspectRatio: productImageAspectRatio,
-    borderRadius: 8,
+    borderRadius: 10,
     overflow: 'hidden',
-    backgroundColor: '#eee8e3'
+    backgroundColor: '#F3EEE8'
   },
   wishlistProductImageWrapList: {
     width: 92,
@@ -19889,11 +21755,11 @@ const styles = StyleSheet.create({
   },
   wishlistHeartButton: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    top: 6,
+    right: 6,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center'
@@ -19906,7 +21772,7 @@ const styles = StyleSheet.create({
   wishlistProductBrand: {
     ...typography.caption,
     marginTop: 12,
-    color: '#4b4644',
+    color: '#625C56',
     fontSize: 12,
     letterSpacing: 0,
     fontWeight: '700'
@@ -19921,10 +21787,10 @@ const styles = StyleSheet.create({
   wishlistProductName: {
     ...typography.smallBody,
     marginTop: 4,
-    minHeight: 35,
-    color: '#1e1a19',
+    minHeight: 40,
+    color: '#211F1D',
     fontSize: 14,
-    lineHeight: 17,
+    lineHeight: 20,
     fontWeight: '500'
   },
   wishlistProductNameCompact: {
@@ -19932,10 +21798,14 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 14
   },
+  wishlistProductNameList: {
+    minHeight: 0,
+    lineHeight: 22
+  },
   wishlistProductPrice: {
     ...typography.price,
     marginTop: 4,
-    color: '#050505',
+    color: '#211F1D',
     fontSize: 15,
     fontWeight: '700'
   },
@@ -19970,7 +21840,7 @@ const styles = StyleSheet.create({
   },
   wishlistMoveButton: {
     marginTop: 12,
-    height: 31,
+    minHeight: 44,
     borderRadius: 7,
     backgroundColor: '#050505',
     alignItems: 'center',
@@ -19978,7 +21848,7 @@ const styles = StyleSheet.create({
   },
   wishlistMoveButtonCompact: {
     marginTop: 8,
-    height: 28,
+    minHeight: 44,
     borderRadius: 6
   },
   wishlistMoveButtonList: {
@@ -19992,15 +21862,80 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700'
   },
-  wishlistProCard: {
-    marginTop: 60,
-    paddingHorizontal: 23,
-    paddingTop: 25,
-    paddingBottom: 22,
+  wishlistEmptyState: {
+    width: '100%',
+    marginTop: 18,
+    paddingHorizontal: 24,
+    paddingVertical: 32,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#ff9d9d',
-    backgroundColor: '#ffe1e1'
+    borderColor: '#E8E1DA',
+    backgroundColor: '#FFFDFC',
+    alignItems: 'center'
+  },
+  wishlistStatusPanel: {
+    minHeight: 180,
+    marginTop: 18,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E8E1DA',
+    backgroundColor: '#FFFDFC',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wishlistStatusText: {
+    ...typography.body,
+    marginTop: 12,
+    color: '#625C56',
+    textAlign: 'center'
+  },
+  wishlistEmptyIcon: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#F3EEE8',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wishlistEmptyTitle: {
+    fontFamily: fontFamilies.logo,
+    fontSize: 26,
+    lineHeight: 34,
+    marginTop: 19,
+    color: '#211F1D',
+    textAlign: 'center'
+  },
+  wishlistEmptyText: {
+    ...typography.body,
+    marginTop: 8,
+    color: '#625C56',
+    textAlign: 'center'
+  },
+  wishlistEmptyAction: {
+    minHeight: 48,
+    marginTop: 23,
+    paddingHorizontal: 19,
+    borderRadius: 8,
+    backgroundColor: '#111111',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  wishlistEmptyActionText: {
+    ...typography.button,
+    color: '#FFFFFF',
+    fontSize: 14
+  },
+  wishlistProCard: {
+    marginTop: 38,
+    paddingHorizontal: 20,
+    paddingVertical: 21,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E8E1DA',
+    backgroundColor: '#F3EEE8'
   },
   wishlistProBadge: {
     ...typography.caption,
@@ -20009,25 +21944,24 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 3,
     overflow: 'hidden',
-    backgroundColor: '#9b5658',
-    color: '#ffffff',
+    backgroundColor: '#FFFDFC',
+    color: '#625C56',
     fontSize: 9,
     letterSpacing: 0,
     fontWeight: '700'
   },
   wishlistProTitle: {
-    ...typography.h2,
-    marginTop: 20,
-    color: '#9b5658',
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '600'
+    fontFamily: fontFamilies.logo,
+    marginTop: 13,
+    color: '#211F1D',
+    fontSize: 24,
+    lineHeight: 32
   },
   wishlistProText: {
     ...typography.smallBody,
     marginTop: 12,
     maxWidth: 270,
-    color: '#9b5658',
+    color: '#625C56',
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '500'
@@ -20037,7 +21971,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     height: 38,
     borderRadius: 19,
-    backgroundColor: '#9b5658',
+    backgroundColor: '#111111',
     paddingHorizontal: 24,
     alignItems: 'center',
     justifyContent: 'center'
@@ -20088,7 +22022,7 @@ const styles = StyleSheet.create({
   },
   ordersScreen: {
     flex: 1,
-    backgroundColor: '#fbf7f6'
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
   },
   ordersContent: {
     paddingBottom: screenBottomInset
@@ -21171,34 +23105,46 @@ const styles = StyleSheet.create({
   },
   tourBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(17, 17, 17, 0.56)'
+    backgroundColor: 'rgba(24, 21, 19, 0.58)'
   },
   tourDimPiece: {
     position: 'absolute',
     backgroundColor: 'rgba(17, 17, 17, 0.62)'
   },
+  tourSpotlightCorner: {
+    position: 'absolute',
+    width: 16,
+    height: 16,
+    backgroundColor: 'rgba(17, 17, 17, 0.62)'
+  },
+  tourSpotlightCornerTopLeft: {
+    borderBottomRightRadius: 16
+  },
+  tourSpotlightCornerTopRight: {
+    borderBottomLeftRadius: 16
+  },
+  tourSpotlightCornerBottomLeft: {
+    borderTopRightRadius: 16
+  },
+  tourSpotlightCornerBottomRight: {
+    borderTopLeftRadius: 16
+  },
   tourSpotlight: {
     position: 'absolute',
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#fffdfb',
-    backgroundColor: 'rgba(255, 253, 251, 0.08)',
-    shadowColor: '#ffffff',
-    shadowOpacity: 0.32,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 9
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(250, 248, 245, 0.92)'
   },
   tourCard: {
     width: '100%',
-    maxWidth: 344,
-    borderRadius: 8,
+    maxWidth: 360,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#eaded9',
-    backgroundColor: '#fffdfb',
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 14,
+    borderColor: '#e8e1da',
+    backgroundColor: '#faf8f5',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
     shadowColor: '#111111',
     shadowOpacity: 0.18,
     shadowRadius: 26,
@@ -21214,53 +23160,60 @@ const styles = StyleSheet.create({
   },
   tourCloseButton: {
     position: 'absolute',
-    top: 12,
-    right: 12,
+    top: 10,
+    right: 10,
     zIndex: 2,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: '#eaded9',
+    borderColor: '#e8e1da',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fffdfb'
+    backgroundColor: '#faf8f5'
   },
   tourIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: '#fff5f3',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#f3eee8',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10
   },
   tourEyebrow: {
     ...typography.label,
-    color: '#9b5658',
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '700'
+    color: '#77716c',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 1.5
   },
   tourTitle: {
-    ...typography.h3,
-    marginTop: 6,
-    color: '#2b2321',
-    textAlign: 'center'
+    marginTop: 7,
+    color: '#211f1d',
+    fontFamily: fontFamilies.logo,
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: '400',
+    textAlign: 'center',
+    letterSpacing: -0.2
   },
   tourText: {
     ...typography.smallBody,
-    marginTop: 7,
-    color: '#5d5754',
+    marginTop: 8,
+    color: '#625c56',
+    fontSize: 14,
+    lineHeight: 20,
     textAlign: 'center',
-    fontWeight: '500'
+    fontWeight: '400'
   },
   tourHintRow: {
     marginTop: 12,
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#eaded9',
-    backgroundColor: '#fbf7f6',
+    borderColor: '#e8e1da',
+    backgroundColor: '#f3eee8',
     paddingHorizontal: 12,
     paddingVertical: 8,
     flexDirection: 'row',
@@ -21270,8 +23223,10 @@ const styles = StyleSheet.create({
   tourHintText: {
     ...typography.caption,
     flex: 1,
-    color: '#6d625e',
-    fontWeight: '600'
+    color: '#625c56',
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '500'
   },
   tourDots: {
     marginTop: 14,
@@ -21281,14 +23236,14 @@ const styles = StyleSheet.create({
     gap: 7
   },
   tourDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#eaded9'
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#ddd5ce'
   },
   tourDotActive: {
-    width: 18,
-    backgroundColor: '#9b5658'
+    width: 20,
+    backgroundColor: '#625c56'
   },
   tourActions: {
     marginTop: 14,
@@ -21297,8 +23252,8 @@ const styles = StyleSheet.create({
   },
   tourPrimaryButton: {
     flex: 1,
-    minHeight: 44,
-    borderRadius: 8,
+    minHeight: 48,
+    borderRadius: 12,
     backgroundColor: '#111111',
     flexDirection: 'row',
     alignItems: 'center',
@@ -21316,29 +23271,31 @@ const styles = StyleSheet.create({
   },
   tourSecondaryButton: {
     minWidth: 96,
-    minHeight: 44,
-    borderRadius: 8,
+    minHeight: 48,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#d8c7c2',
+    borderColor: '#d8d0c9',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fffdfb',
+    backgroundColor: '#faf8f5',
     paddingHorizontal: 14
   },
   tourSecondaryText: {
     ...typography.button,
-    color: '#5d5754'
+    color: '#625c56'
   },
   tourSkipButton: {
-    marginTop: 8,
+    marginTop: 6,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 32
+    minHeight: 44
   },
   tourSkipText: {
     ...typography.caption,
-    color: '#77716f',
-    fontWeight: '700'
+    color: '#77716c',
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600'
   },
   authPromptBackdrop: {
     flex: 1,

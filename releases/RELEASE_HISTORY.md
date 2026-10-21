@@ -3,6 +3,167 @@
 This file is the durable release baseline used for future APK/AAB builds and
 comparison reports.
 
+## 1.0.1 (Android versionCode 29; iOS build 27 archive; fixes for build 28/26)
+
+- Built and verified: 2026-10-19 IST. Version remains 1.0.1 on both platforms;
+  Android increments 28 to 29 and iOS increments 26 to 27.
+- Android artifacts: `lookmefy-1.0.1-build29/lookmefy-1.0.1-29.apk` and
+  `lookmefy-1.0.1-build29/lookmefy-1.0.1-29.aab`; convenience copies are
+  `../mobile/release/lookmefy-v1.0.1-vc29.apk` and the corresponding `.aab`.
+- APK size: 85,629,415 bytes; SHA-256:
+  `06f0bc634db75fd40ea7ea3478a8eeac283a1422b07f79242c92680d7f503e4b`
+- AAB size: 67,387,838 bytes; SHA-256:
+  `d0c325c31d8986e7067c304a90d59663c807ef58368bd287576127b966e084e2`
+- Android correction: remove unused `com.android.vending.BILLING`. expo-iap
+  is excluded from Android autolinking, no Google billing dependency resolves,
+  but its config plugin left this permission, resulting in the reported Play
+  legacy-AIDL error. Persistent config-plugin removal and blockedPermissions
+  prevent reintroduction. No fake billing-version metadata was added.
+- APK and decoded AAB confirm 1.0.1/code 29 and absent BILLING permission;
+  no other permission changes from code 28. Same package `com.lookmefy.app`,
+  minimum SDK 24, target/compile 36, ABIs arm64-v8a/armeabi-v7a/x86/x86_64,
+  replacement upload-key SHA-1
+  `E0:47:A9:8F:96:B2:3A:0F:D3:22:32:75:97:59:60:3D:51:05:B0:EB`.
+- Gradle assembleRelease/bundleRelease, release lint, APK/AAB identity and signing,
+  expected upload key, ZIP CRC and APK 16 KB alignment passed. The new verifier
+  rejects build 28's stale billing permission and accepts build 29. Expo config
+  introspection and dependency inspection passed. Bundletool/Play server
+  validation was not run. APK/AAB are respectively 16/26 bytes smaller than 28.
+- iOS archive: `../mobile/release/lookmefy-ios-1.0.1-build27.xcarchive`;
+  portable ZIP: `../mobile/release/lookmefy-ios-1.0.1-build27.xcarchive.zip`.
+- iOS archive ZIP: 62,575,125 bytes; SHA-256:
+  `5bb56077447fcdc350d5b6f2c14ab43859af7f87c4c490e77b22a9ae1f473a8c`
+- iOS correction: build 26 packaged a Debug Hermes engine in a Release app.
+  The crash was reproduced in a Release simulator build; LLDB captured native
+  EXC_BAD_ACCESS in Hermes runtime initialization. Debug UUID in archive 26:
+  `3CB559A9-19A5-3571-886A-934297F3E6E6`. Build 27 contains the pinned Release
+  engine UUID `80D5528F-2C78-3B90-B90F-747E89A9F880`.
+- Added a Podfile build-phase guard that compares device/simulator engine and
+  header hashes with pinned React Native 0.81.5 artifacts before trusting the
+  configuration marker. Regression test repairs Debug files with a stale Release
+  marker and confirms idempotence. New iOS verifier rejects the faulty 26 archive.
+- Verified iOS bundle `com.kratikdhote.lookmefy`, 1.0.1 (27), arm64, minimum
+  iOS 15.1, SDK iphoneos26.5, Xcode 26.6. Archive is Apple Development signed
+  for team LJ48CVC23W and passed strict/deep codesign verification. Archive ZIP
+  CRC passed. Same bundle/version/SDK/minimum OS and usage strings as build 26;
+  archive file bytes decrease by 2,033,728 due to the configuration correction.
+- Corrected iOS simulator Release renders home and passes three cold launches
+  without Metro; a later check confirms continued execution. Home screenshot,
+  pre-fix crash stack and smoke evidence are in `lookmefy-ios-1.0.1-build27/`.
+- **App Store IPA export remains blocked:** no iOS Distribution signing identity
+  is currently available in Keychain and Xcode account credentials are missing.
+  Expo has no saved iOS credentials for this project. No new distribution IPA
+  was produced. Restore distribution signing access, then export this archive.
+  No certificates were created or revoked; no store upload/publication occurred.
+- User-facing change: repair the reproduced startup crash and Android billing
+  declaration. No feature or checkout-flow change was made. No physical-device
+  or TestFlight retest was performed; the user's device stack was not supplied.
+- Both repositories had existing dirty changes, which remain included. Native
+  Android files are ignored in the nested repository, limiting exact source
+  comparison. Prior Android pair and iOS archive/IPA were available. Binary facts
+  and reproduced simulator behavior are verified; broader source-history feature
+  differences are not inferred as verified behavior.
+- Evidence: Android directory contains verification facts/signing/manifest/build/
+  dependency/source records. iOS directory contains archive verification facts,
+  regression/simulator evidence, debugger stack, build and failed-export logs.
+- PDF report: `../../output/pdf/lookmefy-fix-release-1.0.1-android29-ios27-2026-10-19.pdf`
+  (SHA-256 `281019a052b20614d0a8ed2df714cfd1b59eff4c2dd9a4af5e572594186a1535`)
+
+## 1.0.1 (Android versionCode 28; iOS build 26; local signed, not uploaded)
+
+- Built and verified: 2026-10-19 IST. Both platforms use version 1.0.1 at
+  the user's explicit request. Android increments 27 to 28 while its versionName
+  changes from 1.0.3 to 1.0.1; iOS increments 25 to 26 and retains 1.0.1.
+- Android artifacts: `lookmefy-1.0.1-build28/lookmefy-1.0.1-28.apk` and
+  `lookmefy-1.0.1-build28/lookmefy-1.0.1-28.aab`.
+- Android convenience copies: `../mobile/release/lookmefy-v1.0.1-vc28.apk`
+  and `../mobile/release/lookmefy-v1.0.1-vc28.aab`.
+- APK size: 85,629,431 bytes; SHA-256:
+  `4af175f9b55787123f036d369ac88df2fb7a6c8d2586b224b698646ce2db9aff`
+- AAB size: 67,387,864 bytes; SHA-256:
+  `0a3e14a6437eed0940290f53e2f7b54757c0035e3497b066ee8f4872249ca906`
+- Binary-verified Android package `com.lookmefy.app`, versionName `1.0.1`,
+  versionCode `28`; minimum SDK 24, target/compile SDK 36; ABIs arm64-v8a,
+  armeabi-v7a, x86, x86_64. Permissions unchanged from code 27, including
+  RECORD_AUDIO and READ/WRITE_EXTERNAL_STORAGE in the native manifest.
+- APK/AAB signed with the same replacement upload key as code 27, SHA-1
+  `E0:47:A9:8F:96:B2:3A:0F:D3:22:32:75:97:59:60:3D:51:05:B0:EB`.
+- Gradle 8.13 assembleRelease/bundleRelease and release lint passed. APK signing,
+  AAB JAR signature/key, APK/AAB version identity, ZIP CRC and APK 16 KB alignment
+  checks passed. AAB protobuf manifest was decoded; bundletool validation was
+  not run. APK is 23,760 bytes larger and AAB 13,604 bytes larger than code 27.
+- iOS IPA: `lookmefy-ios-1.0.1-build26/lookmefy-ios-1.0.1-26.ipa`.
+- iOS archive: `../mobile/release/lookmefy-ios-1.0.1-build26.xcarchive`;
+  portable ZIP: `../mobile/release/lookmefy-ios-1.0.1-build26.xcarchive.zip`.
+- iOS IPA: 38,184,781 bytes; SHA-256:
+  `72f10b2684e797ca968f578aaa81d31206cc66284e45f5c8ac867e3fdb11c432`
+- iOS archive ZIP: 63,182,215 bytes; SHA-256:
+  `22b1d2317253c56ce3c66b7aac002babc5270cec18cee888462d615d7a868bf4`
+- Binary-verified iOS bundle `com.kratikdhote.lookmefy`, version `1.0.1`,
+  build `26`, arm64, minimum iOS 15.1, SDK iphoneos26.5. Xcode 26.6 Release
+  archive and local App Store Connect IPA export succeeded. Archive is Apple
+  Development signed; IPA is Apple Distribution signed for team LJ48CVC23W.
+  Both passed deep/strict codesign verification with system trust services.
+  IPA and archive ZIP passed CRC checks. IPA is for App Store Connect distribution.
+- Compared with iOS build 25: build increment; same semantic version, bundle ID,
+  minimum OS, SDK and camera/photo usage strings. Archive file bytes increased
+  by 92,994; no baseline build-25 IPA was present for IPA-to-IPA comparison.
+- No feature changes were intentionally made in this task. Existing dirty mobile
+  source is included. Source-history observations of try-on/home/navigation work
+  are inferences, not binary-verified new behavior. Root and nested repositories
+  were dirty before building; native Android sources are ignored by the nested
+  repository, limiting exact source comparison. Prior Android APK/AAB and iOS
+  build-25 archive were available and inspected.
+- No store upload/publication, device smoke test or App Store server validation
+  was performed. Initial SDK/cache/trust sandbox issues were resolved before
+  final build/signature verification.
+- Evidence: Android and iOS versioned release directories contain
+  `verification-facts.json`, `VERIFICATION.txt` and build logs; Android also has
+  decoded manifest, ZIP alignment and source-status/history evidence.
+- PDF report: `../../output/pdf/lookmefy-release-1.0.1-android28-ios26-2026-10-19.pdf`
+  (SHA-256 `f0d83ca89d4f29d95c01836f275bc6fa1c91fda6a6a1bf3071a4af7130dc91aa`)
+
+## 1.0.3 (Android versionCode 27; local signed, not uploaded)
+
+- Built and verified: 2026-10-15 IST. VersionCode 27 explicitly requested;
+  preceding recorded baseline is version 1.0.2 / code 25. No code-26 release
+  is recorded. VersionName 1.0.3 follows the patch increment from that baseline.
+- Artifacts: `lookmefy-1.0.3-build27/lookmefy-1.0.3-27.aab` and
+  `lookmefy-1.0.3-build27/lookmefy-1.0.3-27.apk`.
+- Convenience copies: `../mobile/release/lookmefy-v1.0.3-vc27.aab` and
+  `../mobile/release/lookmefy-v1.0.3-vc27.apk`.
+- AAB size: 67,374,260 bytes; SHA-256:
+  `8280a828669c09c4b4c4212e7e82ca5ef6d9428a3d5ee2cf826464e9c0c3d813`
+- APK size: 85,605,671 bytes; SHA-256:
+  `e1fb588d770cb1e527a11febaf08f344dd1f09c70494559c3901d468e0055a15`
+- Binary-verified package `com.lookmefy.app`, versionName `1.0.3`, code `27`;
+  minimum SDK 24, target/compile SDK 36; ABIs arm64-v8a, armeabi-v7a, x86, x86_64.
+- Signed using the replacement EAS upload key, SHA-1
+  `E0:47:A9:8F:96:B2:3A:0F:D3:22:32:75:97:59:60:3D:51:05:B0:EB`.
+  The user-supplied Play confirmation schedules activation for 2026-10-17
+  07:17 UTC / 12:47 IST. No Play upload or publication was performed.
+- Private EAS keystore, credentials JSON and Gradle signing properties were
+  downloaded/saved locally with private permissions and are excluded from Git.
+- Gradle 8.13 assembleRelease and bundleRelease passed. APK signature,
+  AAB JAR signature, expected certificate, binary identity, ZIP CRC checks,
+  bundletool validation and APK 16 KB zipalign verification passed.
+- Binary permission comparison: no additions; FOREGROUND_SERVICE and
+  FOREGROUND_SERVICE_MEDIA_PLAYBACK removed compared with code 25. Microphone
+  and external-storage permissions remain present in the native binary.
+- Compared with code 25: semantic version/code increase, target/compile SDK
+  35 to 36, replacement signing certificate, same ABI set, and changed sizes.
+  No feature changes were intentionally made in this task; existing source
+  commits indicate try-on/home/navigation/style-rail updates, an inference
+  rather than binary-verified behavior. No device smoke test was performed.
+- Dirty root and nested working trees existed before this task, including
+  version/signing and iOS changes. Native Android files are ignored in the
+  nested repository, limiting exact source comparison. Both baseline artifacts
+  were available and binary-inspected.
+- Evidence: `lookmefy-1.0.3-build27/verification-facts.json`, `VERIFICATION.txt`,
+  and decoded `AndroidManifest.xml` in the same release directory.
+- PDF report: `../../output/pdf/lookmefy-android-1.0.3-vc27-local-signed-2026-10-15.pdf`
+  (SHA-256 `c8580f93c3c73f188e7018b027b40f9d3b56a0a339740c9dcac77b5398e7fd07`)
+
 ## 1.0.2 (Android versionCode 25)
 
 - Release artifacts: `lookmefy-1.0.2-build25/lookmefy-1.0.2-25.apk` and

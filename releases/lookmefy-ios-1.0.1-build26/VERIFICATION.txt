@@ -1,0 +1,17 @@
+tmp/releases/ios-ipa/Payload/Lookmefy.app: valid on disk
+tmp/releases/ios-ipa/Payload/Lookmefy.app: satisfies its Designated Requirement
+Executable=/Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/tmp/releases/ios-ipa/Payload/Lookmefy.app/Lookmefy
+Identifier=com.kratikdhote.lookmefy
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=16828 flags=0x0(none) hashes=515+7 location=embedded
+Signature size=4763
+Authority=Apple Distribution: Ali Hussain Khan (LJ48CVC23W)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+Signed Time=19 Oct 2026 at 11:14:42 AM
+Info.plist entries=39
+TeamIdentifier=LJ48CVC23W
+Sealed Resources version=2 rules=10 files=141
+Internal requirements count=1 size=192
+fit-look-APP/mobile/release/lookmefy-ios-1.0.1-build26.xcarchive/Products/Applications/Lookmefy.app: valid on disk
+fit-look-APP/mobile/release/lookmefy-ios-1.0.1-build26.xcarchive/Products/Applications/Lookmefy.app: satisfies its Designated Requirement

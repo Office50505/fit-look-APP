@@ -1,0 +1,106 @@
+{
+  "current": {
+    "package": "com.lookmefy.app",
+    "versionName": "1.0.3",
+    "versionCode": 27,
+    "minSdk": "24",
+    "targetSdk": "36",
+    "compileSdk": "36",
+    "permissions": [
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.CAMERA",
+      "android.permission.INTERNET",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.VIBRATE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "com.android.vending.BILLING",
+      "com.lookmefy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+    ],
+    "artifacts": {
+      "apk": {
+        "filename": "lookmefy-1.0.3-27.apk",
+        "bytes": 85605671,
+        "sha256": "e1fb588d770cb1e527a11febaf08f344dd1f09c70494559c3901d468e0055a15",
+        "certificate_sha1": "e047a98f96b23a0fd32232759759603d5105b0eb",
+        "abis": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "zip_verified": true
+      },
+      "aab": {
+        "filename": "lookmefy-1.0.3-27.aab",
+        "bytes": 67374260,
+        "sha256": "8280a828669c09c4b4c4212e7e82ca5ef6d9428a3d5ee2cf826464e9c0c3d813",
+        "certificate_sha1": "e047a98f96b23a0fd32232759759603d5105b0eb",
+        "abis": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "zip_verified": true
+      }
+    }
+  },
+  "baseline": {
+    "package": "com.lookmefy.app",
+    "versionName": "1.0.2",
+    "versionCode": 25,
+    "minSdk": "24",
+    "targetSdk": "35",
+    "compileSdk": "35",
+    "permissions": [
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.CAMERA",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+      "android.permission.INTERNET",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.VIBRATE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "com.android.vending.BILLING",
+      "com.lookmefy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+    ],
+    "artifacts": {
+      "apk": {
+        "filename": "lookmefy-1.0.2-25.apk",
+        "bytes": 83700771,
+        "sha256": "f72050d6d7e86f4925e1d619e51ebedfb3afbd78f0896234e8cbb9bf5b70d317",
+        "certificate_sha1": "4c279ba50b3a851182f5da1b8cbbb7146056cb75",
+        "abis": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "zip_verified": true
+      },
+      "aab": {
+        "filename": "lookmefy-1.0.2-25.aab",
+        "bytes": 62595052,
+        "sha256": "7aaf5d295819c8320db74c6a2f8c2d5d5c97643e5542b61eb17e98dc6951aa28",
+        "certificate_sha1": "4c279ba50b3a851182f5da1b8cbbb7146056cb75",
+        "abis": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "zip_verified": true
+      }
+    }
+  },
+  "permissions_added": [],
+  "permissions_removed": [
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+  ],
+  "verification": "PASS lookmefy: com.lookmefy.app / 1.0.3 / 27\nUpload certificate SHA-1: e047a98f96b23a0fd32232759759603d5105b0eb\nAPK SHA-256: e1fb588d770cb1e527a11febaf08f344dd1f09c70494559c3901d468e0055a15\nAAB SHA-256: 8280a828669c09c4b4c4212e7e82ca5ef6d9428a3d5ee2cf826464e9c0c3d813\n"
+}

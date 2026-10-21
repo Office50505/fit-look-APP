@@ -1,0 +1,5 @@
+Release configuration; iPhone 17 Pro simulator, iOS 26.5; embedded bundle, no Metro.
+PASS launch 1: com.kratikdhote.lookmefy: 30109; running after 8 seconds: PID 30109
+PASS launch 2: com.kratikdhote.lookmefy: 30247; running after 8 seconds: PID 30247
+PASS launch 3: com.kratikdhote.lookmefy: 30608; running after 8 seconds: PID 30608
+Home screen screenshot visually reviewed. No physical-device/TestFlight retest yet.

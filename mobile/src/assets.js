@@ -3,6 +3,7 @@ export const images = {
   homeAtelierHero: require('../assets/home-atelier-hero.png'),
   homeSliderAtelier: require('../assets/home-slider-atelier.jpg'),
   homeSliderNaturalLight: require('../assets/home-slider-natural-light.jpg'),
+  homeCinematicTryOn: require('../assets/home-cinematic-tryon.png'),
   homeSliderArchway: require('../assets/home-slider-archway.jpg'),
   'home-mission-model-1.png': require('../assets/home-mission-model-1.png'),
   'home-mission-model-2.png': require('../assets/home-mission-model-2.png'),
@@ -372,7 +373,7 @@ export const policyPages = {
       {
         title: 'Timing and effect',
         body: [
-          'In-app deletion starts immediately after confirmation. Backup, logging, CDN cache, payment provider, support, and third-party store systems may take additional time to expire or process their separate retention obligations.',
+          'In-app confirmation sends a deletion request. Completion must be confirmed by the server. Backup, logging, CDN cache, payment provider, support, and third-party store systems may take additional time to expire or process their separate retention obligations.',
           'Deletion is permanent. You will need to create a new account if you want to use Lookmefy again.'
         ]
       }

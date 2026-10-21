@@ -3,6 +3,10 @@ import { API_ORIGIN, imageUrl } from './api';
 const MEASUREMENT_LABEL_PATTERN = /\b(?:chest|waist|shoulder|length|bust|hip|inseam|sleeve|heel|toe|cuff|hem|thigh|circumference|size)\s*\(?(?:in|cm)?\)?\b/i;
 const MINOR_UNIT_THRESHOLD = 100000;
 const NEW_ARRIVAL_DAYS = 30;
+const FOOTWEAR_CATEGORY_PATTERN = /\b(?:shoe|shoes|footwear|sneaker|sneakers|boot|boots|sandal|sandals|heel|heels|loafer|loafers|slipper|slippers)\b/i;
+const FOOTWEAR_PRODUCT_PATTERN = /\b(?:shoe|shoes|footwear|sneaker|sneakers|boot|boots|sandal|sandals|heel|heels|loafer|loafers|slipper|slippers|slip[- ]?ons?|trainer|trainers|pumps?|flats?)\b/i;
+const APPAREL_PRODUCT_PATTERN = /\b(?:slips?|petticoats?|camisoles?|lingerie|underwear|bras?|briefs?|shirts?|t[- ]?shirts?|tops?|dresses?|gowns?|skirts?|trousers?|pants?|jeans?|leggings?|shorts?|jackets?|blazers?|sarees?|saris?|kurtas?)\b/i;
+const UNVERIFIED_BRAND_PATTERN = /^(?:brand unavailable|unknown brand|unknown|unbranded|generic|meesho supplier|amazon|affiliate)$/i;
 
 function cleanText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -131,6 +135,52 @@ function normalizeSizes(product = {}) {
   return [...new Set(candidates.map((size) => cleanText(size)).filter(Boolean))]
     .filter((size) => !isMeasurementLabel(size))
     .slice(0, 12);
+}
+
+export function productCategoryPresentation(product = {}) {
+  const category = cleanText(product.category);
+  if (!category) {
+    return { category: '', label: 'Category unavailable', reliable: false, reason: 'missing' };
+  }
+
+  const title = cleanText(product.title || product.name);
+  const footwearConflict = FOOTWEAR_CATEGORY_PATTERN.test(category)
+    && APPAREL_PRODUCT_PATTERN.test(title)
+    && !FOOTWEAR_PRODUCT_PATTERN.test(title);
+
+  if (footwearConflict) {
+    return { category: '', label: 'Category unavailable', reliable: false, reason: 'conflicting_metadata' };
+  }
+
+  return { category, label: titleCaseWord(category), reliable: true, reason: '' };
+}
+
+export function verifiedProductRating(product = {}) {
+  const rating = Number(product.rating);
+  const ratingCount = Number(product.ratingCount);
+  if (!Number.isFinite(rating) || rating <= 0 || rating > 5) return null;
+  if (!Number.isFinite(ratingCount) || ratingCount <= 0) return null;
+  return { rating, ratingCount };
+}
+
+export function verifiedProductBrand(product = {}) {
+  const brand = cleanText(product.brand);
+  if (!brand || UNVERIFIED_BRAND_PATTERN.test(brand)) return '';
+  return brand;
+}
+
+export function productMerchantUrl(product = {}) {
+  for (const value of [product.affiliateLink, product.sourceUrl]) {
+    const candidate = cleanText(value);
+    if (!candidate) continue;
+    try {
+      const parsed = new URL(candidate);
+      if (['http:', 'https:'].includes(parsed.protocol) && parsed.hostname) return parsed.toString();
+    } catch {
+      // Try the next verified product destination.
+    }
+  }
+  return '';
 }
 
 export function getProductDisplayLabel(product = {}) {

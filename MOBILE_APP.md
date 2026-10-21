@@ -85,9 +85,8 @@ npm run mobile:ios:submit
 
 Versioning notes:
 
-- Current app version is `1.0.1`.
-- Local iOS build number is seeded at `16`.
-- EAS production builds use remote `autoIncrement`, so each new TestFlight upload gets a unique build number.
+- Current app version is `1.0.3`; the configured iOS build number is `25` and Android version code is `27`.
+- EAS uses local version metadata and production `autoIncrement: false`. Check the latest uploaded store versions before choosing the next build number; builds do not increment it automatically.
 - The previous iOS TestFlight line used version `1.0`, so new iOS uploads should stay at `1.0.1` or higher. Do not upload another `0.x` iOS build for this app.
 
 Your remaining App Store Connect work:
