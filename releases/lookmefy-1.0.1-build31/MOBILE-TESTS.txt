@@ -1,0 +1,69 @@
+TAP version 13
+# (node:9971) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/categoryContinuity.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: category sections continue in rail order without repeating the same destination
+ok 1 - category sections continue in rail order without repeating the same destination
+  ---
+  duration_ms: 1.014083
+  ...
+# Subtest: the active side-rail category follows the continuous content scroll
+ok 2 - the active side-rail category follows the continuous content scroll
+  ---
+  duration_ms: 0.159833
+  ...
+# Subtest: each visible subcategory uses a distinct bundled image within its section
+ok 3 - each visible subcategory uses a distinct bundled image within its section
+  ---
+  duration_ms: 5.881
+  ...
+# Subtest: mobile catalog excludes marketplace items from shopping and checkout entry points
+ok 4 - mobile catalog excludes marketplace items from shopping and checkout entry points
+  ---
+  duration_ms: 2.411959
+  ...
+# Subtest: suppresses a footwear category when the product title clearly describes apparel
+ok 5 - suppresses a footwear category when the product title clearly describes apparel
+  ---
+  duration_ms: 1.110125
+  ...
+# Subtest: keeps a footwear category for slip-on shoes
+ok 6 - keeps a footwear category for slip-on shoes
+  ---
+  duration_ms: 0.815125
+  ...
+# Subtest: uses a neutral category fallback when category metadata is missing
+ok 7 - uses a neutral category fallback when category metadata is missing
+  ---
+  duration_ms: 0.126917
+  ...
+# Subtest: only presents ratings backed by a positive review count
+ok 8 - only presents ratings backed by a positive review count
+  ---
+  duration_ms: 0.196334
+  ...
+# Subtest: keeps source-confirmed brands while suppressing placeholders and seller-like labels
+ok 9 - keeps source-confirmed brands while suppressing placeholders and seller-like labels
+  ---
+  duration_ms: 0.289541
+  ...
+# Subtest: preserves affiliate attribution and falls back to a valid source URL
+ok 10 - preserves affiliate attribution and falls back to a valid source URL
+  ---
+  duration_ms: 0.220125
+  ...
+# Subtest: normalization preserves category, product identity, image, and merchant fields
+ok 11 - normalization preserves category, product identity, image, and merchant fields
+  ---
+  duration_ms: 1.029208
+  ...
+1..11
+# tests 11
+# suites 0
+# pass 11
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 77.403458

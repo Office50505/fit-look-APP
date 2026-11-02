@@ -1,0 +1,18 @@
+[
+  {
+    "path": "fit-look-APP/mobile/src/privateMediaRecovery.js",
+    "status": "changed"
+  },
+  {
+    "path": "fit-look-APP/mobile/App.js",
+    "status": "changed"
+  },
+  {
+    "path": "fit-look-APP/mobile/app.json",
+    "status": "changed"
+  },
+  {
+    "path": "fit-look-APP/mobile/ios/FitLook.xcodeproj/project.pbxproj",
+    "status": "changed"
+  }
+]

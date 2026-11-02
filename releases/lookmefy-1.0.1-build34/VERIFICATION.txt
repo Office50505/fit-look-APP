@@ -1,0 +1,11 @@
+PASS lookmefy: com.lookmefy.app / 1.0.1 / 34
+Upload certificate SHA-1: e047a98f96b23a0fd32232759759603d5105b0eb
+APK SHA-256: 93889c96476e9c533babf463927385ea2cc6501a03c8a91a23cc2ce2ba59080a
+AAB SHA-256: 995176926b7773ea6ca9f5fc6afe20cec743db5ff52544ce48f4567e486085c0
+PASS APK v2 signature, AAB JAR signature and ZIP integrity.
+PASS APK 16 KB ZIP alignment.
+PASS package/version, min/target/compile SDK, ABI and permission inspection.
+PASS Gradle assembleRelease, bundleRelease and lintRelease.
+PASS App.js Babel transform, 79 focused mobile tests and 10 authenticated private-media tests.
+LIMIT: one optional backend Apple-payments test was not run successfully because the root google-auth-library dependency is absent; this did not affect either native build.
+LIMIT: no device smoke test, App Store upload, TestFlight upload or Play upload was performed.

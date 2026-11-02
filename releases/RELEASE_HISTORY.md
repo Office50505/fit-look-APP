@@ -3,6 +3,431 @@
 This file is the durable release baseline used for future APK/AAB builds and
 comparison reports.
 
+## iOS 1.0.1 (build 33; local distribution IPA)
+
+- Built and verified: 2026-10-29 IST. iOS increments build 32 to 33 while the
+  explicitly requested marketing version remains `1.0.1`. Android remains
+  `1.0.2`/versionCode 35 and was not rebuilt.
+- IPA: `lookmefy-ios-1.0.1-build33/lookmefy-ios-1.0.1-33.ipa`.
+- Archive: `../mobile/release/lookmefy-ios-1.0.1-build33.xcarchive`; portable
+  archive: the same path with `.zip` appended.
+- IPA: 44,229,296 bytes; SHA-256
+  `c7b51f9cd7505b47e16028a446cb0f12f2f5efbc0577b2d45440a15e4d1bf276`.
+- Archive ZIP: 69,777,566 bytes; SHA-256
+  `e8f1be00ed98a44d9c20bd53c3c39de8e4f89ed7e2660cc2c825a5acede09403`.
+- Binary-verified identity: `com.kratikdhote.lookmefy`, version `1.0.1`, build
+  `33`, arm64, minimum iOS 15.1, SDK iphoneos26.5/Xcode 26.6.
+- Signing: archive is Apple Development signed and exported IPA is Apple
+  Distribution signed for team LJ48CVC23W with `get-task-allow=false`.
+- PASS: Xcode Release archive and App Store distribution export; archive/IPA
+  identity; deep/strict signatures; IPA ZIP CRC; expected Release Hermes UUID
+  `80D5528F-2C78-3B90-B90F-747E89A9F880`; stale-Hermes-marker regression;
+  App.js Babel transform; 80 focused mobile tests and 10 authenticated
+  private-media tests.
+- Explicit comparison with build 32: IPA grows 2,303 bytes and archive ZIP
+  grows 2,304 bytes. Bundle ID, version, architecture, minimum OS, SDK,
+  signing team, privacy strings and Release Hermes UUID match except for the
+  intended build-number increment. Both build-32 artifacts were present and
+  their hashes were rechecked.
+- Source-history inference: comparison with the last release source inventory
+  shows pre-existing changes in App.js and privateMediaRecovery.js in addition
+  to iOS build metadata. Focused tests show private-media signed-URL rendering
+  with bearer compatibility and fail-closed invalid/revoked sessions, but no
+  physical-device behavior was verified. These changes were present before
+  release preparation and are not claimed as authored by this build task.
+- Limits: the nested repository was dirty before building and contains
+  modified/untracked source plus ignored native/generated files. No physical
+  device/simulator smoke run, purchase sandbox transaction, App Store upload or
+  TestFlight upload was performed.
+- Evidence: archive/export logs, signature and identity facts, source/status
+  comparison, test outputs and Hermes verification are retained in
+  `lookmefy-ios-1.0.1-build33/`.
+
+## 1.0.2 (Android versionCode 35)
+
+- Built and verified: 2026-10-28 IST. Android increments 34 to 35. Because no
+  semantic-version override was supplied, the repository convention increments
+  versionName from `1.0.1` to `1.0.2`. iOS remains `1.0.1` build 32 and was not
+  rebuilt.
+- Artifacts: `lookmefy-1.0.2-build35/lookmefy-1.0.2-35.apk` and
+  `lookmefy-1.0.2-build35/lookmefy-1.0.2-35.aab`; convenience copies are
+  `../mobile/release/lookmefy-v1.0.2-vc35.apk` and the corresponding `.aab`.
+- APK: 92,699,228 bytes; SHA-256
+  `4b891784ae09946e86c004d66f0b65b56722e58271babfe4f4e46479b5d5e147`.
+- AAB: 74,106,075 bytes; SHA-256
+  `f39d34d863cf2225b55d6f7d85b4d5afc5d5b17d3e5c61a8fe90e2e975b5dbaa`.
+- Binary-verified identity: `com.lookmefy.app`, `1.0.2`/35, minimum SDK 24,
+  target/compile SDK 36; ABIs arm64-v8a, armeabi-v7a, x86 and x86_64.
+- Manifest permissions match build 34: INTERNET, READ/WRITE_EXTERNAL_STORAGE,
+  RECORD_AUDIO, SYSTEM_ALERT_WINDOW, VIBRATE, CAMERA, ACCESS_NETWORK_STATE and
+  the app dynamic-receiver permission. `com.android.vending.BILLING` is absent.
+- Upload certificate SHA-1:
+  `E0:47:A9:8F:96:B2:3A:0F:D3:22:32:75:97:59:60:3D:51:05:B0:EB`.
+- PASS: Gradle assembleRelease, bundleRelease and lintRelease; APK v2 and AAB
+  JAR signatures; expected upload key; package/version identity; AAB ZIP CRC;
+  APK 16 KB alignment; App.js Babel transform and 79 focused mobile tests.
+- User-facing change: visible version metadata advances from `1.0.1` to
+  `1.0.2`. No feature behavior change is claimed.
+- Technical/source comparison: retained build-34 hashes show changes only in
+  app.json, package.json, package-lock.json and generated Android build.gradle
+  metadata. No feature source, dependency, SDK, ABI, signing or permission
+  change was introduced. This is a metadata-only release with high confidence.
+- Explicit comparison with build 34: APK grows by 4 bytes and AAB shrinks by
+  5 bytes. Package identity, SDKs, ABIs, certificate and permissions are
+  unchanged; versionName and versionCode are the intended differences. Both
+  baseline artifacts were present and their hashes were rechecked.
+- Limits: the nested repository remains dirty with pre-existing changes and
+  ignored native/generated files. No physical-device/emulator smoke run, Play
+  upload or Play-side version acceptance check was performed.
+- Evidence: build log, binary facts, badging, signatures, alignment, ZIP test,
+  source hashes/status and focused tests are in the build-35 release directory.
+- PDF report: `../../output/pdf/lookmefy-release-1.0.2-android35-2026-10-28.pdf`
+  (12,772 bytes); SHA-256
+  `7c4ae140ad7e61c62335256beeb5897d92a19feb02ece9c4be4da87c1603888b`.
+
+## 1.0.1 (Android versionCode 34; iOS build 32; local distribution IPA)
+
+- Built and verified: 2026-10-28 IST. The user explicitly requested semantic
+  version `1.0.1`; Android increments 33 to 34 and iOS increments 31 to 32.
+- Android artifacts: `lookmefy-1.0.1-build34/lookmefy-1.0.1-34.apk` and
+  `lookmefy-1.0.1-build34/lookmefy-1.0.1-34.aab`; convenience copies are
+  `../mobile/release/lookmefy-v1.0.1-vc34.apk` and the corresponding `.aab`.
+- APK: 92,699,224 bytes; SHA-256
+  `93889c96476e9c533babf463927385ea2cc6501a03c8a91a23cc2ce2ba59080a`.
+- AAB: 74,106,080 bytes; SHA-256
+  `995176926b7773ea6ca9f5fc6afe20cec743db5ff52544ce48f4567e486085c0`.
+- Binary-verified Android identity: `com.lookmefy.app`, `1.0.1`/34,
+  minimum SDK 24, target/compile SDK 36; ABIs arm64-v8a, armeabi-v7a, x86 and
+  x86_64. APK permissions match build 33 and include INTERNET,
+  READ/WRITE_EXTERNAL_STORAGE, RECORD_AUDIO, SYSTEM_ALERT_WINDOW, VIBRATE,
+  CAMERA, ACCESS_NETWORK_STATE and the app dynamic-receiver permission.
+  `com.android.vending.BILLING` is absent.
+- Android upload certificate SHA-1:
+  `E0:47:A9:8F:96:B2:3A:0F:D3:22:32:75:97:59:60:3D:51:05:B0:EB`.
+- PASS: Gradle assembleRelease, bundleRelease and lintRelease; APK v2 and AAB
+  JAR signatures; expected upload key; package/version; AAB ZIP integrity;
+  APK 16 KB alignment; App.js Babel transform; 79 focused mobile assertions
+  and 10 authenticated private-media assertions.
+- iOS IPA: `lookmefy-ios-1.0.1-build32/lookmefy-ios-1.0.1-32.ipa`.
+- iOS archive: `../mobile/release/lookmefy-ios-1.0.1-build32.xcarchive`;
+  portable archive: the same path with `.zip` appended.
+- IPA: 44,226,993 bytes; SHA-256
+  `d63abcfa7eaacf4bd127e4f3615012db28d6ab80e1830b955adf45929e43f043`.
+- Archive ZIP: 69,775,262 bytes; SHA-256
+  `7a93bce39f87f5ef1bda9c64cd61ce25ea737ee5aad3b346496314098bfda138`.
+- Binary-verified iOS identity: `com.kratikdhote.lookmefy`, `1.0.1` (32),
+  arm64, minimum iOS 15.1, SDK iphoneos26.5/Xcode 26.6. Release Hermes UUID
+  `80D5528F-2C78-3B90-B90F-747E89A9F880` matches archive and IPA.
+- PASS: Xcode Release archive, local App Store distribution export, archive/IPA
+  identity, deep/strict signatures, ZIP CRC, Release Hermes verification and
+  stale-Hermes-marker regression. The archive is Apple Development signed and
+  the IPA is Apple Distribution signed for team LJ48CVC23W. No store upload
+  occurred.
+- Explicit comparison with Android 33 / iOS 31: APK grows 7,024 bytes, AAB
+  grows 4,700 bytes, IPA grows 4,908 bytes and archive ZIP grows 4,911 bytes.
+  Platform identities, semantic version, SDK/ABI facts, signing identities,
+  Android permissions, iOS privacy strings and Release Hermes match except for
+  the requested Android/iOS build-number increments. All immediately preceding
+  artifacts were present and their recorded hashes were rechecked.
+- Source-history inference: hash comparison with build 33 shows pre-existing
+  changes in App.js, gestureNavigation.js, frontendReleaseSafety.js,
+  storeKitProducts.js and privateMediaRecovery.js. These filenames suggest
+  possible navigation, safety/consent, iOS purchase-presentation and private
+  image-recovery changes, but no such behavior was device-verified. Release
+  preparation itself aligned version metadata and resolved version-file merge
+  markers; it did not intentionally add a user-facing feature or dependency.
+- Limits: the nested mobile repository was dirty before building and contains
+  modified/untracked source and ignored native/generated files. One optional
+  backend Apple-payments test could not load the absent root
+  `google-auth-library`; native builds and focused tests were unaffected. No
+  physical-device/simulator smoke run, purchase sandbox transaction, Play
+  upload, App Store upload or TestFlight upload was performed.
+- Evidence: build/export logs, binary facts, badging, signatures, alignment,
+  source hashes/status and test output are retained in the two build-34/build-32
+  release directories.
+- PDF report:
+  `../../output/pdf/lookmefy-release-1.0.1-android34-ios32-2026-10-28.pdf`
+  (17,723 bytes); SHA-256
+  `a5e0bd2181a1843db25a3c1b7b5eee3c78e298f86ab74d5754d6796d1d7f7d03`.
+
+## 1.0.1 (Android versionCode 33; iOS build 31; local distribution IPA)
+
+- Built and verified: 2026-10-22 IST. User requested version `1.0.1`;
+  Android increments 32 to 33 and iOS increments 30 to 31.
+- Source: current local mobile source, including pre-existing dirty and
+  untracked files. Comparison with the build-32 source-hash inventory identifies
+  changes in App.js and privateMediaRecovery.js plus the new screenDataCache.js.
+  Source observations show session-scoped private-image caching with shared
+  pending requests, short-lived screen snapshots and cached private try-on
+  preview recovery. These are source-history inferences rather than
+  device-verified behavior.
+- Android artifacts: `lookmefy-1.0.1-build33/lookmefy-1.0.1-33.apk` and
+  `lookmefy-1.0.1-build33/lookmefy-1.0.1-33.aab`; convenience copies are
+  `../mobile/release/lookmefy-v1.0.1-vc33.apk` and corresponding `.aab`.
+- APK size: 92,692,200 bytes; SHA-256:
+  `5a6479e0c29fe43b228b5a511f6d24f2b77930998ad37ede4ff86e57f7358b15`
+- AAB size: 74,101,380 bytes; SHA-256:
+  `1f1a2cbde7be4b759432d465157a9a0c33339c3073de112ca50d5b618ab44a8f`
+- Binary-verified Android identity: `com.lookmefy.app`, `1.0.1`/33,
+  minimum SDK 24, target/compile SDK 36; ABIs arm64-v8a, armeabi-v7a, x86,
+  x86_64. Permissions are unchanged from build 32; BILLING remains absent.
+- APK/AAB upload certificate SHA-1:
+  `E0:47:A9:8F:96:B2:3A:0F:D3:22:32:75:97:59:60:3D:51:05:B0:EB`.
+- PASS: Gradle assembleRelease/bundleRelease/lintRelease, expected upload key,
+  APK/AAB identity, ZIP CRC, decoded AAB manifest, bundletool 1.18.2 validation
+  and APK 16 KB ZIP alignment. The existing lint exception remains limited to
+  the unused Expo Video background-service notification check; that service is
+  absent from the decoded AAB. Other lint/JAR warnings remain in evidence.
+- Technical changes for release preparation: increment app.json, native Gradle
+  and Xcode build metadata; retain `1.0.1` in app/package/native versions. No
+  intentional dependency upgrade or feature-code modification during release
+  preparation. Existing Android expo-iap exclusion, BILLING removal and Hermes
+  guard are retained.
+- iOS IPA: `lookmefy-ios-1.0.1-build31/lookmefy-ios-1.0.1-31.ipa`.
+- iOS archive: `../mobile/release/lookmefy-ios-1.0.1-build31.xcarchive`;
+  portable archive: same path with `.zip` appended.
+- `lookmefy-ios-1.0.1-build31.xcarchive.zip`: 69,770,351 bytes; SHA-256:
+  `9ea5a6eb285ee098475c8ef8bf9ae44ba84f2ec4a15dbe748db609f06de7cd97`
+- `lookmefy-ios-1.0.1-31.ipa`: 44,222,085 bytes; SHA-256:
+  `fa8c7991bc5ad69d12cdef8783dc522a72e705ca3832ab7d152cfa380bc0bbcb`
+- Binary-verified iOS identity: `com.kratikdhote.lookmefy`, `1.0.1` (31),
+  arm64, minimum iOS 15.1, SDK iphoneos26.5/Xcode 26.6. Release Hermes UUID:
+  `80D5528F-2C78-3B90-B90F-747E89A9F880` in archive and IPA.
+- PASS: Xcode Release archive and local App Store IPA export, archive/IPA
+  metadata, deep/strict signatures, Release Hermes engine and ZIP CRC. Archive
+  is Apple Development signed; IPA is Apple Distribution signed for team
+  LJ48CVC23W. Existing credentials/profile were used; no store upload occurred.
+- PASS: JavaScript Babel transform, stale-Hermes-marker repair regression and
+  53 focused tests covering product/category/frontend safety, screen cache,
+  gestures and authenticated private-image handling. The unrelated
+  server-session test was skipped by name.
+- Explicit comparison with immediately preceding Android 32 / iOS 30:
+  Android APK: 92,687,620 to 92,692,200 bytes (+4,580);
+  Android AAB: 74,099,047 to 74,101,380 bytes (+2,333);
+  iOS archive ZIP: 69,766,216 to 69,770,351 bytes (+4,135);
+  iOS IPA: 44,217,939 to 44,222,085 bytes (+4,146). Android identity/version
+  name, SDKs, ABIs, upload key and permissions match except versionCode. iOS
+  bundle/version, SDK/minimum OS, usage descriptions, architecture and Release
+  Hermes engine match except build number. Baseline artifacts were present and
+  verified against the hashes recorded for the immediately preceding release.
+- Source limits: root had unrelated Shopify changes; the nested repository was
+  dirty before building, with untracked assets/helper and prior release folders.
+  Existing work was preserved. Ignored native files and outputs limit Git-only
+  reproducibility. Source hashes were checked for drift during building. Binary
+  metadata/signing/integrity are directly verified; feature observations remain
+  source inferences. No physical-device/simulator smoke run or store-side
+  acceptance check was performed for this build.
+- Evidence: build/export logs, source status/hashes, decoded manifest, baseline
+  comparison, focused test outputs and verification facts in the release folders.
+- PDF report: `../../output/pdf/lookmefy-release-1.0.1-android33-ios31-2026-10-22.pdf`
+  SHA-256: `4e96d6163c4fbd2830831848103bdad7f994c3fb68d983c5d79d5d3d51a229b4`
+
+## 1.0.1 (Android versionCode 32; iOS build 30; local distribution IPA)
+
+- Built and verified: 2026-10-22 IST. User requested version `1.0.1`;
+  Android increments 31 to 32 and iOS increments 29 to 30.
+- Source: current local mobile source, including pre-existing dirty and
+  untracked files. The build-31 source-hash comparison identifies changed
+  App.js, frontendReleaseSafety.js and gestureNavigation.js before release
+  metadata updates. Source observations show removal of the repeated
+  per-request AI photo popup/checkbox, direct AI request submission and shorter,
+  subtler route transitions. Existing private-image recovery, marketplace
+  filtering, category assets and continuity changes remain included. These are
+  source inferences rather than device-verified behavior.
+- Android artifacts: `lookmefy-1.0.1-build32/lookmefy-1.0.1-32.apk` and
+  `lookmefy-1.0.1-build32/lookmefy-1.0.1-32.aab`; convenience copies are
+  `../mobile/release/lookmefy-v1.0.1-vc32.apk` and corresponding `.aab`.
+- APK size: 92,687,620 bytes; SHA-256:
+  `d369a94c775edaf15d28de5c94a2a0d08faca0fe3163db1a9ca3800372d2afd0`
+- AAB size: 74,099,047 bytes; SHA-256:
+  `01df26907fae935036fa2e5fa4a1a5e3fa6d8bd4f80238a22dc82104ffea4c31`
+- Binary-verified Android identity: `com.lookmefy.app`, `1.0.1`/32,
+  minimum SDK 24, target/compile SDK 36; ABIs arm64-v8a, armeabi-v7a, x86,
+  x86_64. Permissions are unchanged from build 31; BILLING remains absent.
+- APK/AAB upload certificate SHA-1:
+  `E0:47:A9:8F:96:B2:3A:0F:D3:22:32:75:97:59:60:3D:51:05:B0:EB`.
+- PASS: Gradle assembleRelease/bundleRelease/lintRelease, expected upload key,
+  APK/AAB identity, ZIP CRC, decoded AAB manifest, bundletool 1.18.2 validation
+  and APK 16 KB ZIP alignment. The existing lint exception is limited to the
+  unused Expo Video background-service notification check; that service is
+  absent from the decoded AAB. Other lint/JAR warnings remain in evidence.
+- Technical changes for release preparation: increment app.json, native Gradle
+  and Xcode build metadata; retain `1.0.1` in app/package/native versions. No
+  intentional dependency upgrade or feature-code modification during release
+  preparation. Existing Android expo-iap exclusion, BILLING removal and Hermes
+  guard are retained.
+- iOS IPA: `lookmefy-ios-1.0.1-build30/lookmefy-ios-1.0.1-30.ipa`.
+- iOS archive: `../mobile/release/lookmefy-ios-1.0.1-build30.xcarchive`;
+  portable archive: same path with `.zip` appended.
+- `lookmefy-ios-1.0.1-build30.xcarchive.zip`: 69,766,216 bytes; SHA-256:
+  `56dc0ef5fcb6c28caa1e4244d5ec8038348463da44107dbaf5482c75f084a254`
+- `lookmefy-ios-1.0.1-30.ipa`: 44,217,939 bytes; SHA-256:
+  `9aec4c4aeb204acacc682b0c85ae3247a51d6103c186be011b1eb6df3faaacc5`
+- Binary-verified iOS identity: `com.kratikdhote.lookmefy`, `1.0.1` (30),
+  arm64, minimum iOS 15.1, SDK iphoneos26.5/Xcode 26.6. Release Hermes UUID:
+  `80D5528F-2C78-3B90-B90F-747E89A9F880` in archive and IPA.
+- PASS: Xcode Release archive and local App Store IPA export, archive/IPA
+  metadata, deep/strict signatures, Release Hermes engine and ZIP CRC. Archive
+  is Apple Development signed; IPA is Apple Distribution signed for team
+  LJ48CVC23W. Existing credentials/profile were used; no store upload occurred.
+- PASS: JavaScript Babel transform, stale-Hermes-marker repair regression,
+  47 focused product/category/frontend-safety tests and one focused authenticated
+  private-image test. The unrelated server-session test was skipped by name.
+- Explicit comparison with immediately preceding Android 31 / iOS 29:
+  Android APK: 92,691,120 to 92,687,620 bytes (-3,500);
+  Android AAB: 74,101,059 to 74,099,047 bytes (-2,012);
+  iOS archive ZIP: 69,767,986 to 69,766,216 bytes (-1,770);
+  iOS IPA: 44,219,733 to 44,217,939 bytes (-1,794). Android identity/version
+  name, SDKs, ABIs, upload key and permissions match except versionCode. iOS
+  bundle/version, SDK/minimum OS, usage descriptions, architecture and Release
+  Hermes engine match except build number. Baseline artifacts were present and
+  verified against the hashes recorded for the immediately preceding release.
+- Source limits: root had unrelated Shopify changes; the nested repository was
+  dirty before building, with untracked assets/helper and prior release folders.
+  Existing work was preserved. Ignored native files and outputs limit Git-only
+  reproducibility. Source hashes were checked for drift during building. Binary
+  metadata/signing/integrity are directly verified; feature observations remain
+  source inferences. No physical-device/simulator smoke run or store-side
+  acceptance check was performed for this build.
+- Evidence: build/export logs, source status/hashes, decoded manifest, baseline
+  comparison, focused test outputs and verification facts in the release folders.
+- PDF report: `../../output/pdf/lookmefy-release-1.0.1-android32-ios30-2026-10-22.pdf`
+  SHA-256: `d71ecf6e101fa587c6f37f15eed2addac4ea8f78fa2fab919ba46c9b84e13e16`
+
+## 1.0.1 (Android versionCode 31; iOS build 29; local distribution IPA)
+
+- Built and verified: 2026-10-22 IST. User requested version `1.0.1`;
+  Android increments 30 to 31 and iOS increments 28 to 29.
+- Source: current local mobile source, including pre-existing dirty and
+  untracked files. Comparison with the prior release source-hash inventory
+  identifies changed App.js, products.js, privateMediaRecovery.js and assets.js.
+  Source observations: authenticated private-image byte recovery with image
+  type/size validation, marketplace product filtering/app integration and asset
+  map updates. Earlier category assets/continuity/navigation changes are retained.
+  These observations and unit tests do not establish device behavior.
+- Android artifacts: `lookmefy-1.0.1-build31/lookmefy-1.0.1-31.apk` and
+  `lookmefy-1.0.1-build31/lookmefy-1.0.1-31.aab`; convenience copies are
+  `../mobile/release/lookmefy-v1.0.1-vc31.apk` and corresponding `.aab`.
+- APK size: 92,691,120 bytes; SHA-256:
+  `e02b668360cd19acde9fb319b12fef83e74e9bc7455fd50dbf2836c9bbacc5f3`
+- AAB size: 74,101,059 bytes; SHA-256:
+  `910664a7a67e1c9add04e8d2131b35aa957845bea8cae886d940a3a5029cc246`
+- Binary-verified Android identity: `com.lookmefy.app`, `1.0.1`/31,
+  minimum SDK 24, target/compile SDK 36; ABIs arm64-v8a, armeabi-v7a, x86,
+  x86_64. Permissions unchanged from build 30; BILLING remains absent.
+- APK/AAB upload certificate SHA-1:
+  `E0:47:A9:8F:96:B2:3A:0F:D3:22:32:75:97:59:60:3D:51:05:B0:EB`.
+- PASS: Gradle assembleRelease/bundleRelease/lintRelease, expected upload key,
+  APK/AAB identity, ZIP CRC, decoded AAB manifest, bundletool 1.18.2 validation
+  and APK 16 KB ZIP alignment. Existing lint exception is limited to the unused
+  Expo Video background-service notification check; that service is absent in
+  the decoded AAB. Other lint/JAR warnings are retained in evidence.
+- Technical changes for release preparation: increment app.json, native Gradle
+  and Xcode build metadata; retain `1.0.1` in app/package/native versions. No
+  intentional dependency upgrade or feature-code modification during preparation.
+  Existing Android expo-iap exclusion, BILLING removal and Hermes guard retained.
+- iOS IPA: `lookmefy-ios-1.0.1-build29/lookmefy-ios-1.0.1-29.ipa`.
+- iOS archive: `../mobile/release/lookmefy-ios-1.0.1-build29.xcarchive`;
+  portable archive: same path with `.zip` appended.
+- `lookmefy-ios-1.0.1-build29.xcarchive.zip`: 69,767,986 bytes; SHA-256:
+  `393945b4c5ef7e015969d7dc9b3e7e32fe9fed17419327b57af2e00259dff250`
+- `lookmefy-ios-1.0.1-29.ipa`: 44,219,733 bytes; SHA-256:
+  `6c4e21f5aa94470113fca8f86e41af5b60b513c0d6c79883e0deefa18d085fec`
+- Binary-verified iOS identity: `com.kratikdhote.lookmefy`, `1.0.1` (29),
+  arm64, minimum iOS 15.1, SDK iphoneos26.5/Xcode 26.6. Release Hermes UUID:
+  `80D5528F-2C78-3B90-B90F-747E89A9F880` in archive and IPA.
+- PASS: Xcode Release archive and local App Store IPA export, archive/IPA metadata,
+  deep/strict signatures, Release Hermes engine and ZIP CRC. Archive is Apple
+  Development signed; IPA is Apple Distribution signed for team LJ48CVC23W.
+  Export used existing signing credentials/profile; no store upload occurred.
+- PASS: JavaScript Babel transform, stale-Hermes-marker repair regression,
+  eleven product/category tests and one focused authenticated private-image test.
+  The unrelated server-session test was skipped by name selection.
+- Explicit comparison with immediately preceding Android 30 / iOS 28:
+  Android APK: 92,671,948 to 92,691,120 bytes (+19,172);
+  Android AAB: 74,089,216 to 74,101,059 bytes (+11,843);
+  iOS archive ZIP: 69,755,520 to 69,767,986 bytes (+12,466);
+  iOS IPA: 44,207,255 to 44,219,733 bytes (+12,478). Android identity/version
+  name, SDKs, ABIs, upload key and permissions match except versionCode. iOS
+  bundle/version, SDK/minimum OS, usage descriptions, architecture and Release
+  Hermes engine match except build number. Baseline hashes and detailed binary
+  comparisons are recorded in verification facts and the PDF report.
+- Source limits: nested repository was dirty before building, with untracked
+  assets/helper and prior release directories. Root started clean. Existing work
+  was preserved. Ignored native files and outputs limit Git-only reproducibility.
+  Source hashes were checked for drift during building. Preceding Android pair,
+  iOS archive ZIP and IPA were present and verified against recorded hashes.
+  Binary metadata/signing/integrity are directly verified; feature observations
+  remain source inferences. No physical-device/simulator smoke run or store-side
+  acceptance check was performed for this build.
+- Evidence: build/export logs, source status/hashes, decoded manifest, baseline
+  comparison, focused test outputs and verification facts in the release folders.
+- PDF report: `../../output/pdf/lookmefy-release-1.0.1-android31-ios29-2026-10-22.pdf`
+  SHA-256: `c137a5d9f2a719bb4c8a59bafdf81ab26f51f43318b00bb3fd7af17ee1fab03d`
+
+## 1.0.1 (Android versionCode 30; iOS build 28; local distribution IPA)
+
+- Built and verified: 2026-10-21 IST. Requested semantic version remains
+  `1.0.1`; Android increments 29 to 30 and iOS increments 27 to 28.
+- Source: current local mobile source including pre-existing dirty App.js,
+  category presentation/assets, navigation transitions and category continuity
+  helper. User-facing differences are source observations; no complete runtime
+  comparison or device/TestFlight smoke test is claimed.
+- Android artifacts: `lookmefy-1.0.1-build30/lookmefy-1.0.1-30.apk` and
+  `lookmefy-1.0.1-build30/lookmefy-1.0.1-30.aab`; convenience copies are
+  `../mobile/release/lookmefy-v1.0.1-vc30.apk` and corresponding `.aab`.
+- APK size: 92,671,948 bytes; SHA-256:
+  `67699108b90ef5dbcb7f5843bfe9be6af9c6738090f127df15ac6fc41683099b`
+- AAB size: 74,089,216 bytes; SHA-256:
+  `39add5f00b907f7cdbc29e5e1f188120a4745098273d2996d2c062c9748ad250`
+- APK and decoded AAB confirm `com.lookmefy.app`, `1.0.1`/30,
+  minimum SDK 24, target/compile SDK 36; ABIs arm64-v8a, armeabi-v7a, x86,
+  x86_64. Permissions unchanged from build 29; BILLING remains absent.
+- APK/AAB upload certificate SHA-1:
+  `E0:47:A9:8F:96:B2:3A:0F:D3:22:32:75:97:59:60:3D:51:05:B0:EB`.
+- PASS: Gradle assembleRelease/bundleRelease/lintRelease, expected upload key,
+  APK/AAB identity, ZIP CRC, decoded AAB permissions, bundletool 1.18.2 validate
+  and APK 16 KB ZIP alignment. Lint contains a documented exception limited to
+  Expo Video's optional background-service notification warning; the service is
+  absent from the decoded AAB. Other lint/JAR warnings are retained in evidence.
+- Technical work: align app.json, package version, native Android and Xcode
+  metadata; fix stale iOS marketing version; install declared missing Expo Blur
+  15.0.8; refresh CocoaPods to Expo IAP 5.8.3/OpenIAP 3.6.1; restore Android
+  expo-iap autolinking exclusion. Existing BILLING removal and Hermes guard remain.
+- iOS IPA: `lookmefy-ios-1.0.1-build28/lookmefy-ios-1.0.1-28.ipa`.
+- iOS archive: `../mobile/release/lookmefy-ios-1.0.1-build28.xcarchive`;
+  portable archive: same path with `.zip` appended.
+- `lookmefy-ios-1.0.1-build28.xcarchive.zip`: 69,755,520 bytes; SHA-256:
+  `9a72f41b9d6d7854daee4416a30ce1df611e0e451843b68566acfa96a5d301fd`
+- `lookmefy-ios-1.0.1-28.ipa`: 44,207,255 bytes; SHA-256:
+  `b5f7ef05cb4067a7668c21fb0917a8fb59dfffbf17bd1d225dc0de35985b1cb7`
+- iOS binary identity: `com.kratikdhote.lookmefy`, `1.0.1` (28), arm64,
+  minimum iOS 15.1, SDK iphoneos26.5/Xcode 26.6. Release Hermes UUID:
+  `80D5528F-2C78-3B90-B90F-747E89A9F880` in archive and IPA.
+- PASS: Xcode Release archive, archive/IPA metadata, deep/strict signatures,
+  Release Hermes engine, ZIP CRC and stale-Hermes-marker regression check.
+  Archive is Apple Development signed; IPA is Apple Distribution signed for
+  team LJ48CVC23W. Initial export failed due to a cached profile/certificate
+  mismatch; local export succeeded after Xcode provisioning refresh.
+- Explicit comparison with preceding Android 29 / iOS 27:
+  Android APK changes from 85,629,415 to 92,671,948 bytes (+7,042,533);
+  Android AAB changes from 67,387,838 to 74,089,216 bytes (+6,701,378);
+  iOS archive ZIP changes from 62,575,125 to 69,755,520 bytes (+7,180,395).
+  Android identity/version name, SDKs, ABIs, signing key and permissions match
+  baseline except versionCode. iOS bundle/version, SDK/minimum OS, usage strings,
+  architecture and Release Hermes UUID match except build number. No build-27
+  IPA exists, so an IPA-to-IPA comparison is unavailable.
+- Source limits: nested repository was dirty before building; local untracked
+  assets/helper are included. Root had unrelated staged changes by final checks,
+  which were preserved. Ignored native files/release outputs limit Git-only
+  reproducibility. Both preceding Android artifacts and iOS archive were available.
+  Binary metadata/signing/integrity are directly verified; source feature
+  observations are not runtime evidence. No store upload/publication occurred.
+- Evidence: build/dependency/export logs, source status/hashes, decoded manifests,
+  verification facts and check outputs in both versioned release directories.
+- PDF report: `../../output/pdf/lookmefy-release-1.0.1-android30-ios28-2026-10-21.pdf`
+  SHA-256: `dbb78c5333cc9b94ec931080f400b246690ca3d5ee1f2513156e74708a0a665b`
+
 ## 1.0.1 (Android versionCode 29; iOS build 27 archive; fixes for build 28/26)
 
 - Built and verified: 2026-10-19 IST. Version remains 1.0.1 on both platforms;
@@ -462,6 +887,6 @@ source-history based rather than binary-to-binary verified.
 
 ## Next-release default
 
-Unless explicitly overridden by the user, the next release after this baseline is
-version `1.0.3`, Android versionCode `26`, with both APK and AAB artifacts and a
-new PDF comparing it against this release.
+Unless explicitly overridden by the user, the next Android release after code 35
+is version `1.0.3`, Android versionCode `36`, with both APK and AAB artifacts and
+a new PDF comparison against this release. The latest iOS build is 33.

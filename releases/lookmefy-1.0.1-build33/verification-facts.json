@@ -1,0 +1,1155 @@
+{
+  "current": {
+    "artifacts": {
+      "apk": {
+        "filename": "lookmefy-1.0.1-33.apk",
+        "bytes": 92692200,
+        "sha256": "5a6479e0c29fe43b228b5a511f6d24f2b77930998ad37ede4ff86e57f7358b15",
+        "abis": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "zip_verified": true
+      },
+      "aab": {
+        "filename": "lookmefy-1.0.1-33.aab",
+        "bytes": 74101380,
+        "sha256": "1f1a2cbde7be4b759432d465157a9a0c33339c3073de112ca50d5b618ab44a8f",
+        "abis": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "zip_verified": true
+      }
+    },
+    "aab_manifest": {
+      "tag": "manifest",
+      "attributes": {
+        "package": "com.lookmefy.app",
+        "versionCode": "33",
+        "versionName": "1.0.1",
+        "compileSdkVersion": "36",
+        "platformBuildVersionCode": "36",
+        "compileSdkVersionCodename": "16",
+        "platformBuildVersionName": "16"
+      },
+      "children": [
+        {
+          "tag": "uses-sdk",
+          "attributes": {
+            "minSdkVersion": "24",
+            "targetSdkVersion": "36"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.INTERNET"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.READ_EXTERNAL_STORAGE"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.RECORD_AUDIO"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.SYSTEM_ALERT_WINDOW"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.VIBRATE"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.WRITE_EXTERNAL_STORAGE"
+          },
+          "children": []
+        },
+        {
+          "tag": "queries",
+          "attributes": {},
+          "children": [
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.intent.action.VIEW"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "category",
+                  "attributes": {
+                    "name": "android.intent.category.BROWSABLE"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "data",
+                  "attributes": {
+                    "scheme": "https"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.intent.action.OPEN_DOCUMENT_TREE"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.media.action.IMAGE_CAPTURE"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.media.action.ACTION_VIDEO_CAPTURE"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.intent.action.GET_CONTENT"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "category",
+                  "attributes": {
+                    "name": "android.intent.category.OPENABLE"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "data",
+                  "attributes": {
+                    "mimeType": "*/*"
+                  },
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.CAMERA"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.ACCESS_NETWORK_STATE"
+          },
+          "children": []
+        },
+        {
+          "tag": "permission",
+          "attributes": {
+            "name": "com.lookmefy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            "protectionLevel": "signature"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "com.lookmefy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+          },
+          "children": []
+        },
+        {
+          "tag": "application",
+          "attributes": {
+            "allowBackup": "true",
+            "appComponentFactory": "androidx.core.app.CoreComponentFactory",
+            "extractNativeLibs": "false",
+            "icon": "@mipmap/ic_launcher",
+            "label": "@string/app_name",
+            "name": "com.lookmefy.app.MainApplication",
+            "roundIcon": "@mipmap/ic_launcher_round",
+            "supportsRtl": "true",
+            "theme": "@style/AppTheme"
+          },
+          "children": [
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "expo.modules.updates.ENABLED",
+                "value": "false"
+              },
+              "children": []
+            },
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH",
+                "value": "ALWAYS"
+              },
+              "children": []
+            },
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS",
+                "value": "0"
+              },
+              "children": []
+            },
+            {
+              "tag": "activity",
+              "attributes": {
+                "configChanges": "keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode",
+                "exported": "true",
+                "launchMode": "singleTask",
+                "name": "com.lookmefy.app.MainActivity",
+                "screenOrientation": "portrait",
+                "theme": "@style/Theme.App.SplashScreen",
+                "windowSoftInputMode": "adjustResize"
+              },
+              "children": [
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "android.intent.action.MAIN"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "category",
+                      "attributes": {
+                        "name": "android.intent.category.LAUNCHER"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "android.intent.action.VIEW"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "category",
+                      "attributes": {
+                        "name": "android.intent.category.DEFAULT"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "category",
+                      "attributes": {
+                        "name": "android.intent.category.BROWSABLE"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "data",
+                      "attributes": {
+                        "scheme": "lookmefy"
+                      },
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "org.unimodules.core.AppLoader#react-native-headless",
+                "value": "expo.modules.adapters.react.apploader.RNHeadlessAppLoader"
+              },
+              "children": []
+            },
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "com.facebook.soloader.enabled",
+                "value": "true"
+              },
+              "children": []
+            },
+            {
+              "tag": "activity",
+              "attributes": {
+                "configChanges": "screenSize|smallestScreenSize|screenLayout|orientation|navigation",
+                "name": "expo.modules.video.FullscreenPlayerActivity",
+                "supportsPictureInPicture": "true",
+                "theme": "@style/Fullscreen"
+              },
+              "children": []
+            },
+            {
+              "tag": "provider",
+              "attributes": {
+                "authorities": "com.lookmefy.app.FileSystemFileProvider",
+                "exported": "false",
+                "grantUriPermissions": "true",
+                "name": "expo.modules.filesystem.FileSystemFileProvider"
+              },
+              "children": [
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "android.support.FILE_PROVIDER_PATHS",
+                    "resource": "@xml/file_system_provider_paths"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "service",
+              "attributes": {
+                "enabled": "false",
+                "exported": "false",
+                "name": "com.google.android.gms.metadata.ModuleDependencies"
+              },
+              "children": [
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "com.google.android.gms.metadata.MODULE_DEPENDENCIES"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "photopicker_activity:0:required",
+                    "value": ""
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "activity",
+              "attributes": {
+                "exported": "false",
+                "name": "expo.modules.imagepicker.ExpoCropImageActivity",
+                "theme": "@style/Base.Theme.AppCompat"
+              },
+              "children": []
+            },
+            {
+              "tag": "provider",
+              "attributes": {
+                "authorities": "com.lookmefy.app.ImagePickerFileProvider",
+                "exported": "false",
+                "grantUriPermissions": "true",
+                "name": "expo.modules.imagepicker.fileprovider.ImagePickerFileProvider"
+              },
+              "children": [
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "android.support.FILE_PROVIDER_PATHS",
+                    "resource": "@xml/image_picker_provider_paths"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "provider",
+              "attributes": {
+                "authorities": "com.lookmefy.app.cropper.fileprovider",
+                "exported": "false",
+                "grantUriPermissions": "true",
+                "name": "com.canhub.cropper.CropFileProvider"
+              },
+              "children": [
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "android.support.FILE_PROVIDER_PATHS",
+                    "resource": "@xml/library_file_paths"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "activity",
+              "attributes": {
+                "exported": "true",
+                "name": "com.canhub.cropper.CropImageActivity"
+              },
+              "children": []
+            },
+            {
+              "tag": "provider",
+              "attributes": {
+                "authorities": "com.lookmefy.app.androidx-startup",
+                "exported": "false",
+                "name": "androidx.startup.InitializationProvider"
+              },
+              "children": [
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "androidx.emoji2.text.EmojiCompatInitializer",
+                    "value": "androidx.startup"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "androidx.lifecycle.ProcessLifecycleInitializer",
+                    "value": "androidx.startup"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "androidx.profileinstaller.ProfileInstallerInitializer",
+                    "value": "androidx.startup"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "receiver",
+              "attributes": {
+                "directBootAware": "false",
+                "enabled": "true",
+                "exported": "true",
+                "name": "androidx.profileinstaller.ProfileInstallReceiver",
+                "permission": "android.permission.DUMP"
+              },
+              "children": [
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "androidx.profileinstaller.action.INSTALL_PROFILE"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "androidx.profileinstaller.action.SKIP_FILE"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "androidx.profileinstaller.action.SAVE_PROFILE"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "androidx.profileinstaller.action.BENCHMARK_OPERATION"
+                      },
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "package": "com.lookmefy.app",
+    "versionCode": "33",
+    "versionName": "1.0.1",
+    "permissions": [
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.CAMERA",
+      "android.permission.INTERNET",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.VIBRATE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "com.lookmefy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+    ],
+    "minSdk": "24",
+    "targetSdk": "36",
+    "compileSdk": "36",
+    "apk_signing": "Signer #1 certificate DN: CN=, OU=, O=, L=, ST=, C=\nSigner #1 certificate SHA-256 digest: b010b9a7b007fc50cecaad78ebff2c5869bde4c14708f2ddadd97f8f63c73d83\nSigner #1 certificate SHA-1 digest: e047a98f96b23a0fd32232759759603d5105b0eb\nSigner #1 certificate MD5 digest: e243eb2bc12bbce5427007dc2d061bc0\n"
+  },
+  "baseline": {
+    "artifacts": {
+      "apk": {
+        "filename": "lookmefy-1.0.1-32.apk",
+        "bytes": 92687620,
+        "sha256": "d369a94c775edaf15d28de5c94a2a0d08faca0fe3163db1a9ca3800372d2afd0",
+        "abis": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "zip_verified": true
+      },
+      "aab": {
+        "filename": "lookmefy-1.0.1-32.aab",
+        "bytes": 74099047,
+        "sha256": "01df26907fae935036fa2e5fa4a1a5e3fa6d8bd4f80238a22dc82104ffea4c31",
+        "abis": [
+          "arm64-v8a",
+          "armeabi-v7a",
+          "x86",
+          "x86_64"
+        ],
+        "zip_verified": true
+      }
+    },
+    "aab_manifest": {
+      "tag": "manifest",
+      "attributes": {
+        "package": "com.lookmefy.app",
+        "versionCode": "32",
+        "versionName": "1.0.1",
+        "compileSdkVersion": "36",
+        "platformBuildVersionCode": "36",
+        "compileSdkVersionCodename": "16",
+        "platformBuildVersionName": "16"
+      },
+      "children": [
+        {
+          "tag": "uses-sdk",
+          "attributes": {
+            "minSdkVersion": "24",
+            "targetSdkVersion": "36"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.INTERNET"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.READ_EXTERNAL_STORAGE"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.RECORD_AUDIO"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.SYSTEM_ALERT_WINDOW"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.VIBRATE"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.WRITE_EXTERNAL_STORAGE"
+          },
+          "children": []
+        },
+        {
+          "tag": "queries",
+          "attributes": {},
+          "children": [
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.intent.action.VIEW"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "category",
+                  "attributes": {
+                    "name": "android.intent.category.BROWSABLE"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "data",
+                  "attributes": {
+                    "scheme": "https"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.intent.action.OPEN_DOCUMENT_TREE"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.media.action.IMAGE_CAPTURE"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.media.action.ACTION_VIDEO_CAPTURE"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "intent",
+              "attributes": {},
+              "children": [
+                {
+                  "tag": "action",
+                  "attributes": {
+                    "name": "android.intent.action.GET_CONTENT"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "category",
+                  "attributes": {
+                    "name": "android.intent.category.OPENABLE"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "data",
+                  "attributes": {
+                    "mimeType": "*/*"
+                  },
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.CAMERA"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "android.permission.ACCESS_NETWORK_STATE"
+          },
+          "children": []
+        },
+        {
+          "tag": "permission",
+          "attributes": {
+            "name": "com.lookmefy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+            "protectionLevel": "signature"
+          },
+          "children": []
+        },
+        {
+          "tag": "uses-permission",
+          "attributes": {
+            "name": "com.lookmefy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+          },
+          "children": []
+        },
+        {
+          "tag": "application",
+          "attributes": {
+            "allowBackup": "true",
+            "appComponentFactory": "androidx.core.app.CoreComponentFactory",
+            "extractNativeLibs": "false",
+            "icon": "@mipmap/ic_launcher",
+            "label": "@string/app_name",
+            "name": "com.lookmefy.app.MainApplication",
+            "roundIcon": "@mipmap/ic_launcher_round",
+            "supportsRtl": "true",
+            "theme": "@style/AppTheme"
+          },
+          "children": [
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "expo.modules.updates.ENABLED",
+                "value": "false"
+              },
+              "children": []
+            },
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH",
+                "value": "ALWAYS"
+              },
+              "children": []
+            },
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS",
+                "value": "0"
+              },
+              "children": []
+            },
+            {
+              "tag": "activity",
+              "attributes": {
+                "configChanges": "keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode",
+                "exported": "true",
+                "launchMode": "singleTask",
+                "name": "com.lookmefy.app.MainActivity",
+                "screenOrientation": "portrait",
+                "theme": "@style/Theme.App.SplashScreen",
+                "windowSoftInputMode": "adjustResize"
+              },
+              "children": [
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "android.intent.action.MAIN"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "category",
+                      "attributes": {
+                        "name": "android.intent.category.LAUNCHER"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "android.intent.action.VIEW"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "category",
+                      "attributes": {
+                        "name": "android.intent.category.DEFAULT"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "category",
+                      "attributes": {
+                        "name": "android.intent.category.BROWSABLE"
+                      },
+                      "children": []
+                    },
+                    {
+                      "tag": "data",
+                      "attributes": {
+                        "scheme": "lookmefy"
+                      },
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "org.unimodules.core.AppLoader#react-native-headless",
+                "value": "expo.modules.adapters.react.apploader.RNHeadlessAppLoader"
+              },
+              "children": []
+            },
+            {
+              "tag": "meta-data",
+              "attributes": {
+                "name": "com.facebook.soloader.enabled",
+                "value": "true"
+              },
+              "children": []
+            },
+            {
+              "tag": "activity",
+              "attributes": {
+                "configChanges": "screenSize|smallestScreenSize|screenLayout|orientation|navigation",
+                "name": "expo.modules.video.FullscreenPlayerActivity",
+                "supportsPictureInPicture": "true",
+                "theme": "@style/Fullscreen"
+              },
+              "children": []
+            },
+            {
+              "tag": "provider",
+              "attributes": {
+                "authorities": "com.lookmefy.app.FileSystemFileProvider",
+                "exported": "false",
+                "grantUriPermissions": "true",
+                "name": "expo.modules.filesystem.FileSystemFileProvider"
+              },
+              "children": [
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "android.support.FILE_PROVIDER_PATHS",
+                    "resource": "@xml/file_system_provider_paths"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "service",
+              "attributes": {
+                "enabled": "false",
+                "exported": "false",
+                "name": "com.google.android.gms.metadata.ModuleDependencies"
+              },
+              "children": [
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "com.google.android.gms.metadata.MODULE_DEPENDENCIES"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "photopicker_activity:0:required",
+                    "value": ""
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "activity",
+              "attributes": {
+                "exported": "false",
+                "name": "expo.modules.imagepicker.ExpoCropImageActivity",
+                "theme": "@style/Base.Theme.AppCompat"
+              },
+              "children": []
+            },
+            {
+              "tag": "provider",
+              "attributes": {
+                "authorities": "com.lookmefy.app.ImagePickerFileProvider",
+                "exported": "false",
+                "grantUriPermissions": "true",
+                "name": "expo.modules.imagepicker.fileprovider.ImagePickerFileProvider"
+              },
+              "children": [
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "android.support.FILE_PROVIDER_PATHS",
+                    "resource": "@xml/image_picker_provider_paths"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "provider",
+              "attributes": {
+                "authorities": "com.lookmefy.app.cropper.fileprovider",
+                "exported": "false",
+                "grantUriPermissions": "true",
+                "name": "com.canhub.cropper.CropFileProvider"
+              },
+              "children": [
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "android.support.FILE_PROVIDER_PATHS",
+                    "resource": "@xml/library_file_paths"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "activity",
+              "attributes": {
+                "exported": "true",
+                "name": "com.canhub.cropper.CropImageActivity"
+              },
+              "children": []
+            },
+            {
+              "tag": "provider",
+              "attributes": {
+                "authorities": "com.lookmefy.app.androidx-startup",
+                "exported": "false",
+                "name": "androidx.startup.InitializationProvider"
+              },
+              "children": [
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "androidx.emoji2.text.EmojiCompatInitializer",
+                    "value": "androidx.startup"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "androidx.lifecycle.ProcessLifecycleInitializer",
+                    "value": "androidx.startup"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "meta-data",
+                  "attributes": {
+                    "name": "androidx.profileinstaller.ProfileInstallerInitializer",
+                    "value": "androidx.startup"
+                  },
+                  "children": []
+                }
+              ]
+            },
+            {
+              "tag": "receiver",
+              "attributes": {
+                "directBootAware": "false",
+                "enabled": "true",
+                "exported": "true",
+                "name": "androidx.profileinstaller.ProfileInstallReceiver",
+                "permission": "android.permission.DUMP"
+              },
+              "children": [
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "androidx.profileinstaller.action.INSTALL_PROFILE"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "androidx.profileinstaller.action.SKIP_FILE"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "androidx.profileinstaller.action.SAVE_PROFILE"
+                      },
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "tag": "intent-filter",
+                  "attributes": {},
+                  "children": [
+                    {
+                      "tag": "action",
+                      "attributes": {
+                        "name": "androidx.profileinstaller.action.BENCHMARK_OPERATION"
+                      },
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "package": "com.lookmefy.app",
+    "versionCode": "32",
+    "versionName": "1.0.1",
+    "permissions": [
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.CAMERA",
+      "android.permission.INTERNET",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.RECORD_AUDIO",
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.VIBRATE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "com.lookmefy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+    ],
+    "minSdk": "24",
+    "targetSdk": "36",
+    "compileSdk": "36",
+    "apk_signing": "Signer #1 certificate DN: CN=, OU=, O=, L=, ST=, C=\nSigner #1 certificate SHA-256 digest: b010b9a7b007fc50cecaad78ebff2c5869bde4c14708f2ddadd97f8f63c73d83\nSigner #1 certificate SHA-1 digest: e047a98f96b23a0fd32232759759603d5105b0eb\nSigner #1 certificate MD5 digest: e243eb2bc12bbce5427007dc2d061bc0\n"
+  },
+  "permissions_added": [],
+  "permissions_removed": [],
+  "verification_summary": "PASS: Gradle assembleRelease, bundleRelease and lintRelease; APK/AAB identities and expected upload key; decoded AAB manifest, package, version and permissions; APK/AAB ZIP CRC; bundletool 1.18.2 validation; APK 16 KB ZIP alignment. BILLING permission and the optional Expo Video background service remain absent. Permissions are unchanged from build 32. Fifty-two focused product, category, frontend-safety, screen-cache and gesture tests plus one private-image test passed; the unrelated server-session test was skipped by name selection. JavaScript Babel transform and Hermes regression passed. No Play upload or device smoke test performed."
+}

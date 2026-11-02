@@ -1,0 +1,7 @@
+ mobile/App.js                                | 2532 ++++++++++++++++++++------
+ mobile/app.json                              |    4 +-
+ mobile/ios/FitLook.xcodeproj/project.pbxproj |    4 +-
+ mobile/package.json                          |    9 +
+ mobile/src/assets.js                         |   15 +
+ mobile/src/gestureNavigation.js              |   10 +
+ 6 files changed, 1982 insertions(+), 592 deletions(-)

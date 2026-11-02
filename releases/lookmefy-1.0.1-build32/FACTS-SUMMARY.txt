@@ -1,0 +1,45 @@
+{
+  "artifacts": {
+    "apk": {
+      "filename": "lookmefy-1.0.1-32.apk",
+      "bytes": 92687620,
+      "sha256": "d369a94c775edaf15d28de5c94a2a0d08faca0fe3163db1a9ca3800372d2afd0",
+      "abis": [
+        "arm64-v8a",
+        "armeabi-v7a",
+        "x86",
+        "x86_64"
+      ],
+      "zip_verified": true
+    },
+    "aab": {
+      "filename": "lookmefy-1.0.1-32.aab",
+      "bytes": 74099047,
+      "sha256": "01df26907fae935036fa2e5fa4a1a5e3fa6d8bd4f80238a22dc82104ffea4c31",
+      "abis": [
+        "arm64-v8a",
+        "armeabi-v7a",
+        "x86",
+        "x86_64"
+      ],
+      "zip_verified": true
+    }
+  },
+  "package": "com.lookmefy.app",
+  "versionCode": "32",
+  "versionName": "1.0.1",
+  "permissions": [
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.CAMERA",
+    "android.permission.INTERNET",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.RECORD_AUDIO",
+    "android.permission.SYSTEM_ALERT_WINDOW",
+    "android.permission.VIBRATE",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+    "com.lookmefy.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+  ],
+  "minSdk": "24",
+  "targetSdk": "36",
+  "compileSdk": "36"
+}

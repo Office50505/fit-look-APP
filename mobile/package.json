@@ -1,6 +1,6 @@
 {
   "name": "lookmefy-mobile",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -47,5 +47,14 @@
     "shell-quote": "1.11.0",
     "tar": "7.5.22",
     "undici": "6.28.1"
+  },
+  "expo": {
+    "autolinking": {
+      "android": {
+        "exclude": [
+          "expo-iap"
+        ]
+      }
+    }
   }
 }

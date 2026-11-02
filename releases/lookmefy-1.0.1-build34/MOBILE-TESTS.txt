@@ -1,0 +1,153 @@
+node:internal/modules/package_json_reader:301
+  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+        ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'google-auth-library' imported from /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/server/utils/googlePlayBilling.js
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)
+    at packageResolve (node:internal/modules/esm/resolve:768:81)
+    at moduleResolve (node:internal/modules/esm/resolve:859:18)
+    at defaultResolve (node:internal/modules/esm/resolve:992:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:694:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:711:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:743:52)
+    at #resolve (node:internal/modules/esm/loader:676:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:596:35)
+    at ModuleJob.syncLink (node:internal/modules/esm/module_job:163:33) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v26.1.0
+✖ tests/apple-payments.test.js (117.031125ms)
+(node:18705) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/categoryContinuity.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ category sections continue in rail order without repeating the same destination (1.72575ms)
+✔ the active side-rail category follows the continuous content scroll (0.09975ms)
+✔ each visible subcategory uses a distinct bundled image within its section (7.664916ms)
+✔ shared back row exposes a working Back action when a previous screen exists (96.033292ms)
+✔ product links open the requested catalog item without accepting arbitrary routes (12.639709ms)
+✔ mobile API gates photo-processing requests before transport (0.736542ms)
+✔ cancelled photo permission sends no request and consent is scoped to one sign-in (0.355833ms)
+✔ photo processing path check excludes reads and unrelated posts (0.075083ms)
+✔ photo actions do not show a repeated AI processing checkbox (105.223125ms)
+✔ product try-on preview fetches private image bytes and retries with a renewed session (0.596542ms)
+✔ retrying a failed saved Try-On preview does not generate or charge again (11.117375ms)
+✔ Report content remains disabled and sends no request without authenticated capability (12.261084ms)
+✔ deletion confirmation, pending and partial cleanup never clear a session or announce completion (254.38825ms)
+✔ false, missing, string and conflicting deletion confirmations remain errors (237.5395ms)
+✔ deletion shows loading, rejects duplicate presses and completes only with strict server confirmation (47.146125ms)
+✔ network errors remain unconfirmed; local storage failure after confirmed deletion is reported accurately (97.291042ms)
+✔ deletion receipt check distinguishes pending, failed and confirmed completion without a destructive request (72.429584ms)
+✔ Try-On generates from a selected garment without the extra checkbox (17.485625ms)
+✔ portrait garment cards follow image ratio without exceeding the available row width (18.036584ms)
+✔ Try-On malformed results never announce success and retry can recover (17.426375ms)
+✔ Try-On loading prevents same-frame duplicate requests (17.046792ms)
+✔ AI Stylist follows new replies but lets a user drag through older messages (35.347167ms)
+✔ AI Stylist failure and retry update the original response rather than duplicating the conversation (18.099666ms)
+✔ AI Stylist empty responses are recoverable failures (17.589375ms)
+✔ image-only picker never requires broad library permission, and cancel/denial do not upload (7.57525ms)
+✔ camera denial preserves Settings recovery without opening the camera (3.794208ms)
+✔ legal links open the actual HTTPS policy and expose failures (9.746ms)
+✔ unverified billing stays unavailable and subscription terms distinguish setup from recurring amount (0.120708ms)
+✔ reporting reference validates scope and identifier without URLs or local stylist IDs (0.082375ms)
+✔ report POST fails closed without a compatible explicit backend capability (0.218959ms)
+✔ report payload is identifier-only and successful receipt is validated and deduplicated (0.101708ms)
+✔ report retries retain idempotency key; malformed receipt never becomes success (0.10775ms)
+✔ concurrent report submissions and account switches cannot reuse authenticated state (0.078334ms)
+✔ failed cleanup is never treated as completed or safely pending (93.810708ms)
+✔ support fallback does not claim mail sent; deletion policy uses existing published route (9.625125ms)
+✔ Apple subscription management falls back to real store settings without pretending to open native UI (20.066792ms)
+✔ sign-in prompt exposes independent accessible controls rather than one grouped modal (28.614917ms)
+✔ password visibility control and input announce their purpose (12.779375ms)
+✔ Google verification never claims a credit grant from incomplete, pending, or review responses (112.79375ms)
+✔ report dialog submission exposes loading, suppresses duplicate presses and never claims removal (9.747958ms)
+✔ Credits policy and support links expose accessible independent navigation actions (22.179125ms)
+(node:18707) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/gestureNavigation.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ the app does not capture a sideways swipe to change routes (7.830708ms)
+✔ route motion is brief, directional, and disabled for reduced motion or replacement (0.8715ms)
+✔ mobile catalog excludes marketplace items from shopping and checkout entry points (1.381417ms)
+✔ suppresses a footwear category when the product title clearly describes apparel (0.729333ms)
+✔ keeps a footwear category for slip-on shoes (0.318083ms)
+✔ uses a neutral category fallback when category metadata is missing (0.045584ms)
+✔ only presents ratings backed by a positive review count (0.108083ms)
+✔ keeps source-confirmed brands while suppressing placeholders and seller-like labels (0.098667ms)
+✔ preserves affiliate attribution and falls back to a valid source URL (0.082708ms)
+✔ normalization preserves category, product identity, image, and merchant fields (0.298292ms)
+(node:18709) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/privateMediaRecovery.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ screen snapshots survive navigation within a session and never cross sessions (1.339084ms)
+✔ private image requests are shared and cached only for the same owner session (1.626167ms)
+✔ wardrobe category opens an in-place picker and choosing a garment keeps the preview (48.669291ms)
+✔ wardrobe preview owns the picker and sends Try On results back to itself (27.193958ms)
+✔ selected wardrobe icon shows the garment clearly without a glyph over the photo (9.364833ms)
+✔ Add Item type picker uses the same eight choices as the Wardrobe icons (17.23875ms)
+✔ Add Item maps detected dresses to Full Outfit and opens with the tapped wardrobe type (27.558833ms)
+✔ photo analysis applies the backend details response to Add Item (11.486875ms)
+✔ Add Item back returns to the previous route with a Wardrobe fallback (27.05975ms)
+✔ Wardrobe icon types save to supported categories with accessory markers (18.33675ms)
+✔ explicit accessory type shows under its matching Wardrobe icon (26.146875ms)
+✔ one selected wardrobe item generates a look in Wardrobe without navigation (8.708459ms)
+✔ successful Wardrobe generation displays its image without opening Custom Try-On or a lightbox (8.659375ms)
+(node:18711) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/privateMediaRecovery.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ renewal only resolves exact private API paths and never CDN/product URLs (1.511125ms)
+✔ backend renewal verifies the current profile owner and deletion state (1.074333ms)
+✔ backend renewal requires a matching wardrobe record and owned storage path (0.283667ms)
+✔ Try-On renewal requires the exact owner, media kind and stored result (0.24575ms)
+✔ mobile renewal is bounded to the same path and the same signed-in session (0.15175ms)
+✔ private serializers hide direct Bunny, generated, and legacy URLs (5.235167ms)
+✔ private media model URLs contain no bearer token or direct Bunny URL (0.081917ms)
+✔ legacy upload path validation rejects traversal and encoded separators (0.225542ms)
+✔ legacy upload authorization requires an actual owner record; catalog stays public (2.398667ms)
+(node:18713) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/privateMediaRecovery.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ private image recovery fetches bytes with the owner session and rejects non-image responses (1.147541ms)
+✔ private image recovery restores Android Blob MIME types without accepting non-image data (0.309542ms)
+✖ private media requires a live owner session and streams without shared caching (405.647792ms)
+(node:18714) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/wishlistPresentation.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ wishlist preserves genuinely missing prices instead of presenting them as zero (0.360917ms)
+✔ phone wishlist never renders a three-column product grid (0.065ms)
+✔ filter tabs grow with larger text instead of retaining small-font widths (0.081125ms)
+✔ repeated remove actions cannot re-add a saved item or affect other items (1.276917ms)
+✔ wishlist persistence commits the precise account key before callers update UI (0.153833ms)
+✔ failed wishlist persistence rejects without mutating the existing saved list (0.569583ms)
+ℹ tests 83
+ℹ suites 0
+ℹ pass 81
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1680.27825
+
+✖ failing tests:
+
+test at tests/apple-payments.test.js:1:1
+✖ tests/apple-payments.test.js (117.031125ms)
+  'test failed'
+
+test at tests/private-media-session.test.js:73:1
+✖ private media requires a live owner session and streams without shared caching (405.647792ms)
+  Error: listen EPERM: operation not permitted 127.0.0.1
+      at Server.setupListenHandle [as _listen2] (node:net:1986:21)
+      at listenInCluster (node:net:2065:12)
+      at node:net:2274:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '127.0.0.1'
+  }

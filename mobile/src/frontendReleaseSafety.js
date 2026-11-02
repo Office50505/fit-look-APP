@@ -1,52 +1,38 @@
 // Frontend-only decisions. No network, account deletion, persistence or provider configuration.
-function formField(body, name) {
-  if (typeof body?.get === 'function') return body.get(name);
-  return body?._parts?.find(([key]) => key === name)?.[1];
+
+const photoProcessingPaths = [
+  /^\/auth\/body-photo(?:\/generate-full-body)?(?:\?|$)/i,
+  /^\/tryons\/(?:custom|external|[a-f\d]{24})(?:\/video)?(?:\?|$)/i,
+  /^\/closet\/items(?:\/analyze)?(?:\?|$)/i,
+  /^\/closet\/outfits\/generate(?:\?|$)/i
+];
+
+export function sendsPhotosToAi(path, options = {}) {
+  return String(options.method || 'GET').toUpperCase() === 'POST'
+    && photoProcessingPaths.some((pattern) => pattern.test(String(path || '')));
 }
 
-export function aiPhotoSubmissionNotice(path, options = {}) {
-  if (String(options.method || 'GET').toUpperCase() !== 'POST') return null;
-  const route = String(path).split('?')[0];
-  if (['/auth/signup/complete', '/auth/body-photo'].includes(route)) {
-    if (formField(options.body, 'profilePhotoMode') === 'uploaded') return null;
-    return { purpose: 'prepare your AI profile', data: 'your selected profile photo', providers: 'fal' };
-  }
-  if (['/closet/items', '/closet/items/analyze'].includes(route)) {
-    return { purpose: 'identify clothing details', data: 'your selected clothing photo', providers: 'fal' };
-  }
-  if (/^\/tryons(?:\/|$)/.test(route) || route === '/closet/outfits/generate') {
-    return { purpose: 'create your requested AI look', data: 'your saved profile photo, selected clothing images and styling instructions', providers: 'Pruna, FitRoom, fal or PixVerse, depending on the feature and server configuration' };
-  }
-  return null;
-}
-
-export function createPhotoConsentGate() {
-  let present = null;
-  let pending = null;
-  const respond = (accepted) => {
-    const resolve = pending;
-    pending = null;
-    present?.(null);
-    resolve?.(accepted === true);
-  };
-  return {
-    setPresenter(next) { respond(false); present = next; },
-    respond,
-    request(notice) {
-      if (!present || pending) return Promise.resolve(false);
-      return new Promise((resolve) => { pending = resolve; present(notice); });
+export function createAiPhotoConsentGuard({ getIdentity, requestPermission }) {
+  const approved = new Set();
+  const pending = new Map();
+  async function requireAiPhotoConsent() {
+    const identity = await getIdentity();
+    if (!identity) throw new Error('Log in before using AI photo features.');
+    if (approved.has(identity)) return;
+    if (!pending.has(identity)) {
+      const request = Promise.resolve().then(() => requestPermission()).then((allowed) => {
+        if (!allowed) throw new Error('Photo sharing was cancelled. No AI request was sent.');
+        approved.add(identity);
+      }).finally(() => pending.delete(identity));
+      pending.set(identity, request);
     }
-  };
-}
-
-export async function guardAiPhotoSubmission(transport, path, options, requestConsent) {
-  const notice = aiPhotoSubmissionNotice(path, options);
-  if (notice && await requestConsent(notice) !== true) {
-    const error = new Error('Photo sharing was not allowed. Nothing was uploaded for this request.');
-    error.code = 'photo_consent_declined';
-    throw error;
+    await pending.get(identity);
   }
-  return transport(path, options);
+  requireAiPhotoConsent.revoke = async () => {
+    const identity = await getIdentity();
+    if (identity) approved.delete(identity);
+  };
+  return requireAiPhotoConsent;
 }
 
 export function accountDeletionOutcome(data) {

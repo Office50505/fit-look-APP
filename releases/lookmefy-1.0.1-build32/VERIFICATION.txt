@@ -1,0 +1,4 @@
+PASS lookmefy: com.lookmefy.app / 1.0.1 / 32
+Upload certificate SHA-1: e047a98f96b23a0fd32232759759603d5105b0eb
+APK SHA-256: d369a94c775edaf15d28de5c94a2a0d08faca0fe3163db1a9ca3800372d2afd0
+AAB SHA-256: 01df26907fae935036fa2e5fa4a1a5e3fa6d8bd4f80238a22dc82104ffea4c31

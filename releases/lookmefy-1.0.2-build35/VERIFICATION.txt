@@ -1,0 +1,11 @@
+PASS lookmefy: com.lookmefy.app / 1.0.2 / 35
+Upload certificate SHA-1: e047a98f96b23a0fd32232759759603d5105b0eb
+APK SHA-256: 4b891784ae09946e86c004d66f0b65b56722e58271babfe4f4e46479b5d5e147
+AAB SHA-256: f39d34d863cf2225b55d6f7d85b4d5afc5d5b17d3e5c61a8fe90e2e975b5dbaa
+PASS APK v2 signature, AAB JAR signature and ZIP integrity.
+PASS APK 16 KB ZIP alignment.
+PASS package/version, min/target/compile SDK, ABI and permission inspection.
+PASS Gradle assembleRelease, bundleRelease and lintRelease.
+PASS App.js Babel transform and 79 focused mobile tests.
+PASS source-hash comparison: only release metadata changed from build 34.
+LIMIT: no device smoke test or Google Play upload was performed.

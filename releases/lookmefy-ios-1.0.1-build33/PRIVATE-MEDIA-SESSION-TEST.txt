@@ -1,0 +1,23 @@
+(node:14688) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/privateMediaRecovery.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ private image recovery fetches bytes with the owner session and rejects non-image responses (1.203292ms)
+✔ private image recovery restores Android Blob MIME types without accepting non-image data (0.378958ms)
+▶ private media requires a live owner session and streams without shared caching
+  ✔ owner renders private media through signed URLs; bearer access remains compatible (17.304291ms)
+  ✔ copied URL, anonymous, other account and wrong identifier are denied (4.5115ms)
+  ✔ invalid, legacy and revoked signed-media sessions fail closed (1.834541ms)
+  ✔ renewal rechecks ownership and issues only a cache-busting API path (1.475833ms)
+  ✔ pending deletion and wrong content type deny access (0.74325ms)
+  ✔ interrupted stream cancels without taking down the media endpoint (5.248417ms)
+  ✔ mobile source sends auth only to same-origin scoped route and retry checks account (0.6835ms)
+✔ private media requires a live owner session and streams without shared caching (395.17675ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 558.621083

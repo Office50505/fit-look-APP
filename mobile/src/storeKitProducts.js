@@ -19,11 +19,29 @@ export const STOREKIT_ALL_PRODUCT_IDS = Object.freeze([
 
 const STOREKIT_CONSUMABLE_PRODUCT_ID_SET = new Set(STOREKIT_CONSUMABLE_PRODUCT_IDS);
 const STOREKIT_ALL_PRODUCT_ID_SET = new Set(STOREKIT_ALL_PRODUCT_IDS);
+const STOREKIT_PRODUCT_IDS_BY_SERVER_PLAN_ID = Object.freeze({
+  topup_50_tokens: STOREKIT_PRODUCT_IDS.creditTopUps.top_up_50_credits,
+  topup_75_tokens: STOREKIT_PRODUCT_IDS.creditTopUps.top_up_75_credits,
+  topup_110_tokens: STOREKIT_PRODUCT_IDS.creditTopUps.top_up_110_credits,
+  topup_135_tokens: STOREKIT_PRODUCT_IDS.creditTopUps.top_up_135_credits,
+  topup_400_tokens: STOREKIT_PRODUCT_IDS.creditTopUps.top_up_400_credits
+});
 
 export function storeKitProductIdForTopUpPlan(plan = {}) {
   const configured = String(plan.appStoreProductId || '').trim();
   if (STOREKIT_CONSUMABLE_PRODUCT_ID_SET.has(configured)) return configured;
-  return STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID[String(plan.id || '').trim()] || '';
+  const planId = String(plan.id || '').trim();
+  return STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID[planId]
+    || STOREKIT_PRODUCT_IDS_BY_SERVER_PLAN_ID[planId]
+    || '';
+}
+
+// A product is purchasable only when the deployed backend advertises the same
+// product ID that the app knows how to verify and finish.
+export function advertisedStoreKitProductIdForTopUpPlan(plan = {}, backendProductIds = {}) {
+  const expectedId = storeKitProductIdForTopUpPlan(plan);
+  const advertisedId = String(backendProductIds?.[plan.id] || '').trim();
+  return expectedId && advertisedId === expectedId ? expectedId : '';
 }
 
 export function isStoreKitConsumableProductId(productId) {

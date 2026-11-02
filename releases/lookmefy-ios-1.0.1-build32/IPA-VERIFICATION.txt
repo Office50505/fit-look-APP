@@ -1,0 +1,7 @@
+PASS iOS 1.0.1 (32): identity, signature and Release Hermes UUID 80D5528F-2C78-3B90-B90F-747E89A9F880
+PASS IPA ZIP integrity, identity, signing, Hermes configuration; SHA-256 d63abcfa7eaacf4bd127e4f3615012db28d6ab80e1830b955adf45929e43f043
+IPA signing: Apple Distribution, team LJ48CVC23W
+IPA bytes: 44226993
+Archive ZIP bytes: 69775262
+Archive ZIP SHA-256: 7a93bce39f87f5ef1bda9c64cd61ce25ea737ee5aad3b346496314098bfda138
+LIMIT: no device smoke test, App Store upload or TestFlight upload was performed.

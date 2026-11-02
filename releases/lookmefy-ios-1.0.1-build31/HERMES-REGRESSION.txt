@@ -1,0 +1,1 @@
+PASS: stale Release marker with Debug binaries is repaired; repeated verification is idempotent

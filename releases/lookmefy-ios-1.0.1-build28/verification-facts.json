@@ -1,0 +1,55 @@
+{
+  "react_native": "0.81.5",
+  "metadata": {
+    "CFBundleIdentifier": "com.kratikdhote.lookmefy",
+    "CFBundleShortVersionString": "1.0.1",
+    "CFBundleVersion": "28",
+    "MinimumOSVersion": "15.1",
+    "DTSDKName": "iphoneos26.5",
+    "DTXcode": "2660",
+    "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
+    "NSPhotoLibraryUsageDescription": "Lookmefy needs photo access so you can upload profile and clothing images for try-ons.",
+    "NSMicrophoneUsageDescription": null
+  },
+  "expected_release_hermes_uuid": {
+    "arm64": "80D5528F-2C78-3B90-B90F-747E89A9F880"
+  },
+  "archive_hermes_uuid": {
+    "arm64": "80D5528F-2C78-3B90-B90F-747E89A9F880"
+  },
+  "archive_signature": "fit-look-APP/mobile/release/lookmefy-ios-1.0.1-build28.xcarchive/Products/Applications/Lookmefy.app: valid on disk\nfit-look-APP/mobile/release/lookmefy-ios-1.0.1-build28.xcarchive/Products/Applications/Lookmefy.app: satisfies its Designated Requirement\n",
+  "archive_signing": "Executable=/Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/release/lookmefy-ios-1.0.1-build28.xcarchive/Products/Applications/Lookmefy.app/Lookmefy\nIdentifier=com.kratikdhote.lookmefy\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=17020 flags=0x0(none) hashes=521+7 location=embedded\nSignature size=4789\nAuthority=Apple Development: Ali Hussain Khan (JGXF4R39DG)\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nSigned Time=21 Oct 2026 at 4:45:00\u202fPM\nInfo.plist entries=40\nTeamIdentifier=LJ48CVC23W\nSealed Resources version=2 rules=10 files=158\nInternal requirements count=1 size=188\n",
+  "artifacts": {
+    "lookmefy-ios-1.0.1-build28.xcarchive.zip": {
+      "bytes": 69755520,
+      "sha256": "9a72f41b9d6d7854daee4416a30ce1df611e0e451843b68566acfa96a5d301fd",
+      "zip_verified": true
+    },
+    "lookmefy-ios-1.0.1-28.ipa": {
+      "bytes": 44207255,
+      "sha256": "b5f7ef05cb4067a7668c21fb0917a8fb59dfffbf17bd1d225dc0de35985b1cb7",
+      "zip_verified": true
+    }
+  },
+  "comparison": "iOS build 27 to 28; marketing version remains 1.0.1. Bundle ID, minimum iOS 15.1, SDK iphoneos26.5, arm64 architecture, camera/photo usage strings and Release Hermes UUID match the immediately preceding archive. Archive ZIP: 62,575,125 to 69,755,520 bytes (+7,180,395). Build 27 has no distribution IPA, so IPA-to-IPA comparison is unavailable.",
+  "hermes_result": "PASS: archive matches the pinned React Native 0.81.5 Release engine. Exported IPA also matches.",
+  "signing_result": "Archive is Apple Development signed for team LJ48CVC23W, Ali Hussain Khan; strict/deep codesign verification passed with macOS trust services. Exported IPA is Apple Distribution signed for team LJ48CVC23W and also passed strict/deep verification.",
+  "verification_summary": "PASS: Xcode Release archive, bundle/version/build metadata, strict/deep signing verification, pinned Release Hermes UUID and archive ZIP CRC. No physical-device or simulator smoke run was performed for build 28. IPA metadata, signature, Release Hermes UUID and ZIP CRC also passed.",
+  "ipa_export": "SUCCESS: local App Store Connect distribution IPA exported after Xcode refreshed the provisioning profile to match the existing Apple Distribution certificate. Initial cached-profile mismatch is retained in export logs. No store upload occurred.",
+  "ipa_metadata": {
+    "CFBundleIdentifier": "com.kratikdhote.lookmefy",
+    "CFBundleShortVersionString": "1.0.1",
+    "CFBundleVersion": "28",
+    "MinimumOSVersion": "15.1",
+    "DTSDKName": "iphoneos26.5",
+    "DTXcode": "2660",
+    "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
+    "NSPhotoLibraryUsageDescription": "Lookmefy needs photo access so you can upload profile and clothing images for try-ons.",
+    "NSMicrophoneUsageDescription": null
+  },
+  "ipa_hermes_uuid": {
+    "arm64": "80D5528F-2C78-3B90-B90F-747E89A9F880"
+  },
+  "ipa_signature": "/var/folders/tl/z0rfr49119vbwvp7ks733h780000gn/T/lookmefy-ios-verify-natr7o49/ipa/Payload/Lookmefy.app: valid on disk\n/var/folders/tl/z0rfr49119vbwvp7ks733h780000gn/T/lookmefy-ios-verify-natr7o49/ipa/Payload/Lookmefy.app: satisfies its Designated Requirement\n",
+  "ipa_signing": "Executable=/private/var/folders/tl/z0rfr49119vbwvp7ks733h780000gn/T/lookmefy-ios-verify-natr7o49/ipa/Payload/Lookmefy.app/Lookmefy\nIdentifier=com.kratikdhote.lookmefy\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=17020 flags=0x0(none) hashes=521+7 location=embedded\nSignature size=4790\nAuthority=Apple Distribution: Ali Hussain Khan (LJ48CVC23W)\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nSigned Time=21 Oct 2026 at 4:46:25\u202fPM\nInfo.plist entries=40\nTeamIdentifier=LJ48CVC23W\nSealed Resources version=2 rules=10 files=158\nInternal requirements count=1 size=192\n"
+}

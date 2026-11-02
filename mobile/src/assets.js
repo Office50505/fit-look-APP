@@ -51,6 +51,21 @@ export const images = {
   'category-7.jpg': require('../assets/category-7.jpg'),
   'category-8.jpg': require('../assets/category-8.jpg'),
   'category-eyewear-updated.jpg': require('../assets/category-eyewear-updated.jpg'),
+  'category-alt-shirts.png': require('../assets/category-alt-shirts.png'),
+  'category-alt-ethnicwear.png': require('../assets/category-alt-ethnicwear.png'),
+  'category-alt-ethnic-tops-editorial.png': require('../assets/category-alt-ethnic-tops-editorial.png'),
+  'category-alt-sleepwear.png': require('../assets/category-alt-sleepwear.png'),
+  'category-alt-innerwear.png': require('../assets/category-alt-innerwear.png'),
+  'category-alt-womens-bags.png': require('../assets/category-alt-womens-bags.png'),
+  'category-alt-mens-accessories-editorial.png': require('../assets/category-alt-mens-accessories-editorial.png'),
+  'category-alt-watch-collection.png': require('../assets/category-alt-watch-collection.png'),
+  'category-alt-watch-women.png': require('../assets/category-alt-watch-women.png'),
+  'category-alt-watch-men.png': require('../assets/category-alt-watch-men.png'),
+  'category-alt-eyewear-collection.png': require('../assets/category-alt-eyewear-collection.png'),
+  'category-alt-eyewear-men.png': require('../assets/category-alt-eyewear-men.png'),
+  'category-alt-pants.png': require('../assets/category-alt-pants.png'),
+  'category-alt-womens-bottoms.png': require('../assets/category-alt-womens-bottoms.png'),
+  'category-alt-beauty-premium.png': require('../assets/category-alt-beauty-premium.png'),
   'category-generated/accessories.png': require('../assets/category-generated/accessories.png'),
   'category-generated/beauty.png': require('../assets/category-generated/beauty.png'),
   'category-generated/bottomwear.png': require('../assets/category-generated/bottomwear.png'),
@@ -132,7 +147,7 @@ export const policyPages = {
       {
         title: 'Fastest way to get help',
         body: [
-          'Email support@lookmefy.com with your registered account details and issue type. For payments, include transaction/order reference. For Amazon products, include the product URL and seller name.'
+          'Email support@lookmefy.com with your registered account details and issue type. For orders or payments, include the order reference and product name.'
         ]
       },
       {
@@ -144,7 +159,7 @@ export const policyPages = {
       {
         title: 'Shopping help',
         body: [
-          "Lookmefy redirects shopping to Amazon. For delivery, cancellation, return, exchange, warranty, and final refund approval, follow Amazon's and the seller's policy."
+          'Check My Orders for Lookmefy order status. Contact support with your order reference for delivery, cancellation, return, or refund help. For purchases made outside Lookmefy, contact the original seller.'
         ]
       },
       {
@@ -159,7 +174,7 @@ export const policyPages = {
     kicker: 'Policy',
     title: 'Return and Refund Policy',
     updated: '17 August 2026',
-    lead: 'This policy separates Amazon product returns from Lookmefy token, AI generation, membership, and digital-service refunds.',
+    lead: 'This policy separates product returns from Lookmefy token, AI generation, membership, and digital-service refunds.',
     image: 'hero',
     emailSubject: 'Lookmefy return or refund request',
     related: [
@@ -171,7 +186,7 @@ export const policyPages = {
       {
         title: 'Product returns',
         body: [
-          "For products bought on Amazon, Amazon's and the listed seller's return, exchange, replacement, and refund policy applies. Check size, hygiene exclusions, return window, tags, packaging, pickup availability, and refund method before purchase. Lookmefy redirects users to Amazon and can help locate the product/order support path, but final approval is controlled by Amazon or the seller."
+          'For Lookmefy product orders, contact support with the order reference to request return or refund help. Check size, hygiene exclusions, return window, tags, packaging, pickup availability, and refund method before ordering. For earlier purchases made outside Lookmefy, the original seller handles returns and refunds.'
         ]
       },
       {
@@ -195,7 +210,7 @@ export const policyPages = {
       {
         title: 'Non-returnable cases',
         body: [
-          'AI previews are not guarantees of exact fit, product quality, or Amazon/seller fulfilment. A difference between AI preview and real-world product appearance does not by itself make an Amazon product return eligible unless Amazon or the seller policy allows it. Items marked final sale, hygiene-sensitive, customized, damaged after delivery, missing tags/packaging, or outside the return window may be refused by Amazon or sellers.'
+          'AI previews are not guarantees of exact fit or product quality. A difference between an AI preview and the real product does not by itself guarantee return eligibility. Items marked final sale, hygiene-sensitive, customized, damaged after delivery, missing tags or packaging, or outside the return window may not be eligible for return.'
         ]
       }
     ]
@@ -232,9 +247,9 @@ export const policyPages = {
         ]
       },
       {
-        title: 'Amazon order cancellation',
+        title: 'Product order cancellation',
         body: [
-          "For products ordered on Amazon, cancellation is governed by Amazon's and the seller's policy and order status. Any cancellation charges or restrictions should be reviewed on Amazon before checkout."
+          'For Lookmefy product orders, contact support with the order reference as soon as possible. Cancellation depends on the order and fulfillment status. For earlier purchases made outside Lookmefy, contact the original seller.'
         ]
       }
     ]
@@ -269,7 +284,7 @@ export const policyPages = {
       {
         title: 'Third-party shopping and payments',
         body: [
-          'Lookmefy may redirect product shopping to Amazon or other third-party stores. Those stores control their checkout, delivery, returns, refunds, and separate privacy practices.',
+          'Lookmefy processes product order contact and delivery information when checkout is available. An earlier purchase made outside Lookmefy remains subject to the original seller’s privacy practices.',
           'Payment details are handled by the payment provider shown in the app. Lookmefy stores order references, payment status, credit balance changes, and support information needed to operate the credits service.'
         ]
       },
@@ -292,7 +307,7 @@ export const policyPages = {
     kicker: 'Terms',
     title: 'Terms of Service',
     updated: '22 August 2026',
-    lead: 'These terms explain the rules for using Lookmefy accounts, AI try-on, credits, wardrobe tools, product discovery, and third-party shopping links.',
+    lead: 'These terms explain the rules for using Lookmefy accounts, AI try-on, credits, wardrobe tools, product discovery, and product ordering.',
     image: 'hero',
     emailSubject: 'Lookmefy terms question',
     related: [
@@ -325,7 +340,7 @@ export const policyPages = {
       {
         title: 'Third-party stores and services',
         body: [
-          'Products may be listed from or redirected to Amazon or other third-party services. Lookmefy does not control third-party prices, availability, seller claims, delivery, returns, warranties, refunds, or checkout decisions.',
+          'Product checkout is available only when enabled in the app. Product details, availability, fulfillment, and order status should be reviewed before confirming an order.',
           'Third-party AI, messaging, storage, payment, hosting, and shopping providers may process information as needed to deliver the service.'
         ]
       },

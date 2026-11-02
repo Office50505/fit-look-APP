@@ -169,6 +169,17 @@ export function verifiedProductBrand(product = {}) {
   return brand;
 }
 
+export function isMarketplaceProduct(product = {}) {
+  if (String(product.sourceProvider || '').toLowerCase() === 'amazon') return true;
+  if (String(product.badge || '').toLowerCase() === 'amazon') return true;
+  return [product.affiliateLink, product.sourceUrl].some((value) => {
+    try {
+      const host = new URL(String(value || '')).hostname.toLowerCase();
+      return host === 'amzn.in' || host === 'amazon.com' || host.startsWith('amazon.') || host.includes('.amazon.');
+    } catch { return false; }
+  });
+}
+
 export function productMerchantUrl(product = {}) {
   for (const value of [product.affiliateLink, product.sourceUrl]) {
     const candidate = cleanText(value);
@@ -231,7 +242,7 @@ export function normalizeProduct(apiProduct = {}) {
 }
 
 export function normalizeProducts(products = []) {
-  return toArray(products).map(normalizeProduct).filter((product) => product.id);
+  return toArray(products).map(normalizeProduct).filter((product) => product.id && !isMarketplaceProduct(product));
 }
 
 export function calculateCreditPercentage(remaining, total) {

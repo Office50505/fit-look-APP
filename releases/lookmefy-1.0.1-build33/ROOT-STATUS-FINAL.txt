@@ -1,0 +1,52 @@
+ M fit-look-APP/mobile/android/app/build.gradle
+ M fit-look-APP/mobile/app.json
+ M fit-look-APP/mobile/ios/FitLook.xcodeproj/project.pbxproj
+ M fit-look-APP/releases/RELEASE_HISTORY.md
+ M shopify-app/app/routes/app.products.details.tsx
+ M shopify-app/app/routes/proxy.lookmefy.eligibility.tsx
+ M shopify-app/app/services/shopify-ai.server.ts
+ M shopify-app/app/services/shopify-garment.server.ts
+ M shopify-app/app/services/shopify-local-media.server.ts
+ M shopify-app/app/services/shopify-products.server.ts
+ M shopify-app/app/services/shopify-pruna-transport.server.ts
+ M shopify-app/app/services/shopify-real-bootstrap.server.ts
+ M shopify-app/app/services/shopify-real-budget.server.ts
+ M shopify-app/app/services/shopify-real-controls.server.ts
+ M shopify-app/app/services/shopify-real-generation.server.ts
+ M shopify-app/app/services/shopify-real-runtime.server.ts
+ M shopify-app/app/services/storefront-eligibility.server.ts
+ M shopify-app/app/styles/dashboard.css
+ M shopify-app/extensions/lookmefy-virtual-try-on/assets/lookmefy-real-room.js
+ M shopify-app/extensions/lookmefy-virtual-try-on/assets/lookmefy-try-on.js
+ M shopify-app/extensions/lookmefy-virtual-try-on/blocks/lookmefy-try-on.liquid
+ M shopify-app/extensions/lookmefy-virtual-try-on/locales/en.default.json
+ M shopify-app/package.json
+ M shopify-app/prisma/postgresql/schema.prisma
+ M shopify-app/prisma/schema.prisma
+ M shopify-app/storefront/real-photo.js
+ M shopify-app/storefront/real-room.js
+ M shopify-app/storefront/widget.js
+ M shopify-app/tests/browser/phase4b-live.mjs
+ M shopify-app/tests/browser/phase4b-widget.mjs
+ M shopify-app/tests/helpers/real-runtime-fixture.mjs
+ M shopify-app/tests/helpers/simulation-fixture.mjs
+ M shopify-app/tests/phase35b-dashboard.test.mjs
+ M shopify-app/tests/phase4b-storefront.test.mjs
+ M shopify-app/tests/phase4c7-readiness.test.mjs
+ M shopify-app/tests/phase4cf-real-runtime.test.mjs
+?? output/pdf/lookmefy-release-1.0.1-android32-ios30-2026-10-22.pdf
+?? output/pdf/lookmefy-release-1.0.1-android33-ios31-2026-10-22.pdf
+?? shopify-app/app/models/garment-profile.server.ts
+?? shopify-app/app/routes/proxy.lookmefy.development-ai.tsx
+?? shopify-app/app/services/shopify-development-ai-http.server.ts
+?? shopify-app/app/services/shopify-development-ai.server.ts
+?? shopify-app/app/services/shopify-garment-capabilities.ts
+?? shopify-app/prisma/migrations/202610220002_multicategory_garments/
+?? shopify-app/prisma/migrations/202610220003_garment_approval_evidence/
+?? shopify-app/prisma/postgresql/migrations/202610220002_multicategory_garments/
+?? shopify-app/prisma/postgresql/migrations/202610220003_garment_approval_evidence/
+?? shopify-app/tests/browser/development-ai.mjs
+?? shopify-app/tests/browser/garment-dashboard.mjs
+?? shopify-app/tests/development-ai.test.mjs
+?? shopify-app/tests/garment-capabilities.test.mjs
+?? shopify-app/tests/helpers/development-ai-fixture.mjs

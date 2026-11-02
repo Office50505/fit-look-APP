@@ -1,0 +1,4 @@
+PASS iOS 1.0.1 (32): identity, signature and Release Hermes UUID 80D5528F-2C78-3B90-B90F-747E89A9F880
+Archive identity: com.kratikdhote.lookmefy / 1.0.1 / 32
+Archive signing: Apple Development, team LJ48CVC23W
+Architecture: arm64; minimum iOS 15.1; SDK iphoneos26.5; Xcode 26.6

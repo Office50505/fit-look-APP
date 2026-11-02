@@ -1,0 +1,108 @@
+(node:14678) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/categoryContinuity.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ category sections continue in rail order without repeating the same destination (0.906125ms)
+✔ the active side-rail category follows the continuous content scroll (0.083125ms)
+✔ each visible subcategory uses a distinct bundled image within its section (4.49875ms)
+✔ shared back row exposes a working Back action when a previous screen exists (53.134084ms)
+✔ product links open the requested catalog item without accepting arbitrary routes (10.530833ms)
+✔ mobile API gates photo-processing requests before transport (0.763625ms)
+✔ cancelled photo permission sends no request and consent is scoped to one sign-in (0.3375ms)
+✔ photo processing path check excludes reads and unrelated posts (0.099291ms)
+✔ photo actions do not show a repeated AI processing checkbox (106.383417ms)
+✔ product try-on preview fetches private image bytes and retries with a renewed session (0.67425ms)
+✔ retrying a failed saved Try-On preview does not generate or charge again (11.274208ms)
+✔ Report content remains disabled and sends no request without authenticated capability (11.6195ms)
+✔ deletion confirmation, pending and partial cleanup never clear a session or announce completion (236.295333ms)
+✔ false, missing, string and conflicting deletion confirmations remain errors (235.822208ms)
+✔ deletion shows loading, rejects duplicate presses and completes only with strict server confirmation (48.2215ms)
+✔ network errors remain unconfirmed; local storage failure after confirmed deletion is reported accurately (94.001333ms)
+✔ deletion receipt check distinguishes pending, failed and confirmed completion without a destructive request (71.028458ms)
+✔ Try-On generates from a selected garment without the extra checkbox (17.364791ms)
+✔ portrait garment cards follow image ratio without exceeding the available row width (17.598209ms)
+✔ Try-On malformed results never announce success and retry can recover (17.0965ms)
+✔ Try-On loading prevents same-frame duplicate requests (17.012041ms)
+✔ AI Stylist follows new replies but lets a user drag through older messages (36.228375ms)
+✔ AI Stylist failure and retry update the original response rather than duplicating the conversation (18.2605ms)
+✔ AI Stylist empty responses are recoverable failures (17.699542ms)
+✔ image-only picker never requires broad library permission, and cancel/denial do not upload (7.404209ms)
+✔ camera denial preserves Settings recovery without opening the camera (4.095208ms)
+✔ legal links open the actual HTTPS policy and expose failures (9.830375ms)
+✔ unverified billing stays unavailable and subscription terms distinguish setup from recurring amount (0.11275ms)
+✔ reporting reference validates scope and identifier without URLs or local stylist IDs (0.080209ms)
+✔ report POST fails closed without a compatible explicit backend capability (0.222584ms)
+✔ report payload is identifier-only and successful receipt is validated and deduplicated (0.105375ms)
+✔ report retries retain idempotency key; malformed receipt never becomes success (0.107917ms)
+✔ concurrent report submissions and account switches cannot reuse authenticated state (0.075625ms)
+✔ failed cleanup is never treated as completed or safely pending (93.648833ms)
+✔ support fallback does not claim mail sent; deletion policy uses existing published route (9.915166ms)
+✔ Apple subscription management falls back to real store settings without pretending to open native UI (19.997583ms)
+✔ sign-in prompt exposes independent accessible controls rather than one grouped modal (28.391708ms)
+✔ password visibility control and input announce their purpose (12.765791ms)
+✔ Google verification never claims a credit grant from incomplete, pending, or review responses (113.127ms)
+✔ report dialog submission exposes loading, suppresses duplicate presses and never claims removal (9.850959ms)
+✔ Credits policy and support links expose accessible independent navigation actions (22.707875ms)
+✔ bottom navigation keeps readable label metrics across full-screen return and font-scale changes (6.861792ms)
+(node:14680) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/gestureNavigation.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ the app does not capture a sideways swipe to change routes (3.075125ms)
+✔ route motion is brief, directional, and disabled for reduced motion or replacement (0.727ms)
+✔ mobile catalog excludes marketplace items from shopping and checkout entry points (2.201917ms)
+✔ suppresses a footwear category when the product title clearly describes apparel (0.85125ms)
+✔ keeps a footwear category for slip-on shoes (0.415625ms)
+✔ uses a neutral category fallback when category metadata is missing (0.064833ms)
+✔ only presents ratings backed by a positive review count (0.083333ms)
+✔ keeps source-confirmed brands while suppressing placeholders and seller-like labels (0.0965ms)
+✔ preserves affiliate attribution and falls back to a valid source URL (0.137417ms)
+✔ normalization preserves category, product identity, image, and merchant fields (0.326041ms)
+(node:14682) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/privateMediaRecovery.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ screen snapshots survive navigation within a session and never cross sessions (1.440959ms)
+✔ private image requests are shared and cached only for the same owner session (2.639709ms)
+✔ wardrobe category opens an in-place picker and choosing a garment keeps the preview (34.970208ms)
+✔ wardrobe preview owns the picker and sends Try On results back to itself (14.390042ms)
+✔ selected wardrobe icon shows the garment clearly without a glyph over the photo (9.295333ms)
+✔ Add Item type picker uses the same eight choices as the Wardrobe icons (16.980292ms)
+✔ Add Item maps detected dresses to Full Outfit and opens with the tapped wardrobe type (29.480292ms)
+✔ photo analysis applies the backend details response to Add Item (9.644375ms)
+✔ Add Item back returns to the previous route with a Wardrobe fallback (24.673333ms)
+✔ Wardrobe icon types save to supported categories with accessory markers (18.334208ms)
+✔ explicit accessory type shows under its matching Wardrobe icon (26.784625ms)
+✔ one selected wardrobe item generates a look in Wardrobe without navigation (9.18575ms)
+✔ successful Wardrobe generation displays its image without opening Custom Try-On or a lightbox (9.0095ms)
+(node:14684) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/privateMediaRecovery.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ renewal only resolves exact private API paths and never CDN/product URLs (0.773417ms)
+✔ backend renewal verifies the current profile owner and deletion state (0.701666ms)
+✔ backend renewal requires a matching wardrobe record and owned storage path (0.229542ms)
+✔ Try-On renewal requires the exact owner, media kind and stored result (0.230709ms)
+✔ mobile renewal is bounded to the same path and the same signed-in session (0.145833ms)
+✔ private serializers hide direct Bunny, generated, and legacy URLs (4.786417ms)
+✔ private media model URLs contain no bearer token or direct Bunny URL (0.084792ms)
+✔ legacy upload path validation rejects traversal and encoded separators (0.235ms)
+✔ legacy upload authorization requires an actual owner record; catalog stays public (2.126041ms)
+(node:14686) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/wishlistPresentation.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ wishlist preserves genuinely missing prices instead of presenting them as zero (0.730542ms)
+✔ phone wishlist never renders a three-column product grid (0.091ms)
+✔ filter tabs grow with larger text instead of retaining small-font widths (0.084125ms)
+✔ repeated remove actions cannot re-add a saved item or affect other items (1.043584ms)
+✔ wishlist persistence commits the precise account key before callers update UI (0.2665ms)
+✔ failed wishlist persistence rejects without mutating the existing saved list (0.503125ms)
+ℹ tests 80
+ℹ suites 0
+ℹ pass 80
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1551.555459

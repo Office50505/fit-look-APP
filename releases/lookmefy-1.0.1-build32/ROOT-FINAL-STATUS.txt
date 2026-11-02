@@ -1,0 +1,25 @@
+ M fit-look-APP/mobile/android/app/build.gradle
+ M fit-look-APP/mobile/app.json
+ M fit-look-APP/mobile/ios/FitLook.xcodeproj/project.pbxproj
+ M fit-look-APP/releases/RELEASE_HISTORY.md
+ M shopify-app/app/routes/proxy.lookmefy.eligibility.tsx
+ M shopify-app/app/services/shopify-real-bootstrap.server.ts
+ M shopify-app/app/services/shopify-real-runtime.server.ts
+ M shopify-app/app/services/storefront-eligibility.server.ts
+ M shopify-app/extensions/lookmefy-virtual-try-on/assets/lookmefy-real-room.js
+ M shopify-app/extensions/lookmefy-virtual-try-on/assets/lookmefy-try-on.js
+ M shopify-app/extensions/lookmefy-virtual-try-on/blocks/lookmefy-try-on.liquid
+ M shopify-app/extensions/lookmefy-virtual-try-on/locales/en.default.json
+ M shopify-app/package.json
+ M shopify-app/storefront/real-photo.js
+ M shopify-app/storefront/real-room.js
+ M shopify-app/storefront/widget.js
+ M shopify-app/tests/helpers/real-runtime-fixture.mjs
+ M shopify-app/tests/helpers/simulation-fixture.mjs
+?? output/pdf/lookmefy-release-1.0.1-android32-ios30-2026-10-22.pdf
+?? shopify-app/app/routes/proxy.lookmefy.development-ai.tsx
+?? shopify-app/app/services/shopify-development-ai-http.server.ts
+?? shopify-app/app/services/shopify-development-ai.server.ts
+?? shopify-app/tests/browser/development-ai.mjs
+?? shopify-app/tests/development-ai.test.mjs
+?? shopify-app/tests/helpers/development-ai-fixture.mjs

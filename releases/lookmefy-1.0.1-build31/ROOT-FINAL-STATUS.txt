@@ -1,0 +1,5 @@
+ M fit-look-APP/mobile/android/app/build.gradle
+ M fit-look-APP/mobile/app.json
+ M fit-look-APP/mobile/ios/FitLook.xcodeproj/project.pbxproj
+ M fit-look-APP/releases/RELEASE_HISTORY.md
+?? output/pdf/lookmefy-release-1.0.1-android31-ios29-2026-10-22.pdf

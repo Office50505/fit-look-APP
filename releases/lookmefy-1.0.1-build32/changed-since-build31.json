@@ -1,0 +1,26 @@
+[
+  {
+    "path": "fit-look-APP/mobile/src/gestureNavigation.js",
+    "status": "changed"
+  },
+  {
+    "path": "fit-look-APP/mobile/src/frontendReleaseSafety.js",
+    "status": "changed"
+  },
+  {
+    "path": "fit-look-APP/mobile/App.js",
+    "status": "changed"
+  },
+  {
+    "path": "fit-look-APP/mobile/app.json",
+    "status": "changed"
+  },
+  {
+    "path": "fit-look-APP/mobile/android/app/build.gradle",
+    "status": "changed"
+  },
+  {
+    "path": "fit-look-APP/mobile/ios/FitLook.xcodeproj/project.pbxproj",
+    "status": "changed"
+  }
+]

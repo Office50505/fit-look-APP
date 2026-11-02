@@ -1,0 +1,10 @@
+M  .gitignore
+ M fit-look-APP/mobile/android/app/build.gradle
+ M fit-look-APP/mobile/app.json
+ M fit-look-APP/mobile/ios/FitLook.xcodeproj/project.pbxproj
+ M fit-look-APP/mobile/package.json
+ M fit-look-APP/releases/RELEASE_HISTORY.md
+D  output/final-prepush-verification-2026-10-21.json
+D  output/safe-git-review-2026-10-21.json
+D  reports/load/archive/backend-load-summary-endpoint-profile-smoke-2026-08-05.json
+?? output/pdf/lookmefy-release-1.0.1-android30-ios28-2026-10-21.pdf

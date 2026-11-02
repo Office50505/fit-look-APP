@@ -1,0 +1,282 @@
+TAP version 13
+# (node:35315) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/categoryContinuity.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: category sections continue in rail order without repeating the same destination
+ok 1 - category sections continue in rail order without repeating the same destination
+  ---
+  duration_ms: 1.15625
+  ...
+# Subtest: the active side-rail category follows the continuous content scroll
+ok 2 - the active side-rail category follows the continuous content scroll
+  ---
+  duration_ms: 0.082166
+  ...
+# Subtest: each visible subcategory uses a distinct bundled image within its section
+ok 3 - each visible subcategory uses a distinct bundled image within its section
+  ---
+  duration_ms: 5.243833
+  ...
+# Subtest: shared back row exposes a working Back action when a previous screen exists
+ok 4 - shared back row exposes a working Back action when a previous screen exists
+  ---
+  duration_ms: 50.894875
+  ...
+# Subtest: product links open the requested catalog item without accepting arbitrary routes
+ok 5 - product links open the requested catalog item without accepting arbitrary routes
+  ---
+  duration_ms: 10.386
+  ...
+# Subtest: mobile API sends AI requests without the removed per-request photo popup
+ok 6 - mobile API sends AI requests without the removed per-request photo popup
+  ---
+  duration_ms: 0.732541
+  ...
+# Subtest: photo actions do not show or depend on the repeated AI processing checkbox
+ok 7 - photo actions do not show or depend on the repeated AI processing checkbox
+  ---
+  duration_ms: 120.79325
+  ...
+# Subtest: product try-on preview fetches private image bytes and retries with a renewed session
+ok 8 - product try-on preview fetches private image bytes and retries with a renewed session
+  ---
+  duration_ms: 0.635583
+  ...
+# Subtest: retrying a failed saved Try-On preview does not generate or charge again
+ok 9 - retrying a failed saved Try-On preview does not generate or charge again
+  ---
+  duration_ms: 13.661167
+  ...
+# Subtest: Report content remains disabled and sends no request without authenticated capability
+ok 10 - Report content remains disabled and sends no request without authenticated capability
+  ---
+  duration_ms: 16.261417
+  ...
+# Subtest: deletion confirmation, pending and partial cleanup never clear a session or announce completion
+ok 11 - deletion confirmation, pending and partial cleanup never clear a session or announce completion
+  ---
+  duration_ms: 289.396292
+  ...
+# Subtest: false, missing, string and conflicting deletion confirmations remain errors
+ok 12 - false, missing, string and conflicting deletion confirmations remain errors
+  ---
+  duration_ms: 275.373834
+  ...
+# Subtest: deletion shows loading, rejects duplicate presses and completes only with strict server confirmation
+ok 13 - deletion shows loading, rejects duplicate presses and completes only with strict server confirmation
+  ---
+  duration_ms: 53.159667
+  ...
+# Subtest: network errors remain unconfirmed; local storage failure after confirmed deletion is reported accurately
+ok 14 - network errors remain unconfirmed; local storage failure after confirmed deletion is reported accurately
+  ---
+  duration_ms: 108.636125
+  ...
+# Subtest: deletion receipt check distinguishes pending, failed and confirmed completion without a destructive request
+ok 15 - deletion receipt check distinguishes pending, failed and confirmed completion without a destructive request
+  ---
+  duration_ms: 81.285
+  ...
+# Subtest: Try-On generates from a selected garment without the extra checkbox
+ok 16 - Try-On generates from a selected garment without the extra checkbox
+  ---
+  duration_ms: 19.623458
+  ...
+# Subtest: portrait garment cards follow image ratio without exceeding the available row width
+ok 17 - portrait garment cards follow image ratio without exceeding the available row width
+  ---
+  duration_ms: 20.162541
+  ...
+# Subtest: Try-On malformed results never announce success and retry can recover
+ok 18 - Try-On malformed results never announce success and retry can recover
+  ---
+  duration_ms: 19.785292
+  ...
+# Subtest: Try-On loading prevents same-frame duplicate requests
+ok 19 - Try-On loading prevents same-frame duplicate requests
+  ---
+  duration_ms: 20.114625
+  ...
+# Subtest: AI Stylist follows new replies but lets a user drag through older messages
+ok 20 - AI Stylist follows new replies but lets a user drag through older messages
+  ---
+  duration_ms: 41.683541
+  ...
+# Subtest: AI Stylist failure and retry update the original response rather than duplicating the conversation
+ok 21 - AI Stylist failure and retry update the original response rather than duplicating the conversation
+  ---
+  duration_ms: 21.338083
+  ...
+# Subtest: AI Stylist empty responses are recoverable failures
+ok 22 - AI Stylist empty responses are recoverable failures
+  ---
+  duration_ms: 20.105958
+  ...
+# Subtest: image-only picker never requires broad library permission, and cancel/denial do not upload
+ok 23 - image-only picker never requires broad library permission, and cancel/denial do not upload
+  ---
+  duration_ms: 8.7335
+  ...
+# Subtest: camera denial preserves Settings recovery without opening the camera
+ok 24 - camera denial preserves Settings recovery without opening the camera
+  ---
+  duration_ms: 4.4305
+  ...
+# Subtest: legal links open the actual HTTPS policy and expose failures
+ok 25 - legal links open the actual HTTPS policy and expose failures
+  ---
+  duration_ms: 11.112833
+  ...
+# Subtest: unverified billing stays unavailable and subscription terms distinguish setup from recurring amount
+ok 26 - unverified billing stays unavailable and subscription terms distinguish setup from recurring amount
+  ---
+  duration_ms: 0.1365
+  ...
+# Subtest: reporting reference validates scope and identifier without URLs or local stylist IDs
+ok 27 - reporting reference validates scope and identifier without URLs or local stylist IDs
+  ---
+  duration_ms: 0.087333
+  ...
+# Subtest: report POST fails closed without a compatible explicit backend capability
+ok 28 - report POST fails closed without a compatible explicit backend capability
+  ---
+  duration_ms: 0.388291
+  ...
+# Subtest: report payload is identifier-only and successful receipt is validated and deduplicated
+ok 29 - report payload is identifier-only and successful receipt is validated and deduplicated
+  ---
+  duration_ms: 0.122916
+  ...
+# Subtest: report retries retain idempotency key; malformed receipt never becomes success
+ok 30 - report retries retain idempotency key; malformed receipt never becomes success
+  ---
+  duration_ms: 0.234084
+  ...
+# Subtest: concurrent report submissions and account switches cannot reuse authenticated state
+ok 31 - concurrent report submissions and account switches cannot reuse authenticated state
+  ---
+  duration_ms: 0.097042
+  ...
+# Subtest: failed cleanup is never treated as completed or safely pending
+ok 32 - failed cleanup is never treated as completed or safely pending
+  ---
+  duration_ms: 107.657625
+  ...
+# Subtest: support fallback does not claim mail sent; deletion policy uses existing published route
+ok 33 - support fallback does not claim mail sent; deletion policy uses existing published route
+  ---
+  duration_ms: 13.734584
+  ...
+# Subtest: Apple subscription management falls back to real store settings without pretending to open native UI
+ok 34 - Apple subscription management falls back to real store settings without pretending to open native UI
+  ---
+  duration_ms: 22.544375
+  ...
+# Subtest: sign-in prompt exposes independent accessible controls rather than one grouped modal
+ok 35 - sign-in prompt exposes independent accessible controls rather than one grouped modal
+  ---
+  duration_ms: 33.252583
+  ...
+# Subtest: password visibility control and input announce their purpose
+ok 36 - password visibility control and input announce their purpose
+  ---
+  duration_ms: 15.082916
+  ...
+# Subtest: Google verification never claims a credit grant from incomplete, pending, or review responses
+ok 37 - Google verification never claims a credit grant from incomplete, pending, or review responses
+  ---
+  duration_ms: 132.993459
+  ...
+# Subtest: report dialog submission exposes loading, suppresses duplicate presses and never claims removal
+ok 38 - report dialog submission exposes loading, suppresses duplicate presses and never claims removal
+  ---
+  duration_ms: 11.313167
+  ...
+# Subtest: Credits policy and support links expose accessible independent navigation actions
+ok 39 - Credits policy and support links expose accessible independent navigation actions
+  ---
+  duration_ms: 25.713792
+  ...
+# (node:35317) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/gestureNavigation.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: back navigation begins only from the left edge on a backable screen
+ok 40 - back navigation begins only from the left edge on a backable screen
+  ---
+  duration_ms: 1.149458
+  ...
+# Subtest: vertical scrolls and short or cancelled swipes do not navigate back
+ok 41 - vertical scrolls and short or cancelled swipes do not navigate back
+  ---
+  duration_ms: 0.083
+  ...
+# Subtest: route motion is brief, directional, and disabled for reduced motion or replacement
+ok 42 - route motion is brief, directional, and disabled for reduced motion or replacement
+  ---
+  duration_ms: 0.371417
+  ...
+# Subtest: mobile catalog excludes marketplace items from shopping and checkout entry points
+ok 43 - mobile catalog excludes marketplace items from shopping and checkout entry points
+  ---
+  duration_ms: 1.862625
+  ...
+# Subtest: suppresses a footwear category when the product title clearly describes apparel
+ok 44 - suppresses a footwear category when the product title clearly describes apparel
+  ---
+  duration_ms: 0.767834
+  ...
+# Subtest: keeps a footwear category for slip-on shoes
+ok 45 - keeps a footwear category for slip-on shoes
+  ---
+  duration_ms: 0.640375
+  ...
+# Subtest: uses a neutral category fallback when category metadata is missing
+ok 46 - uses a neutral category fallback when category metadata is missing
+  ---
+  duration_ms: 0.056958
+  ...
+# Subtest: only presents ratings backed by a positive review count
+ok 47 - only presents ratings backed by a positive review count
+  ---
+  duration_ms: 0.078584
+  ...
+# Subtest: keeps source-confirmed brands while suppressing placeholders and seller-like labels
+ok 48 - keeps source-confirmed brands while suppressing placeholders and seller-like labels
+  ---
+  duration_ms: 0.1245
+  ...
+# Subtest: preserves affiliate attribution and falls back to a valid source URL
+ok 49 - preserves affiliate attribution and falls back to a valid source URL
+  ---
+  duration_ms: 0.080375
+  ...
+# Subtest: normalization preserves category, product identity, image, and merchant fields
+ok 50 - normalization preserves category, product identity, image, and merchant fields
+  ---
+  duration_ms: 0.506667
+  ...
+# (node:35319) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/kratik/Desktop/yttry-main%20copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/src/screenDataCache.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to /Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: screen snapshots survive navigation within a session and never cross sessions
+ok 51 - screen snapshots survive navigation within a session and never cross sessions
+  ---
+  duration_ms: 2.057625
+  ...
+# Subtest: private image requests are shared and cached only for the same owner session
+ok 52 - private image requests are shared and cached only for the same owner session
+  ---
+  duration_ms: 2.175125
+  ...
+1..52
+# tests 52
+# suites 0
+# pass 52
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1773.5125

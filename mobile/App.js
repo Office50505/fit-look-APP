@@ -9,6 +9,7 @@ import { SafeAreaProvider, SafeAreaView as InsetSafeAreaView, useSafeAreaInsets 
 import { Component, createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AccessibilityInfo,
   Alert,
   Animated,
   AppState,
@@ -35,23 +36,26 @@ import {
   View
 } from 'react-native';
 import { api as sendApi, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
-import { authenticatedMediaSource, privateMediaPath, renewPrivateImageUrl } from './src/privateMediaRecovery';
-import { accountDeletionOutcome, createPhotoConsentGate, guardAiPhotoSubmission, requireGeneratedImage, contentReportReasons, createContentReportClient, reportContentReference } from './src/frontendReleaseSafety';
+import { authenticatedMediaSource, cachedAuthenticatedImageDataUri, cachedPrivateImage, clearPrivateImageCache, privateMediaPath, renewPrivateImageUrl } from './src/privateMediaRecovery';
+import { clearScreenSnapshots, readScreenSnapshot, writeScreenSnapshot } from './src/screenDataCache';
+import { accountDeletionOutcome, requireGeneratedImage, contentReportReasons, createContentReportClient, reportContentReference, createAiPhotoConsentGuard, sendsPhotosToAi } from './src/frontendReleaseSafety';
 import { creditPackageDescription, creditPackageDisplayPrice, creditPurchaseAvailability, creditSubscriptionStatus, knownCreditBalance, paymentCatalogAvailable, recurringPeriodLabel, showMandateTermsForPlatform } from './src/creditPresentation';
 import { persistWishlistProducts, removeWishlistProduct, wishlistFilterTabMinWidth, wishlistGridColumnsForWidth, wishlistPriceValue } from './src/wishlistPresentation';
+import { buildCategorySections, categoryAtScrollPosition, uniqueCategoryTiles } from './src/categoryContinuity';
 import { beginGooglePlayPurchase, googlePlayPurchaseCancelled, initGooglePlayCatalog } from './src/googlePlayClient';
 import { subscriptionTerms } from './src/paymentTerms';
 import { categories, images, infoPages, policyPages } from './src/assets';
-import { calculateCreditPercentage, normalizeProduct, normalizeProducts, productCategoryPresentation, productMerchantUrl, resolveImageUrl, verifiedProductBrand, verifiedProductRating } from './src/products';
-import { shouldFinishBackSwipe, shouldStartBackSwipe } from './src/gestureNavigation';
+import { calculateCreditPercentage, isMarketplaceProduct, normalizeProduct, normalizeProducts, productCategoryPresentation, resolveImageUrl, verifiedProductBrand, verifiedProductRating } from './src/products';
+import { routeTransitionSpec } from './src/gestureNavigation';
+import { nativeAppearanceStyles } from './src/nativeAppearance';
 import {
   STOREKIT_CONSUMABLE_PRODUCT_IDS,
   STOREKIT_CREDIT_TOP_UP_PRODUCT_IDS_BY_PLAN_ID,
   STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID,
+  advertisedStoreKitProductIdForTopUpPlan,
   isLookmefyStoreKitProductId,
   isStoreKitConsumableProductId,
-  storeKitAppAccountTokenForUser,
-  storeKitProductIdForTopUpPlan
+  storeKitAppAccountTokenForUser
 } from './src/storeKitProducts';
 
 const logoSymbol = require('./assets/lookmefy-symbol.png');
@@ -61,7 +65,6 @@ const wardrobeFootwearIcon = require('./assets/wardrobe-footwear-icon.png');
 const USER_PASSWORD_MIN_LENGTH = 6;
 const USER_PASSWORD_MAX_BYTES = 72;
 
-const photoConsentGate = createPhotoConsentGate();
 const ContentReportingContext = createContext('');
 const PrivateMediaSessionContext = createContext('');
 async function refreshPrivateImage(uri) {
@@ -69,8 +72,37 @@ async function refreshPrivateImage(uri) {
     apiOrigin: imageUrl('/api/health'), request: sendApi, resolveUrl: imageUrl, getSessionToken: getToken
   });
 }
+async function recoverPrivateImage(uri, sessionToken) {
+  try {
+    return await cachedAuthenticatedImageDataUri(uri, { apiOrigin: imageUrl('/api/health'), sessionToken });
+  } catch {}
+  try {
+    const renewed = await refreshPrivateImage(uri);
+    if (!renewed) return '';
+    return await cachedAuthenticatedImageDataUri(renewed, {
+      apiOrigin: imageUrl('/api/health'), sessionToken: await getToken()
+    });
+  } catch { return ''; }
+}
+const requireAiPhotoConsent = createAiPhotoConsentGuard({
+  getIdentity: getToken,
+  requestPermission: () => new Promise((resolve) => {
+    const message = 'Lookmefy may send your profile photo and selected clothing or product images to AI processors, including Pruna and fal.ai, to analyze clothing or create your try-on. Allow this for AI photo requests during this sign-in session? You can reset this choice in Profile.';
+    if (Platform.OS === 'web') {
+      resolve(typeof window !== 'undefined' && window.confirm(message));
+      return;
+    }
+    Alert.alert('Allow AI photo processing?', message, [
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'Privacy Policy', onPress: () => { openLegalPolicy('privacy'); resolve(false); } },
+      { text: 'Allow & Continue', onPress: () => resolve(true) }
+    ], { cancelable: true, onDismiss: () => resolve(false) });
+  })
+});
+
 async function api(path, options = {}) {
-  return guardAiPhotoSubmission(sendApi, path, options, photoConsentGate.request);
+  if (sendsPhotosToAi(path, options)) await requireAiPhotoConsent();
+  return sendApi(path, options);
 }
 
 if (typeof __DEV__ !== 'undefined' && __DEV__) {
@@ -92,7 +124,7 @@ const sortOptions = [
 const supportEmail = 'support@lookmefy.com';
 const aiPreviewDisclaimer = 'Note: AI previews can make mistakes. Check fit, colour, and product details before buying.';
 const appTopInset = Platform.OS === 'android' ? Math.max(76, NativeStatusBar.currentHeight || 0) : 0;
-const bottomNavigationHeight = Platform.OS === 'ios' ? 86 : 78;
+const bottomNavigationHeight = 86;
 const screenBottomInset = 40;
 const homeHeroShowcaseSlides = [
   {
@@ -377,7 +409,7 @@ const onboardingTourSteps = [
     })
   }
 ];
-const validRoutes = new Set(['auth', 'home', 'shop', 'search', 'tryon', 'closet', 'custom', 'stylebot', 'tokens', 'profile', 'generation-history', 'product', 'wishlist', 'collections', 'orders', 'signup', 'login', 'how', 'info']);
+const validRoutes = new Set(['auth', 'home', 'shop', 'search', 'tryon', 'closet', 'custom', 'stylebot', 'tokens', 'profile', 'generation-history', 'product', 'checkout', 'wishlist', 'collections', 'orders', 'signup', 'login', 'how', 'info']);
 const tabletLayoutMinWidth = 768;
 const tabletContentMaxWidth = 1180;
 
@@ -471,12 +503,6 @@ function titleCase(value = '') {
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
-}
-
-function normalizePhoneInput(value = '') {
-  const raw = String(value || '').trim();
-  const digits = raw.replace(/\D/g, '').slice(0, 15);
-  return raw.startsWith('+') ? `+${digits}` : digits;
 }
 
 function authPhoneValue(value = '') {
@@ -641,8 +667,12 @@ function normalizeAiStudioAction(action) {
 
 function normalizeAiStudioActions(data = {}) {
   const actions = Array.isArray(data.actions) ? data.actions : [];
-  if (actions.length) return actions.map(normalizeAiStudioAction).filter(Boolean).slice(0, 4);
-  return (Array.isArray(data.suggestions) ? data.suggestions : []).map(normalizeAiStudioAction).filter(Boolean).slice(0, 4);
+  const visible = actions.length ? actions : Array.isArray(data.suggestions) ? data.suggestions : [];
+  return visible.map(normalizeAiStudioAction).filter((action) => action && !/amazon|online|web/i.test(`${action.type} ${action.label} ${action.prompt}`)).slice(0, 4);
+}
+
+function stylistResponseText(value = '') {
+  return String(value || '').replace(/\bAmazon(?:\.in)?\b/gi, 'Lookmefy catalog');
 }
 
 function normalizeAiStudioOutfits(outfits = []) {
@@ -787,8 +817,21 @@ function isAuthExpiredError(error) {
 function userAvatarUrl(user) {
   const avatarUrl = user?.avatarPhotoUrl || user?.profilePhotoUrl || user?.photoUrl || user?.imageUrl || '';
   const bodyUrl = user?.bodyPhotoUrl || '';
-  if (user?.bodyPhotoSource === 'fal-full-body' && bodyUrl) return bodyUrl;
+  if (isGeneratedFullBodySource(user?.bodyPhotoSource) && bodyUrl) return bodyUrl;
   return avatarUrl || bodyUrl || '';
+}
+
+function isGeneratedFullBodySource(source) {
+  return source === 'pruna-full-body' || source === 'fal-full-body';
+}
+
+function profilePhotoFeedback(user, message) {
+  if (message !== 'Photo saved. Your AI try-on portrait is being generated.') return message;
+  if (user?.bodyPhotoStatus === 'generating') return message;
+  if (user?.bodyPhotoStatus === 'failed') return 'AI portrait generation failed. Choose a clearer photo to try again.';
+  return isGeneratedFullBodySource(user?.bodyPhotoSource)
+    ? 'Profile photo updated. Your AI try-on portrait is ready.'
+    : 'Photo saved.';
 }
 
 function userAvatarResizeMode(user) {
@@ -797,7 +840,7 @@ function userAvatarResizeMode(user) {
 }
 
 function isGeneratedFullBodyAvatar(user) {
-  return user?.bodyPhotoSource === 'fal-full-body' && Boolean(user?.bodyPhotoUrl);
+  return isGeneratedFullBodySource(user?.bodyPhotoSource) && Boolean(user?.bodyPhotoUrl);
 }
 
 function clampAvatarNumber(value, min, max, fallback) {
@@ -1000,12 +1043,18 @@ function useTourTarget(targetKey, registerTourTarget, options = {}) {
     if (!targetKey) return;
     const node = ref.current;
     const scroller = scrollRef?.current;
-    if (node?.measureLayout && scroller?.scrollTo) {
+    const scrollTarget = scroller?.getNativeScrollRef?.() || scroller;
+    const scrollToTarget = scroller?.scrollTo
+      ? (y) => scroller.scrollTo({ y, animated: true })
+      : scroller?.scrollToOffset
+        ? (y) => scroller.scrollToOffset({ offset: y, animated: true })
+        : null;
+    if (node?.measureLayout && scrollTarget && scrollToTarget) {
       try {
         node.measureLayout(
-          scroller,
+          scrollTarget,
           (_x, y) => {
-            scroller.scrollTo({ y: Math.max(0, y - scrollOffset), animated: true });
+            scrollToTarget(Math.max(0, y - scrollOffset));
             measure(280);
           },
           () => measure(80)
@@ -1050,14 +1099,13 @@ function collectionStorageKey(user) {
   return `lookmefy:collections:${collectionStorageVersion}:${identity}`;
 }
 
-const ResilientImage = memo(function ResilientImage({ source, fallbackSource, style, imageStyle, imageBaseStyle, resizeMode = 'cover', alt, fallbackIcon = 'image-outline', fallbackText }) {
+const ResilientImage = memo(function ResilientImage({ source, fallbackSource, style, imageStyle, imageBaseStyle, resizeMode = 'cover', alt, fallbackIcon = 'image-outline', fallbackText, backdropBlurRadius = 0, onImageLoad, retryOnFailure = false }) {
   const privateMediaSession = useContext(PrivateMediaSessionContext);
   const [sourceIndex, setSourceIndex] = useState(0);
+  const [retryKey, setRetryKey] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [renewedSource, setRenewedSource] = useState(null);
-  const renewalAttempted = useRef('');
-  const sourceEpoch = useRef(0);
+  const [privateResult, setPrivateResult] = useState({ url: '', session: '', data: '' });
   const sources = useMemo(() => {
     const entries = [source, fallbackSource].filter(Boolean);
     const seen = new Set();
@@ -1069,21 +1117,63 @@ const ResilientImage = memo(function ResilientImage({ source, fallbackSource, st
     });
   }, [source, fallbackSource]);
   const signature = sources.map(sourceSignature).join('|');
-  const activeSource = renewedSource || sources[sourceIndex];
-  const renderSource = authenticatedMediaSource(activeSource, { apiOrigin: imageUrl('/api/health'), sessionToken: privateMediaSession });
-  const fallbackLayerSource = authenticatedMediaSource(fallbackSource, { apiOrigin: imageUrl('/api/health'), sessionToken: privateMediaSession });
+  const activeSource = sources[sourceIndex];
+  const mediaOrigin = imageUrl('/api/health');
+  const privateUrl = activeSource?.uri && privateMediaPath(activeSource.uri, mediaOrigin) ? activeSource.uri : '';
+  const privateData = privateUrl
+    ? cachedPrivateImage(privateUrl, { apiOrigin: mediaOrigin, sessionToken: privateMediaSession }) || (privateResult.url === privateUrl && privateResult.session === privateMediaSession ? privateResult.data : '')
+    : '';
+  const renderSource = privateUrl
+    ? (privateData ? { uri: privateData } : null)
+    : authenticatedMediaSource(activeSource, { apiOrigin: mediaOrigin, sessionToken: privateMediaSession });
+  const fallbackPrivateUrl = fallbackSource?.uri && privateMediaPath(fallbackSource.uri, mediaOrigin) ? fallbackSource.uri : '';
+  const fallbackLayerSource = fallbackPrivateUrl
+    ? (cachedPrivateImage(fallbackPrivateUrl, { apiOrigin: mediaOrigin, sessionToken: privateMediaSession }) || '')
+    : authenticatedMediaSource(fallbackSource, { apiOrigin: mediaOrigin, sessionToken: privateMediaSession });
 
   useEffect(() => {
-    sourceEpoch.current += 1;
-    renewalAttempted.current = '';
-    setRenewedSource(null);
+    if (!privateUrl) return undefined;
+    if (!privateMediaSession) {
+      setFailed(true);
+      return undefined;
+    }
+    let active = true;
+    const cached = cachedPrivateImage(privateUrl, { apiOrigin: mediaOrigin, sessionToken: privateMediaSession });
+    if (cached) {
+      setPrivateResult({ url: privateUrl, session: privateMediaSession, data: cached });
+      return undefined;
+    }
+    recoverPrivateImage(privateUrl, privateMediaSession).then((data) => {
+      if (!active) return;
+      if (data) setPrivateResult({ url: privateUrl, session: privateMediaSession, data });
+      else if (sourceIndex < sources.length - 1) setSourceIndex((current) => current + 1);
+      else setFailed(true);
+    });
+    return () => { active = false; };
+  }, [privateUrl, privateMediaSession, sourceIndex, signature, retryKey]);
+
+  useEffect(() => {
+    setPrivateResult({ url: '', session: '', data: '' });
     setSourceIndex(0);
     setLoaded(false);
     setFailed(false);
-    return () => { sourceEpoch.current += 1; };
-  }, [signature, privateMediaSession]);
+  }, [signature, privateMediaSession, retryKey]);
+
+  if (privateUrl && !privateData && !failed) {
+    return <View style={[style, styles.resilientImageFrame]} accessibilityLabel={alt || 'Loading image'}><View style={styles.resilientImageSkeleton} /></View>;
+  }
 
   if (!renderSource || failed) {
+    if (retryOnFailure && privateUrl) {
+      return (
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry loading saved try-on image"
+          style={[style, styles.resilientImageFrame, styles.resilientImageFallback]}
+          onPress={(event) => { event.stopPropagation(); setRetryKey((value) => value + 1); }}>
+          <Ionicons name="refresh-outline" size={22} color="#9b8f89" />
+          <Text style={styles.resilientImageFallbackText}>Image could not load. Tap to retry.</Text>
+        </TouchableOpacity>
+      );
+    }
     return (
       <View style={[style, styles.resilientImageFrame, styles.resilientImageFallback]} accessibilityLabel={alt || 'Image unavailable'}>
         <Ionicons name={fallbackIcon} size={22} color="#9b8f89" />
@@ -1096,7 +1186,8 @@ const ResilientImage = memo(function ResilientImage({ source, fallbackSource, st
 
   return (
     <View style={[style, styles.resilientImageFrame]}>
-      {hasFallbackLayer ? <Image source={fallbackLayerSource} style={[imageBaseStyle || styles.resilientImage, imageStyle]} resizeMode={resizeMode} /> : null}
+      {backdropBlurRadius > 0 ? <Image source={renderSource} style={styles.resilientImage} resizeMode="cover" blurRadius={backdropBlurRadius} /> : null}
+      {hasFallbackLayer ? <Image source={typeof fallbackLayerSource === 'string' ? { uri: fallbackLayerSource } : fallbackLayerSource} style={[imageBaseStyle || styles.resilientImage, imageStyle]} resizeMode={resizeMode} /> : null}
       {!loaded && !hasFallbackLayer ? <View style={styles.resilientImageSkeleton} /> : null}
       <Image
         accessibilityLabel={alt}
@@ -1104,28 +1195,12 @@ const ResilientImage = memo(function ResilientImage({ source, fallbackSource, st
         style={[imageBaseStyle || styles.resilientImage, imageStyle]}
         resizeMode={resizeMode}
         fadeDuration={160}
-        onLoad={() => setLoaded(true)}
+        onLoad={(event) => {
+          setLoaded(true);
+          onImageLoad?.(event.nativeEvent.source);
+        }}
         onError={() => {
-          const uri = activeSource?.uri;
-          if (uri && renewalAttempted.current !== signature && privateMediaPath(uri, imageUrl('/api/health'))) {
-            renewalAttempted.current = signature;
-            const epoch = sourceEpoch.current;
-            refreshPrivateImage(uri)
-              .then((renewed) => {
-                if (epoch !== sourceEpoch.current) return;
-                if (renewed) { setRenewedSource({ uri: renewed }); setLoaded(false); return; }
-                if (sourceIndex < sources.length - 1) { setSourceIndex((current) => current + 1); setRenewedSource(null); }
-                else { setLoaded(true); setFailed(true); }
-              })
-              .catch(() => {
-                if (epoch !== sourceEpoch.current) return;
-                if (sourceIndex < sources.length - 1) { setSourceIndex((current) => current + 1); setRenewedSource(null); }
-                else { setLoaded(true); setFailed(true); }
-              });
-            return;
-          }
           if (sourceIndex < sources.length - 1) {
-            setRenewedSource(null);
             setLoaded(false);
             setSourceIndex((current) => current + 1);
           } else {
@@ -1138,21 +1213,65 @@ const ResilientImage = memo(function ResilientImage({ source, fallbackSource, st
   );
 });
 
-const ProductImage = memo(function ProductImage({ product, tryOn, style, resizeMode, alt, fallbackIcon = 'image-outline' }) {
+const ProductImage = memo(function ProductImage({ product, tryOn, style, resizeMode, alt, fallbackIcon = 'image-outline', verifyPrivateTryOn = false, onLoadSuccess, onLoadFailure }) {
   const privateMediaSession = useContext(PrivateMediaSessionContext);
   const [imageIndex, setImageIndex] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const [renewedUri, setRenewedUri] = useState('');
+  const [privateTryOnUri, setPrivateTryOnUri] = useState('');
+  const [privateTryOnSession, setPrivateTryOnSession] = useState('');
+  const [privateTryOnStatus, setPrivateTryOnStatus] = useState('loading');
   const renewalAttempted = useRef('');
   const sourceEpoch = useRef(0);
+  const previewCallbacks = useRef({});
+  previewCallbacks.current = { onLoadSuccess, onLoadFailure };
   const tryOnUrl = tryOnImageUrl(tryOn);
+  const isPrivateTryOn = Boolean(verifyPrivateTryOn && tryOnUrl && privateMediaPath(tryOnUrl, imageUrl('/api/health')));
+  const cachedTryOnUri = isPrivateTryOn ? cachedPrivateImage(tryOnUrl, { apiOrigin: imageUrl('/api/health'), sessionToken: privateMediaSession }) : '';
+  const effectivePrivateTryOnStatus = cachedTryOnUri ? 'ready' : privateTryOnSession === privateMediaSession ? privateTryOnStatus : 'loading';
   const imageUrls = useMemo(() => (
     tryOnUrl ? [tryOnUrl] : (product?.imageUrls?.length ? product.imageUrls : [product?.imageUrl]).filter(Boolean)
   ), [tryOnUrl, product?.imageUrl, product?.imageUrls]);
   const imageSignature = imageUrls.join('|');
-  const source = useMemo(() => (renewedUri || imageUrls[imageIndex] ? { uri: renewedUri || imageUrls[imageIndex] } : null), [renewedUri, imageUrls, imageIndex]);
+  const activeUri = isPrivateTryOn ? (cachedTryOnUri || (privateTryOnSession === privateMediaSession ? privateTryOnUri : '')) : (renewedUri || imageUrls[imageIndex]);
+  const source = useMemo(() => (activeUri ? {
+    uri: activeUri,
+    ...(!isPrivateTryOn && /^https?:\/\//i.test(activeUri) ? { cache: 'force-cache' } : {})
+  } : null), [activeUri, isPrivateTryOn]);
   const renderSource = authenticatedMediaSource(source, { apiOrigin: imageUrl('/api/health'), sessionToken: privateMediaSession });
+
+  useEffect(() => {
+    if (!isPrivateTryOn) {
+      setPrivateTryOnUri('');
+      setPrivateTryOnSession('');
+      setPrivateTryOnStatus('loading');
+      return undefined;
+    }
+    setPrivateTryOnUri('');
+    setPrivateTryOnSession('');
+    setPrivateTryOnStatus('loading');
+    if (!privateMediaSession) {
+      setPrivateTryOnStatus('failed');
+      return undefined;
+    }
+    let active = true;
+    const timeout = setTimeout(() => {
+      active = false;
+      setPrivateTryOnSession(privateMediaSession);
+      setPrivateTryOnStatus('failed');
+    }, 45000);
+    recoverPrivateImage(tryOnUrl, privateMediaSession)
+      .then((uri) => {
+        if (!active) return;
+        setPrivateTryOnSession(privateMediaSession);
+        setPrivateTryOnUri(uri || '');
+        setPrivateTryOnStatus(uri ? 'ready' : 'failed');
+      })
+      .catch(() => { if (active) { setPrivateTryOnSession(privateMediaSession); setPrivateTryOnStatus('failed'); } })
+      .finally(() => clearTimeout(timeout));
+    return () => { active = false; clearTimeout(timeout); };
+  }, [isPrivateTryOn, tryOnUrl, privateMediaSession]);
 
   useEffect(() => {
     sourceEpoch.current += 1;
@@ -1164,11 +1283,32 @@ const ProductImage = memo(function ProductImage({ product, tryOn, style, resizeM
     return () => { sourceEpoch.current += 1; };
   }, [product?.id, tryOnUrl, imageSignature, privateMediaSession]);
 
-  if (!renderSource || failed) {
+  useEffect(() => {
+    if (!isPrivateTryOn || effectivePrivateTryOnStatus !== 'ready' || loaded || failed) return undefined;
+    const timeout = setTimeout(() => setFailed(true), 12000);
+    return () => clearTimeout(timeout);
+  }, [isPrivateTryOn, effectivePrivateTryOnStatus, privateTryOnUri, loaded, failed]);
+
+  useEffect(() => {
+    if (!isPrivateTryOn) return;
+    if (effectivePrivateTryOnStatus === 'failed' || failed) previewCallbacks.current.onLoadFailure?.();
+    else if (loaded) previewCallbacks.current.onLoadSuccess?.();
+  }, [isPrivateTryOn, effectivePrivateTryOnStatus, failed, loaded]);
+
+  if (isPrivateTryOn && effectivePrivateTryOnStatus === 'loading') {
+    return (
+      <View style={[style, styles.productImageFallback]} accessibilityLabel="Loading your AI Try-On image">
+        <ActivityIndicator size="small" color="#9b8f89" />
+        <Text style={styles.productImageFallbackText}>Loading your Try-On image…</Text>
+      </View>
+    );
+  }
+
+  if (!renderSource || failed || (isPrivateTryOn && effectivePrivateTryOnStatus === 'failed')) {
     return (
       <View style={[style, styles.productImageFallback]} accessibilityLabel={alt || product?.title || product?.name || 'Product image unavailable'}>
         <Ionicons name={fallbackIcon} size={26} color="#9b8f89" />
-        <Text style={styles.productImageFallbackText}>No image</Text>
+        <Text style={styles.productImageFallbackText}>{tryOnUrl ? 'Try-On image unavailable' : 'No image'}</Text>
       </View>
     );
   }
@@ -1184,10 +1324,11 @@ const ProductImage = memo(function ProductImage({ product, tryOn, style, resizeM
         fadeDuration={160}
         onLoad={() => setLoaded(true)}
         onError={() => {
+          if (isPrivateTryOn) { setFailed(true); return; }
           if (source?.uri && renewalAttempted.current !== imageSignature && privateMediaPath(source.uri, imageUrl('/api/health'))) {
             renewalAttempted.current = imageSignature;
             const epoch = sourceEpoch.current;
-            refreshPrivateImage(source.uri)
+            recoverPrivateImage(source.uri, privateMediaSession)
               .then((renewed) => {
                 if (epoch !== sourceEpoch.current) return;
                 if (renewed) { setRenewedUri(renewed); setLoaded(false); return; }
@@ -1505,13 +1646,15 @@ function useProducts(params, token) {
     });
     return search.toString();
   }, [JSON.stringify(params || {})]);
-  const [state, setState] = useState({
+  const cacheKey = `products:${query}:${fetchAll}:${pageSize}:${enabled}`;
+  const emptyState = () => ({
     products: [],
     total: 0,
     facets: { brands: [], categories: [], categoryCounts: [] },
     loading: true,
     error: ''
   });
+  const [state, setState] = useState(() => readScreenSnapshot(cacheKey, token) || emptyState());
 
   const load = useCallback(() => {
     let alive = true;
@@ -1521,7 +1664,7 @@ function useProducts(params, token) {
         alive = false;
       };
     }
-    setState((current) => ({ ...current, loading: true, error: '' }));
+    setState(readScreenSnapshot(cacheKey, token) || emptyState());
     const loadProducts = async () => {
       if (!fetchAll) return api(productListPath(query));
 
@@ -1545,22 +1688,24 @@ function useProducts(params, token) {
       .then((data) => {
         if (!alive) return;
         const products = uniqueProductsById(normalizeProducts(data.products || []));
-        setState({
+        const nextState = {
           products,
           total: data.total || 0,
           facets: data.facets || { brands: [], categories: [], categoryCounts: [] },
           loading: false,
           error: ''
-        });
+        };
+        writeScreenSnapshot(cacheKey, token, nextState);
+        setState(nextState);
       })
       .catch((error) => {
         if (!alive) return;
-        setState({ products: [], total: 0, facets: { brands: [], categories: [], categoryCounts: [] }, loading: false, error: error.message });
+        setState((current) => ({ ...current, loading: false, error: error.message }));
       });
     return () => {
       alive = false;
     };
-  }, [query, token, fetchAll, pageSize, enabled]);
+  }, [query, token, fetchAll, pageSize, enabled, cacheKey, params?.refreshKey]);
 
   useEffect(load, [load]);
   return { ...state, reload: load };
@@ -1574,13 +1719,22 @@ function usePagedShopProducts(filters, token, missionPreset, pageSize = shopProd
     });
     return search.toString();
   }, [JSON.stringify(filters)]);
-  const [state, setState] = useState({ products: [], total: 0, loading: true, loadingMore: false, error: '', loadMoreError: '', hasMore: false });
+  const cacheKey = `paged-products:${query}:${missionPreset?.id || ''}:${pageSize}`;
+  const emptyState = () => ({ products: [], total: 0, loading: true, loadingMore: false, error: '', loadMoreError: '', hasMore: false });
+  const [state, setState] = useState(() => readScreenSnapshot(cacheKey, token) || emptyState());
   const pageRef = useRef(null);
 
   useEffect(() => {
-    const page = { alive: true, inFlight: false, failed: false, skip: 0, total: Infinity, hasMore: true, ids: new Set(), load: null };
+    const cached = readScreenSnapshot(cacheKey, token);
+    const cachedProducts = cached?.products || [];
+    const page = {
+      alive: true, inFlight: false, failed: false,
+      skip: cached?.pageSkip ?? cachedProducts.length, total: cached?.total ?? Infinity,
+      hasMore: cached ? cached.hasMore : true,
+      products: cachedProducts, ids: new Set(cachedProducts.map((product) => product.id)), load: null
+    };
     pageRef.current = page;
-    setState({ products: [], total: 0, loading: true, loadingMore: false, error: '', loadMoreError: '', hasMore: false });
+    setState(cached || emptyState());
 
     page.load = async (retry = false) => {
       if (!page.alive || page.inFlight || !page.hasMore || (page.failed && !retry)) return;
@@ -1589,28 +1743,37 @@ function usePagedShopProducts(filters, token, missionPreset, pageSize = shopProd
       const firstPage = page.skip === 0;
       if (!firstPage) setState((current) => ({ ...current, loadingMore: true, loadMoreError: '' }));
       try {
-        const data = await api(productListPath(query, { limit: pageSize, skip: page.skip, includeTotal: 'true' }));
-        if (!page.alive) return;
-        const records = Array.isArray(data.products) ? data.products : [];
-        const incoming = orderProductsForMission(uniqueProductsById(normalizeProducts(records)), missionPreset);
-        if (!firstPage && incoming.length && incoming.every((product) => page.ids.has(product.id))) {
-          page.failed = true;
-          setState((current) => ({ ...current, loadingMore: false, loadMoreError: 'More products are unavailable from the catalog service right now.' }));
-          return;
+        // Some deployed catalogs still include marketplace rows that normalizeProducts hides.
+        // Keep advancing through those pages until a visible item arrives or the API is exhausted.
+        while (page.alive && page.hasMore) {
+          const data = await api(productListPath(query, { limit: pageSize, skip: page.skip, includeTotal: 'true' }));
+          if (!page.alive) return;
+          const records = Array.isArray(data.products) ? data.products : [];
+          const incoming = orderProductsForMission(uniqueProductsById(normalizeProducts(records)), missionPreset);
+          if (incoming.length && incoming.every((product) => page.ids.has(product.id))) {
+            page.failed = true;
+            setState((current) => ({ ...current, loading: false, loadingMore: false, loadMoreError: 'More products are unavailable from the catalog service right now.' }));
+            return;
+          }
+          incoming.forEach((product) => page.ids.add(product.id));
+          page.skip += records.length;
+          page.total = Number.isFinite(Number(data.total)) ? Number(data.total) : page.skip;
+          page.hasMore = records.length > 0 && page.skip < page.total;
+          page.products = uniqueProductsById(firstPage ? incoming : [...page.products, ...incoming]);
+          if (incoming.length || !page.hasMore) break;
         }
-        incoming.forEach((product) => page.ids.add(product.id));
-        page.skip += records.length;
-        page.total = Number.isFinite(Number(data.total)) ? Number(data.total) : page.skip;
-        page.hasMore = records.length > 0 && page.skip < page.total;
-        setState((current) => ({
-          products: uniqueProductsById(firstPage ? incoming : [...current.products, ...incoming]),
+        const nextState = {
+          products: page.products,
           total: page.total,
           loading: false,
           loadingMore: false,
           error: '',
           loadMoreError: '',
-          hasMore: page.hasMore
-        }));
+          hasMore: page.hasMore,
+          pageSkip: page.skip
+        };
+        writeScreenSnapshot(cacheKey, token, nextState);
+        setState(nextState);
       } catch (error) {
         if (!page.alive) return;
         page.failed = true;
@@ -1620,12 +1783,12 @@ function usePagedShopProducts(filters, token, missionPreset, pageSize = shopProd
       }
     };
 
-    page.load();
+    if (!cached) page.load();
     return () => {
       page.alive = false;
       if (pageRef.current === page) pageRef.current = null;
     };
-  }, [query, token, missionPreset?.id, pageSize]);
+  }, [query, token, missionPreset?.id, pageSize, cacheKey]);
 
   const loadMore = useCallback(() => pageRef.current?.load(), []);
   const retryLoadMore = useCallback(() => pageRef.current?.load(true), []);
@@ -1633,13 +1796,15 @@ function usePagedShopProducts(filters, token, missionPreset, pageSize = shopProd
 }
 
 function useRecommendedProducts(user, token, limit = 8, refreshKey = 0) {
-  const [state, setState] = useState({
+  const cacheKey = `recommendations:${user?.id || user?._id || 'guest'}:${limit}`;
+  const emptyState = () => ({
     products: [],
     total: 0,
     facets: { brands: [], categories: [], categoryCounts: [] },
     loading: Boolean(user),
     error: ''
   });
+  const [state, setState] = useState(() => readScreenSnapshot(cacheKey, token) || emptyState());
 
   useEffect(() => {
     let alive = true;
@@ -1649,33 +1814,36 @@ function useRecommendedProducts(user, token, limit = 8, refreshKey = 0) {
         alive = false;
       };
     }
-    setState((current) => ({ ...current, loading: true, error: '' }));
+    setState(readScreenSnapshot(cacheKey, token) || emptyState());
     api(`/recommendations/for-you?limit=${encodeURIComponent(limit)}`)
       .then((data) => {
         if (!alive) return;
         const products = uniqueProductsById(normalizeProducts(data.products || []));
-        setState({
+        const nextState = {
           products,
           total: data.total || products.length,
           facets: data.facets || { brands: [], categories: [], categoryCounts: [] },
           loading: false,
           error: ''
-        });
+        };
+        writeScreenSnapshot(cacheKey, token, nextState);
+        setState(nextState);
       })
       .catch((error) => {
         if (!alive) return;
-        setState({ products: [], total: 0, facets: { brands: [], categories: [], categoryCounts: [] }, loading: false, error: error.message });
+        setState((current) => ({ ...current, loading: false, error: error.message }));
       });
     return () => {
       alive = false;
     };
-  }, [Boolean(user), user?.id, user?._id, token, limit, refreshKey]);
+  }, [Boolean(user), user?.id, user?._id, token, limit, refreshKey, cacheKey]);
 
   return state;
 }
 
 function useApiState(path, token, enabled = true, emptyData = {}) {
-  const [state, setState] = useState({ data: emptyData, loading: Boolean(enabled), error: '' });
+  const cacheKey = `api-state:${path}`;
+  const [state, setState] = useState(() => readScreenSnapshot(cacheKey, token) || { data: emptyData, loading: Boolean(enabled), error: '' });
 
   const load = useCallback(() => {
     if (!enabled || !path) {
@@ -1683,18 +1851,22 @@ function useApiState(path, token, enabled = true, emptyData = {}) {
       return undefined;
     }
     let alive = true;
-    setState((current) => ({ ...current, loading: true, error: '' }));
+    setState(readScreenSnapshot(cacheKey, token) || { data: emptyData, loading: true, error: '' });
     api(path)
       .then((data) => {
-        if (alive) setState({ data: data || emptyData, loading: false, error: '' });
+        if (alive) {
+          const nextState = { data: data || emptyData, loading: false, error: '' };
+          writeScreenSnapshot(cacheKey, token, nextState);
+          setState(nextState);
+        }
       })
       .catch((error) => {
-        if (alive) setState({ data: emptyData, loading: false, error: error.message });
+        if (alive) setState((current) => ({ ...current, loading: false, error: error.message }));
       });
     return () => {
       alive = false;
     };
-  }, [path, token, enabled]);
+  }, [path, token, enabled, cacheKey]);
 
   useEffect(load, [load]);
   return { ...state, reload: load };
@@ -1705,7 +1877,8 @@ function useTryOns(user, products, token) {
     () => [...new Set((products || []).map((product) => product?.id).filter(Boolean))].slice(0, 96).join(','),
     [products]
   );
-  const [tryOns, setTryOns] = useState({});
+  const cacheKey = `tryons:${user?.id || user?._id || 'guest'}:${productIds}`;
+  const [tryOns, setTryOns] = useState(() => readScreenSnapshot(cacheKey, token) || {});
 
   useEffect(() => {
     if (!user || !productIds) {
@@ -1713,17 +1886,19 @@ function useTryOns(user, products, token) {
       return undefined;
     }
     let alive = true;
+    setTryOns(readScreenSnapshot(cacheKey, token) || {});
     api(`/tryons?productIds=${encodeURIComponent(productIds)}`)
       .then((data) => {
         if (!alive) return;
         const saved = Object.fromEntries((data.tryOns || []).map((tryOn) => [tryOn.productId, tryOn]));
+        writeScreenSnapshot(cacheKey, token, saved);
         setTryOns(saved);
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [user?.id, user?.bodyPhotoUrl, productIds, token]);
+  }, [user?.id, user?.bodyPhotoUrl, productIds, token, cacheKey]);
 
   return [tryOns, setTryOns];
 }
@@ -1745,26 +1920,6 @@ function showMediaPermissionAlert(title, message, permission) {
       },
     },
   ]);
-}
-
-async function openExternalWebUrl(value) {
-  try {
-    const parsedUrl = new URL(String(value || '').trim());
-    if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) {
-      throw new Error('Unsupported URL');
-    }
-
-    const url = parsedUrl.toString();
-    if (!(await Linking.canOpenURL(url))) {
-      throw new Error('URL cannot be opened');
-    }
-
-    await Linking.openURL(url);
-    return true;
-  } catch {
-    Alert.alert('Link unavailable', 'This shopping link could not be opened.');
-    return false;
-  }
 }
 
 async function pickImage() {
@@ -1802,6 +1957,14 @@ async function takePhoto() {
   });
   if (result.canceled) return null;
   return result.assets?.[0] || null;
+}
+
+function DecorativeCloseIcon({ size, color }) {
+  return (
+    <View collapsable={false} accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none">
+      <Ionicons name="close" size={size} color={color} accessible={false} />
+    </View>
+  );
 }
 
 function AppButton({ label, icon, variant = 'primary', disabled, onPress, style, labelProps }) {
@@ -1912,9 +2075,9 @@ function headerCreditLabel(user) {
 
 function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', leftRoute = 'profile', rightIcon = 'receipt-outline', rightRoute = 'orders', user, showAvatar = false, hideLeft = true, brandAlign = 'left', compact = false, showWishlist = true, showSearch = true, preserveWordmarkOnNarrow = false, registerTourTarget, tourTargetKeys = {} }) {
   const { width, fontScale } = useWindowDimensions();
-  const narrowHeader = width < 360;
-  const iconOnlyCredit = width < 350 && fontScale > 1.15;
-  const compactToSymbol = narrowHeader && !preserveWordmarkOnNarrow;
+  const narrowHeader = width < 390;
+  const compactToSymbol = width / Math.max(1, fontScale) < 390
+    && (!preserveWordmarkOnNarrow || width < 350 || fontScale > 1);
   const openLeft = () => leftRoute && onNavigate(leftRoute);
   const openRight = () => rightRoute && onNavigate(rightRoute);
   const showWishlistAction = showWishlist && !showAvatar;
@@ -1926,10 +2089,10 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
   const avatarImageStyle = avatarImageStyleForUser(user, 32);
   const avatarImageBaseStyle = avatarImageBaseStyleForUser(user);
   const creditLabel = headerCreditLabel(user);
-  const creditAccessibilityLabel = `Open credits, ${creditLabel} credits available`;
+  const creditAccessibilityLabel = `Open credits, ${userCreditBalance(user).toLocaleString('en-IN')} credits available`;
   return (
     <View style={[styles.appHeader, compact && styles.appHeaderCompact, narrowHeader && styles.appHeaderNarrow]}>
-      <IosGlassBackdrop />
+      <SurfaceBackdrop />
       {!brandLeft ? (
         <View style={[styles.appHeaderSide, styles.appHeaderLeftSide]}>
           {hideLeft ? null : (
@@ -1955,7 +2118,7 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
         {!showAvatar ? (
           <TouchableOpacity accessibilityRole="button" accessibilityLabel={creditAccessibilityLabel} style={[styles.appHeaderAction, styles.appHeaderCreditAction]} onPress={() => onNavigate('tokens')}>
             <Ionicons name="sparkles-outline" size={11} color="#171412" />
-            {!iconOnlyCredit ? <Text style={styles.appHeaderCreditText} numberOfLines={1}>{creditLabel}</Text> : null}
+            <Text style={styles.appHeaderCreditText} numberOfLines={1}>{creditLabel}</Text>
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity ref={avatarTourTarget.ref} onLayout={avatarTourTarget.onLayout} accessibilityRole="button" accessibilityLabel={rightRoute === 'orders' ? 'Open orders' : 'Open bag'} style={styles.appHeaderAction} onPress={openRight}>
@@ -1973,16 +2136,26 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
   );
 }
 
-function IosGlassBackdrop({ intensity = 34 }) {
-  return Platform.OS === 'ios' ? (
-    <BlurView pointerEvents="none" intensity={intensity} tint="systemUltraThinMaterialLight" style={[StyleSheet.absoluteFillObject, styles.iosGlassBackdrop]} />
-  ) : null;
+function SurfaceBackdrop({ intensity = 34 }) {
+  return (
+    <BlurView
+      pointerEvents="none"
+      intensity={intensity}
+      tint={Platform.OS === 'ios' ? 'systemUltraThinMaterialLight' : 'light'}
+      experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : 'none'}
+      blurReductionFactor={2.5}
+      style={[StyleSheet.absoluteFillObject, styles.surfaceBackdrop]}
+    />
+  );
 }
 
 function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
   const layout = useResponsiveLayout();
   const { width, fontScale } = useWindowDimensions();
-  const compactNav = width < 360 || (width < 390 && fontScale > 1.15);
+  const compactNav = width < 360 || fontScale > 1.15;
+  // Scale the font and line height together so the fixed tab bar stays readable.
+  const navTextScale = Math.max(1, Math.min(Number(fontScale) || 1, 1.3));
+  const navTextSize = { fontSize: 10.5 * navTextScale, lineHeight: 13 * navTextScale };
   const routeName = route?.name || 'home';
   const activeRoute = routeName === 'product' || routeName === 'wishlist' || routeName === 'search'
       ? 'shop'
@@ -2013,9 +2186,9 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
             }}
           >
             <View style={[styles.navIconWrap, active && styles.navIconWrapCenter]}>
-              <Ionicons name={active ? activeIcon : icon} size={active ? 21 : 20} color={active ? '#171412' : '#66605c'} />
+              <Ionicons name={active ? activeIcon : icon} size={active ? 21 : 20} color={active ? '#ffffff' : 'rgba(255, 255, 255, 0.78)'} />
             </View>
-            <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82} style={[styles.navText, compactNav && styles.navTextCompact, active && styles.navTextActive]}>{displayLabel}</Text>
+            <Text numberOfLines={1} allowFontScaling={false} style={[styles.navText, navTextSize, active && styles.navTextActive]}>{displayLabel}</Text>
             <View style={[styles.navActiveUnderline, active && styles.navActiveUnderlineVisible]} />
           </TouchableOpacity>
         );
@@ -2042,8 +2215,8 @@ function Hero({ compact, onNavigate }) {
 function StatusPanel({ loading, error, empty, text }) {
   if (loading) {
     return (
-      <View style={[styles.statusPanel, Platform.OS === 'ios' && styles.iosGlassCard, styles.loadingPanel]}>
-        <IosGlassBackdrop />
+      <View style={[styles.statusPanel, styles.surfaceCard, styles.loadingPanel]}>
+        <SurfaceBackdrop />
         <View style={styles.skeletonIcon} />
         <View style={styles.skeletonLineWide} />
         <View style={styles.skeletonLine} />
@@ -2053,8 +2226,8 @@ function StatusPanel({ loading, error, empty, text }) {
   }
   if (error || empty) {
     return (
-      <View style={[styles.statusPanel, Platform.OS === 'ios' && styles.iosGlassCard]}>
-        <IosGlassBackdrop />
+      <View style={[styles.statusPanel, styles.surfaceCard]}>
+        <SurfaceBackdrop />
         <View style={[styles.statusIcon, error ? styles.statusIconError : styles.statusIconEmpty]}>
           <Ionicons name={error ? 'alert-circle-outline' : 'sparkles-outline'} size={22} color={error ? '#9b5658' : '#0f766e'} />
         </View>
@@ -2068,8 +2241,8 @@ function StatusPanel({ loading, error, empty, text }) {
 
 function EmptyStateCard({ icon = 'sparkles-outline', title = 'Nothing here yet', text, actionLabel, actionIcon = 'arrow-forward', onAction, compact }) {
   return (
-    <View style={[styles.emptyStateCard, Platform.OS === 'ios' && styles.iosGlassCard, compact && styles.emptyStateCardCompact]}>
-      <IosGlassBackdrop />
+    <View style={[styles.emptyStateCard, styles.surfaceCard, compact && styles.emptyStateCardCompact]}>
+      <SurfaceBackdrop />
       <View style={styles.emptyStateIcon}>
         <Ionicons name={icon} size={24} color="#9b5658" />
       </View>
@@ -2148,11 +2321,11 @@ function HomeProductSkeletonGrid({ count }) {
 
 function HomeJournalSkeletonGrid({ count }) {
   const layout = useResponsiveLayout();
-  const skeletonCount = count || layout.productColumns * 2;
+  const skeletonCount = count || (layout.isTablet ? 6 : layout.productColumns * 2);
   return (
     <View style={styles.homeJournalGrid}>
       {Array.from({ length: skeletonCount }).map((_, index) => (
-        <View key={`home-journal-skeleton-${index}`} style={[styles.homeJournalProductCard, layout.productGridWidthStyle]}>
+        <View key={`home-journal-skeleton-${index}`} style={[styles.homeJournalProductCard, layout.isTablet && styles.homeJournalProductCardTablet]}>
           <View style={styles.homeJournalImageFrame}>
             <SkeletonBlock style={styles.skeletonFill} />
           </View>
@@ -2242,6 +2415,9 @@ function mobileRouteFromUrl(value = '') {
       ? url.pathname
       : `/${url.host}${url.pathname}`;
     if (/^\/tokens(?:\/|$)/i.test(path)) return { name: 'tokens', params: {} };
+    if (/^\/generation-history\/?$/i.test(path)) return { name: 'generation-history', params: {} };
+    const product = path.match(/^\/product\/([a-f0-9]{24})\/?$/i);
+    if (product) return { name: 'product', params: { id: product[1] } };
   } catch {
     return null;
   }
@@ -2338,39 +2514,14 @@ function ReportContentAction({ content }) {
   );
 }
 
-function PhotoConsentModal({ notice, onAllow, onCancel, onPrivacy }) {
-  if (!notice) return null;
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
-      <SafeAreaView style={styles.releaseConsentOverlay}>
-        <View style={styles.releaseConsentCard} accessibilityViewIsModal>
-          <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={styles.releaseConsentBody} keyboardShouldPersistTaps="handled">
-            <Text accessibilityRole="header" style={styles.releaseConsentTitle}>Allow AI photo processing?</Text>
-            <Text style={styles.releaseConsentCopy}>To {notice.purpose}, Lookmefy will upload or use {notice.data} through its backend and share them with external AI services.</Text>
-            <Text style={styles.releaseConsentCopy}>AI processors may include {notice.providers}.</Text>
-            <Text style={styles.releaseConsentCopy}>Only continue if you allow this sharing. Your choice applies to this request only; you will be asked again next time. Review the Privacy Policy before continuing. The app cannot verify the providers' retention periods.</Text>
-            <TouchableOpacity accessibilityRole="link" style={styles.releaseLegalAction} onPress={onPrivacy}>
-              <Text style={styles.releaseReportText}>Read Privacy Policy</Text>
-            </TouchableOpacity>
-          </ScrollView>
-          <View style={styles.releaseConsentActions}>
-            <AppButton label="Not now" variant="secondary" onPress={onCancel} style={styles.releaseConsentButton} />
-            <AppButton label="Allow this request" onPress={onAllow} style={styles.releaseConsentButton} />
-          </View>
-        </View>
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
 function AiPreviewNote({ style, content }) {
   return (
     <View>
-    <View style={[styles.aiPreviewNote, style]}>
-      <Ionicons name="information-circle-outline" size={16} color="#8c4d50" />
-      <Text style={styles.aiPreviewNoteText}>{aiPreviewDisclaimer}</Text>
-    </View>
-    <ReportContentAction content={content} />
+      <View style={[styles.aiPreviewNote, style]}>
+        <Ionicons name="information-circle-outline" size={16} color="#8c4d50" />
+        <Text style={styles.aiPreviewNoteText}>{aiPreviewDisclaimer}</Text>
+      </View>
+      {content ? <ReportContentAction content={content} /> : null}
     </View>
   );
 }
@@ -2392,7 +2543,7 @@ const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLo
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={product?.title || product?.name || 'Open product'}
-      style={({ pressed }) => [styles.productCard, Platform.OS === 'ios' && styles.iosGlassCard, useHomeImageFrame && styles.productCardHomeFrame, responsiveCardStyle, variant === 'carousel' && styles.productCardCarousel, pressed && !locked && styles.productCardPressed, locked && styles.lockedCard]}
+      style={({ pressed }) => [styles.productCard, styles.surfaceCard, useHomeImageFrame && styles.productCardHomeFrame, responsiveCardStyle, variant === 'carousel' && styles.productCardCarousel, pressed && !locked && styles.productCardPressed, locked && styles.lockedCard]}
       onPress={locked ? undefined : onPress}
     >
       <View style={[styles.productImageWrap, useHomeImageFrame && styles.homeProductImageWrap]}>
@@ -2557,7 +2708,11 @@ const categoryRailItems = [
   { key: 'lingerie', label: 'Lingerie', image: 'category-generated/innerwear.png' },
   { key: 'men', label: 'Men', image: 'category-generated/men-shirts.png' },
   { key: 'beauty', label: 'Beauty', image: 'category-generated/beauty.png' },
-  { key: 'footwear', label: 'Footwear', image: 'category-generated/sneakers.png' }
+  { key: 'footwear', label: 'Footwear', image: 'category-generated/sneakers.png' },
+  { key: 'accessories', label: 'Accessories', image: 'category-generated/accessories.png' },
+  { key: 'watches', label: 'Watches', image: 'category-generated/watches.png' },
+  { key: 'eyewear', label: 'Eyewear', image: 'category-generated/eyewear.png' },
+  { key: 'bottomwear', label: 'Bottomwear', image: 'category-generated/bottomwear.png' }
 ];
 const categoryPageContent = {
   popular: {
@@ -2581,7 +2736,7 @@ const categoryPageContent = {
       { label: 'Watches', image: 'category-generated/watches.png', params: { category: 'watches' } },
       { label: 'Eyewear', image: 'category-generated/eyewear.png', params: { category: 'eyewear' } },
       { label: 'Bottomwear', image: 'category-generated/bottomwear.png', params: { category: 'bottoms' } },
-      { label: 'Shirts', image: 'category-generated/men-shirts.png', params: { category: 'shirts' } }
+      { label: 'Shirts', image: 'category-alt-shirts.png', params: { category: 'shirts' } }
     ]
   },
   ethnic: {
@@ -2594,9 +2749,9 @@ const categoryPageContent = {
     ],
     sectionTitle: 'All Ethnic Wear',
     items: [
-      { label: 'Daily Kurtis', image: 'category-generated/kurti-dress-material.png', params: { q: 'kurti', gender: 'women' } },
+      { label: 'Daily Kurtis', image: 'category-alt-ethnicwear.png', params: { q: 'kurti', gender: 'women' } },
       { label: 'Festive Looks', image: 'category-generated/saree.png', params: { category: 'dresses', gender: 'women' } },
-      { label: 'Ethnic Tops', image: 'category-generated/kurti-dress-material.png', params: { category: 'tops', gender: 'women' } },
+      { label: 'Ethnic Tops', image: 'category-alt-ethnic-tops-editorial.png', params: { category: 'tops', gender: 'women' } },
       { label: 'Jewellery', image: 'category-generated/jewellery.png', params: { category: 'accessories', gender: 'women' } },
       { label: 'Footwear', image: 'category-generated/women-footwear.png', params: { category: 'shoes', gender: 'women' } },
       { label: 'New In', image: 'category-generated/new-arrivals.png', params: { sort: 'newest', gender: 'women' } }
@@ -2632,8 +2787,8 @@ const categoryPageContent = {
     items: [
       { label: 'Everyday Wear', image: 'category-generated/innerwear.png', params: { category: 'innerwear', gender: 'women' } },
       { label: 'Nightwear', image: 'category-generated/sleepwear.png', params: { category: 'sleepwear', gender: 'women' } },
-      { label: 'Lounge Sets', image: 'category-generated/lounge.png', params: { q: 'lounge', gender: 'women' } },
-      { label: 'New In', image: 'category-generated/innerwear.png', params: { sort: 'newest', gender: 'women' } }
+      { label: 'Lounge Sets', image: 'category-alt-sleepwear.png', params: { q: 'lounge', gender: 'women' } },
+      { label: 'New In', image: 'category-alt-innerwear.png', params: { sort: 'newest', gender: 'women' } }
     ]
   },
   men: {
@@ -2660,7 +2815,7 @@ const categoryPageContent = {
     featured: [
       { label: 'Personal Care', image: 'category-generated/beauty.png', params: { category: 'beauty' } },
       { label: 'Accessories', image: 'category-generated/accessories.png', params: { category: 'accessories' } },
-      { label: 'Premium Edit', image: 'category-generated/beauty.png', params: { category: 'beauty', sort: 'newest' } }
+      { label: 'Premium Edit', image: 'category-alt-beauty-premium.png', params: { category: 'beauty', sort: 'newest' } }
     ],
     sectionTitle: 'All Beauty',
     items: [
@@ -2683,10 +2838,78 @@ const categoryPageContent = {
       { label: 'Shoes', image: 'category-generated/sneakers.png', params: { category: 'shoes' } },
       { label: 'Women Footwear', image: 'category-generated/women-footwear.png', params: { category: 'shoes', gender: 'women' } },
       { label: 'Men Footwear', image: 'category-generated/men-footwear.png', params: { category: 'shoes', gender: 'men' } },
-      { label: 'New Arrivals', image: 'category-generated/sneakers.png', params: { category: 'shoes', sort: 'newest' } }
+      { label: 'New Arrivals', image: 'category-shoes-updated.jpg', params: { category: 'shoes', sort: 'newest' } }
+    ]
+  },
+  accessories: {
+    kicker: 'ACCESSORIES',
+    title: 'The Finishing Touch',
+    featured: [
+      { label: 'Jewellery', image: 'category-generated/jewellery.png', params: { q: 'jewellery' } },
+      { label: 'Bags', image: 'category-generated/accessories.png', params: { q: 'bags' } },
+      { label: 'Watches', image: 'category-generated/watches.png', params: { category: 'watches' } },
+      { label: 'Eyewear', image: 'category-generated/eyewear.png', params: { category: 'eyewear' } }
+    ],
+    sectionTitle: 'All Accessories',
+    items: [
+      { label: 'Women’s Accessories', image: 'category-alt-womens-bags.png', params: { category: 'accessories', gender: 'women' } },
+      { label: 'Men’s Accessories', image: 'category-alt-mens-accessories-editorial.png', params: { category: 'accessories', gender: 'men' } },
+      { label: 'Jewellery', image: 'category-generated/jewellery.png', params: { q: 'jewellery' } },
+      { label: 'Bags', image: 'category-generated/accessories.png', params: { q: 'bags' } },
+      { label: 'Watches', image: 'category-generated/watches.png', params: { category: 'watches' } },
+      { label: 'Eyewear', image: 'category-generated/eyewear.png', params: { category: 'eyewear' } }
+    ]
+  },
+  watches: {
+    kicker: 'WATCHES',
+    title: 'Timeless Details',
+    featured: [
+      { label: 'All Watches', image: 'category-generated/watches.png', params: { category: 'watches' } },
+      { label: 'Women’s Watches', image: 'category-alt-watch-women.png', params: { category: 'watches', gender: 'women' } },
+      { label: 'Men’s Watches', image: 'category-alt-watch-men.png', params: { category: 'watches', gender: 'men' } }
+    ],
+    sectionTitle: 'Shop Watches',
+    items: [
+      { label: 'Women’s Watches', image: 'category-alt-watch-women.png', params: { category: 'watches', gender: 'women' } },
+      { label: 'Men’s Watches', image: 'category-alt-watch-men.png', params: { category: 'watches', gender: 'men' } },
+      { label: 'New Arrivals', image: 'category-alt-watch-collection.png', params: { category: 'watches', sort: 'newest' } }
+    ]
+  },
+  eyewear: {
+    kicker: 'EYEWEAR',
+    title: 'A New Perspective',
+    featured: [
+      { label: 'All Eyewear', image: 'category-generated/eyewear.png', params: { category: 'eyewear' } },
+      { label: 'Women’s Eyewear', image: 'category-eyewear-updated.jpg', params: { category: 'eyewear', gender: 'women' } },
+      { label: 'Men’s Eyewear', image: 'category-alt-eyewear-men.png', params: { category: 'eyewear', gender: 'men' } }
+    ],
+    sectionTitle: 'Shop Eyewear',
+    items: [
+      { label: 'Women’s Eyewear', image: 'category-eyewear-updated.jpg', params: { category: 'eyewear', gender: 'women' } },
+      { label: 'Men’s Eyewear', image: 'category-alt-eyewear-men.png', params: { category: 'eyewear', gender: 'men' } },
+      { label: 'New Arrivals', image: 'category-alt-eyewear-collection.png', params: { category: 'eyewear', sort: 'newest' } }
+    ]
+  },
+  bottomwear: {
+    kicker: 'BOTTOMWEAR',
+    title: 'Find Your Fit',
+    featured: [
+      { label: 'Jeans', image: 'category-generated/jeans.png', params: { category: 'jeans' } },
+      { label: 'Pants', image: 'category-generated/bottomwear.png', params: { category: 'pants' } },
+      { label: 'New Arrivals', image: 'category-bottoms-updated.jpg', params: { category: 'bottoms', sort: 'newest' } }
+    ],
+    sectionTitle: 'All Bottomwear',
+    items: [
+      { label: 'Women’s Bottomwear', image: 'category-alt-womens-bottoms.png', params: { category: 'bottoms', gender: 'women' } },
+      { label: 'Men’s Bottomwear', image: 'category-alt-pants.png', params: { category: 'bottoms', gender: 'men' } },
+      { label: 'Jeans', image: 'category-generated/jeans.png', params: { category: 'jeans' } },
+      { label: 'Pants', image: 'category-generated/bottomwear.png', params: { category: 'pants' } },
+      { label: 'New Arrivals', image: 'category-bottoms-updated.jpg', params: { category: 'bottoms', sort: 'newest' } }
     ]
   }
 };
+const categoryFollowOnSections = { watches: 'eyewear', eyewear: 'bottomwear' };
+const categoryContinuousSections = buildCategorySections(categoryRailItems, categoryPageContent);
 const homeProductFeedPageSize = 48;
 const shopProductGridLimit = 50;
 const shopProductPageSize = 96;
@@ -2724,10 +2947,14 @@ const categorySearchReferences = (() => {
   return references;
 })();
 
-function PageBackRow({ children }) {
-  if (!children) return null;
+function PageBackRow({ onBack, children }) {
+  if (!onBack && !children) return null;
   return (
     <View style={styles.pageBackRow}>
+      {onBack ? <Pressable accessibilityRole="button" accessibilityLabel="Go back" hitSlop={8} style={styles.pageBackButton} onPress={onBack}>
+        <Ionicons name="chevron-back" size={18} color="#211f1d" />
+        <Text style={styles.pageBackButtonText}>Back</Text>
+      </Pressable> : null}
       {children}
     </View>
   );
@@ -2742,7 +2969,7 @@ function ShopTopBar({ onNavigate, user, onBack }) {
   );
 }
 
-function CategoryBubble({ item, size = 'large', active = false }) {
+function CategoryBubble({ item, size = 'large', active = false, tablet = false }) {
   const imageSource = item.image ? images[item.image] : null;
   const frameStyle = size === 'rail'
     ? styles.categoryRailImageFrame
@@ -2758,10 +2985,11 @@ function CategoryBubble({ item, size = 'large', active = false }) {
       : size === 'featured'
         ? styles.categoryFeaturedImage
         : styles.categoryContentImage;
-  const iconSize = size === 'rail' ? 30 : size === 'reference' ? 17 : size === 'featured' ? 42 : 38;
+  const iconSize = size === 'rail' ? 30 : size === 'reference' ? 17 : size === 'featured' ? (tablet ? 48 : 42) : tablet ? 44 : 38;
+  const tabletFrameStyle = tablet ? size === 'rail' ? styles.categoryRailImageFrameTablet : size === 'featured' ? styles.categoryFeaturedImageFrameTablet : size === 'reference' ? null : styles.categoryContentImageFrameTablet : null;
 
   return (
-    <View style={[frameStyle, active && styles.categoryRailImageFrameActive]}>
+    <View style={[frameStyle, tabletFrameStyle, active && styles.categoryRailImageFrameActive]}>
       {imageSource ? (
         <Image source={imageSource} style={imageStyle} resizeMode="contain" />
       ) : (
@@ -2774,29 +3002,36 @@ function CategoryBubble({ item, size = 'large', active = false }) {
 function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate, onBack, user, initialScrollY = 0, onScrollPositionChange }) {
   const layout = useResponsiveLayout();
   const categoryMainScrollRef = useRef(null);
+  const categoryRailScrollRef = useRef(null);
+  const categorySectionOffsetsRef = useRef({});
+  const initialSectionRef = useRef(selectedCategory);
+  const initialSectionJumpedRef = useRef(false);
+  const activeCategoryRef = useRef(selectedCategory);
+  const [categoryMainWidth, setCategoryMainWidth] = useState(0);
   const [categoryQuery, setCategoryQuery] = useState('');
   const [categorySearchFocused, setCategorySearchFocused] = useState(false);
   const content = categoryPageContent[selectedCategory] || categoryPageContent.popular;
-  const categoryRailWidth = layout.isTablet ? 96 : layout.windowWidth <= 340 ? 82 : layout.windowWidth <= 375 ? 84 : layout.windowWidth >= 414 ? 90 : 88;
-  const categoryPanelWidth = Math.max(180, layout.contentWidth - categoryRailWidth);
-  const categoryPanelPadding = layout.isTablet ? 24 : layout.windowWidth <= 340 ? 10 : 12;
-  const categoryGridGap = layout.windowWidth <= 340 ? 8 : 10;
+  const nextCategoryKey = categoryFollowOnSections[selectedCategory];
+  const nextContent = nextCategoryKey ? categoryPageContent[nextCategoryKey] : null;
+  const featuredItems = nextContent ? uniqueCategoryTiles([...content.featured, ...content.items]).slice(0, 4) : content.featured;
+  const gridItems = nextContent ? uniqueCategoryTiles([...nextContent.featured, ...nextContent.items]).slice(0, 4) : content.items;
+  const gridTitle = nextContent ? nextContent.sectionTitle : content.sectionTitle;
+  const categoryRailWidth = layout.isTablet ? 116 : layout.windowWidth <= 340 ? 82 : layout.windowWidth <= 375 ? 84 : layout.windowWidth >= 414 ? 90 : 88;
+  const categoryPanelWidth = Math.max(180, categoryMainWidth || layout.contentWidth - categoryRailWidth);
+  const categoryPanelPadding = layout.isTablet ? 28 : layout.windowWidth <= 340 ? 10 : 12;
+  const categoryGridGap = layout.isTablet ? 18 : layout.windowWidth <= 340 ? 8 : 10;
   const categoryPanelInnerWidth = Math.max(160, categoryPanelWidth - (categoryPanelPadding * 2));
   const categoryFeatureHorizontalPadding = layout.windowWidth <= 340 ? 8 : 12;
   // Include the featured band's horizontal padding and a small border/rounding allowance.
   const categoryFeaturedInnerWidth = Math.max(136, categoryPanelInnerWidth - (categoryFeatureHorizontalPadding * 2) - 4);
-  const categoryGridColumns = layout.isTablet ? 3 : categoryPanelInnerWidth >= 270 ? 3 : 2;
+  const categoryGridColumns = layout.isTablet ? (categoryPanelWidth >= 720 ? 4 : 3) : categoryPanelInnerWidth >= 270 ? 3 : 2;
   const categoryFeaturedColumns = layout.isTablet
-    ? 3
-    : categoryFeaturedInnerWidth >= 270 && content.featured.length % 3 === 0
+    ? (categoryPanelWidth >= 720 ? 4 : featuredItems.length === 4 ? 2 : 3)
+    : categoryFeaturedInnerWidth >= 270 && featuredItems.length % 3 === 0
       ? 3
       : 2;
-  const categoryTileWidth = layout.isTablet
-    ? '31.5%'
-    : Math.floor((categoryPanelInnerWidth - (categoryGridGap * (categoryGridColumns - 1))) / categoryGridColumns);
-  const categoryFeaturedTileWidth = layout.isTablet
-    ? '31.5%'
-    : Math.floor((categoryFeaturedInnerWidth - (categoryGridGap * (categoryFeaturedColumns - 1))) / categoryFeaturedColumns);
+  const categoryTileWidth = Math.floor((categoryPanelInnerWidth - (categoryGridGap * (categoryGridColumns - 1))) / categoryGridColumns);
+  const categoryFeaturedTileWidth = Math.floor((categoryFeaturedInnerWidth - (categoryGridGap * (categoryFeaturedColumns - 1))) / categoryFeaturedColumns);
   const normalizedCategoryQuery = categorySearchText(categoryQuery).toLowerCase();
   const categoryMatches = useMemo(() => {
     if (!normalizedCategoryQuery) return [];
@@ -2825,7 +3060,7 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
   const openCategoryReference = (item) => {
     setCategoryQuery('');
     if (item.sectionKey && item.params?.section === item.sectionKey) {
-      onSelectCategory(item.sectionKey);
+      selectCategory(item.sectionKey);
       return;
     }
     onNavigate('shop', item.params || { q: item.label });
@@ -2841,10 +3076,21 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
   };
   const openTile = (item) => onNavigate('shop', item.params || { sort: 'newest' });
   const selectCategory = (key) => {
+    if (layout.isTablet) {
+      initialSectionJumpedRef.current = true;
+      activeCategoryRef.current = key;
+      onSelectCategory(key);
+      categoryMainScrollRef.current?.scrollTo?.({ y: categorySectionOffsetsRef.current[key] || 0, animated: false });
+      return;
+    }
     if (key === selectedCategory) return;
     onSelectCategory(key);
     categoryMainScrollRef.current?.scrollTo?.({ y: 0, animated: false });
   };
+
+  useEffect(() => {
+    activeCategoryRef.current = selectedCategory;
+  }, [selectedCategory]);
 
   useEffect(() => {
     if (!initialScrollY) return undefined;
@@ -2875,7 +3121,7 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
             />
             {categoryQuery ? (
               <TouchableOpacity accessibilityRole="button" accessibilityLabel="Clear category search" hitSlop={8} style={styles.categorySearchIconButton} onPress={() => setCategoryQuery('')}>
-                <Ionicons name="close" size={16} color="#706a75" />
+                <DecorativeCloseIcon size={16} color="#706a75" />
               </TouchableOpacity>
             ) : null}
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Search categories" hitSlop={4} style={styles.categorySearchSubmit} onPress={submitCategorySearch}>
@@ -2903,7 +3149,12 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
         </View>
       </PageBackRow>
       <View style={styles.categoryBrowser}>
-        <ScrollView style={[styles.categoryRail, { width: categoryRailWidth, maxWidth: categoryRailWidth, flexBasis: categoryRailWidth }]} contentContainerStyle={[styles.categoryRailContent, layout.isTablet && styles.categoryRailContentTablet]} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          ref={categoryRailScrollRef}
+          style={[styles.categoryRail, { width: categoryRailWidth, maxWidth: categoryRailWidth, flexBasis: categoryRailWidth }, layout.isTablet && styles.categoryRailTablet]}
+          contentContainerStyle={[styles.categoryRailContent, layout.isTablet && styles.categoryRailContentTablet]}
+          showsVerticalScrollIndicator={false}
+        >
           {categoryRailItems.map((item) => {
             const active = item.key === selectedCategory;
             return (
@@ -2913,12 +3164,12 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
                 accessibilityLabel={`${categorySearchText(item.label)} category`}
                 accessibilityState={{ selected: active }}
                 activeOpacity={0.86}
-                style={[styles.categoryRailItem, active && styles.categoryRailItemActive]}
+                style={[styles.categoryRailItem, layout.isTablet && styles.categoryRailItemTablet, active && styles.categoryRailItemActive, active && layout.isTablet && styles.categoryRailItemActiveTablet]}
                 onPress={() => selectCategory(item.key)}
               >
-                {active ? <View style={styles.categoryRailAccent} /> : null}
-                <CategoryBubble item={item} size="rail" active={active} />
-                <Text style={[styles.categoryRailLabel, active && styles.categoryRailLabelActive]} numberOfLines={3}>{categorySearchText(item.label)}</Text>
+                {active && !layout.isTablet ? <View style={styles.categoryRailAccent} /> : null}
+                <CategoryBubble item={item} size="rail" active={active} tablet={layout.isTablet} />
+                <Text style={[styles.categoryRailLabel, layout.isTablet && styles.categoryRailLabelTablet, active && styles.categoryRailLabelActive]} numberOfLines={3}>{categorySearchText(item.label)}</Text>
               </TouchableOpacity>
             );
           })}
@@ -2927,26 +3178,70 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
         <ScrollView
           ref={categoryMainScrollRef}
           style={styles.categoryMain}
+          onLayout={(event) => {
+            const width = Math.round(event.nativeEvent.layout.width);
+            setCategoryMainWidth((current) => current === width ? current : width);
+          }}
           contentContainerStyle={[styles.categoryMainContent, { paddingHorizontal: categoryPanelPadding }, layout.isTablet && styles.categoryMainContentTablet]}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
-          onScroll={(event) => onScrollPositionChange?.(event.nativeEvent.contentOffset.y)}
+          onScroll={(event) => {
+            const y = event.nativeEvent.contentOffset.y;
+            onScrollPositionChange?.(y);
+            if (!layout.isTablet) return;
+            const visibleY = y + event.nativeEvent.layoutMeasurement.height * 0.45;
+            const visibleKey = categoryAtScrollPosition(categoryContinuousSections, categorySectionOffsetsRef.current, visibleY);
+            if (visibleKey !== activeCategoryRef.current) {
+              activeCategoryRef.current = visibleKey;
+              onSelectCategory(visibleKey);
+              const railIndex = categoryRailItems.findIndex((item) => item.key === visibleKey);
+              categoryRailScrollRef.current?.scrollTo?.({ y: Math.max(0, railIndex * 102 - 204), animated: true });
+            }
+          }}
         >
-          <View style={[styles.categoryFeatureBand, { paddingHorizontal: categoryFeatureHorizontalPadding }]}>
-            <IosGlassBackdrop />
+          {layout.isTablet ? categoryContinuousSections.map((section) => (
+            <View
+              key={section.key}
+              style={styles.categoryContinuousSectionTablet}
+              onLayout={(event) => {
+                const offset = event.nativeEvent.layout.y;
+                categorySectionOffsetsRef.current[section.key] = offset;
+                if (initialScrollY || initialSectionJumpedRef.current || section.key !== initialSectionRef.current) return;
+                initialSectionJumpedRef.current = true;
+                if (offset) requestAnimationFrame(() => categoryMainScrollRef.current?.scrollTo?.({ y: offset, animated: false }));
+                const railIndex = categoryRailItems.findIndex((item) => item.key === section.key);
+                categoryRailScrollRef.current?.scrollTo?.({ y: Math.max(0, railIndex * 102 - 204), animated: false });
+              }}
+            >
+              <View style={styles.categoryKickerRow}>
+                <Text style={styles.categoryKicker}>{section.content.kicker}</Text>
+                <View style={styles.categoryKickerLine} />
+              </View>
+              <Text accessibilityRole="header" style={[styles.categoryHeadline, styles.categoryHeadlineTablet]}>{section.content.title}</Text>
+              <View style={[styles.categoryTileGrid, styles.categoryTileGridTablet, { columnGap: categoryGridGap }]}>
+                {section.items.map((item) => (
+                  <TouchableOpacity key={`${section.key}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryTile, styles.categoryTileTablet, { width: categoryTileWidth }]} onPress={() => openTile(item)}>
+                    <CategoryBubble item={item} tablet />
+                    <Text style={[styles.categoryTileLabel, styles.categoryTileLabelTablet]} numberOfLines={2}>{categorySearchText(item.label)}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )) : <>
+          <View style={[styles.categoryFeatureBand, layout.isTablet && styles.categoryFeatureBandTablet, { paddingHorizontal: categoryFeatureHorizontalPadding }]}>
+            <SurfaceBackdrop />
             <View style={styles.categoryKickerRow}>
               <Text style={styles.categoryKicker}>{content.kicker}</Text>
               <View style={styles.categoryKickerLine} />
             </View>
-            <Text style={styles.categoryHeadline}>{content.title}</Text>
+            <Text style={[styles.categoryHeadline, layout.isTablet && styles.categoryHeadlineTablet]}>{content.title}</Text>
             <View style={[styles.categoryFeaturedGrid, { columnGap: categoryGridGap }, layout.isTablet && styles.categoryTileGridTablet]}>
-              {content.featured.map((item) => (
-                <TouchableOpacity key={`${content.kicker}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryFeaturedTile, { width: categoryFeaturedTileWidth }]} onPress={() => openTile(item)}>
-                  <CategoryBubble item={item} size="featured" />
+              {featuredItems.map((item) => (
+                <TouchableOpacity key={`${content.kicker}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryFeaturedTile, layout.isTablet && styles.categoryFeaturedTileTablet, { width: categoryFeaturedTileWidth }]} onPress={() => openTile(item)}>
+                  <CategoryBubble item={item} size="featured" tablet={layout.isTablet} />
                   <Text
-                    style={styles.categoryFeaturedLabel}
-                    numberOfLines={/^\S{11,}$/.test(categorySearchText(item.label)) ? 1 : 2}
-                    adjustsFontSizeToFit={/^\S{11,}$/.test(categorySearchText(item.label))}
+                    style={[styles.categoryFeaturedLabel, layout.isTablet && styles.categoryFeaturedLabelTablet]}
+                    numberOfLines={2}
                     minimumFontScale={0.82}
                   >
                     {categorySearchText(item.label)}
@@ -2956,18 +3251,19 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
             </View>
           </View>
 
-          <View style={styles.categorySectionHeader}>
-            <Text style={styles.categorySectionTitle}>{content.sectionTitle}</Text>
+          <View style={[styles.categorySectionHeader, layout.isTablet && styles.categorySectionHeaderTablet]}>
+            <Text style={[styles.categorySectionTitle, layout.isTablet && styles.categorySectionTitleTablet]}>{gridTitle}</Text>
             <View style={styles.categorySectionRule} />
           </View>
           <View style={[styles.categoryTileGrid, { columnGap: categoryGridGap }, layout.isTablet && styles.categoryTileGridTablet]}>
-            {content.items.map((item) => (
-              <TouchableOpacity key={`${content.sectionTitle}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryTile, { width: categoryTileWidth }]} onPress={() => openTile(item)}>
-                <CategoryBubble item={item} />
-                <Text style={styles.categoryTileLabel} numberOfLines={2}>{categorySearchText(item.label)}</Text>
+            {gridItems.map((item) => (
+              <TouchableOpacity key={`${gridTitle}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryTile, layout.isTablet && styles.categoryTileTablet, { width: categoryTileWidth }]} onPress={() => openTile(item)}>
+                <CategoryBubble item={item} tablet={layout.isTablet} />
+                <Text style={[styles.categoryTileLabel, layout.isTablet && styles.categoryTileLabelTablet]} numberOfLines={2}>{categorySearchText(item.label)}</Text>
               </TouchableOpacity>
             ))}
           </View>
+          </>}
         </ScrollView>
       </View>
     </View>
@@ -2991,7 +3287,7 @@ function CurationProductCard({ product, onPress, onTryOn, onVideoTryOn, onAddToW
     onAddToWishlist?.(product);
   };
   return (
-    <TouchableOpacity style={[styles.homeProductCard, Platform.OS === 'ios' && styles.iosGlassCard, rail && styles.homeProductCardRail, !rail && layout.productGridWidthStyle]} onPress={onPress}>
+    <TouchableOpacity style={[styles.homeProductCard, styles.surfaceCard, rail && styles.homeProductCardRail, !rail && layout.productGridWidthStyle]} onPress={onPress}>
       <View style={styles.homeProductImageWrap}>
         <ProductImage product={product} style={styles.homeProductImage} alt={product.title || product.name} />
         {discount ? <Text style={styles.homeDealBadge}>{discount}% OFF</Text> : product.isNew ? <Text style={styles.homeNewBadge}>NEW</Text> : null}
@@ -3040,10 +3336,10 @@ function HomeOfferCards({ offers = [], onNavigate }) {
             activeOpacity={0.88}
             accessibilityRole="button"
             accessibilityLabel={`${offer.title}. ${offer.cta}`}
-            style={[styles.homeOfferCard, Platform.OS === 'ios' && styles.iosGlassCard, layout.isTablet && styles.homeOfferCardTablet]}
+            style={[styles.homeOfferCard, styles.surfaceCard, layout.isTablet && styles.homeOfferCardTablet]}
             onPress={() => onNavigate(offer.route, offer.params || {})}
           >
-            <IosGlassBackdrop />
+            <SurfaceBackdrop />
             <View style={styles.homeOfferCopy}>
               <Text style={styles.homeOfferKicker} numberOfLines={1}>{offer.kicker}</Text>
               <Text style={styles.homeOfferTitle} numberOfLines={2}>{offer.title}</Text>
@@ -3141,30 +3437,30 @@ function HomeStudioHero({ onNavigate }) {
       <View style={styles.homeStudioHeroTextScrim} pointerEvents="none" />
       <View style={[styles.homeStudioHeroCopy, compact && styles.homeStudioHeroCopyCompact, tablet && styles.homeStudioHeroCopyTablet]}>
         <Text style={[styles.homeStudioKicker, tablet && styles.homeStudioKickerTablet]}>AI VIRTUAL TRY-ON</Text>
-        <Text style={[styles.homeStudioTitle, compact && styles.homeStudioTitleCompact, tablet && styles.homeStudioTitleTablet]} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.88}>{'See it. Try it.\nLove it.'}</Text>
+        <Text style={[styles.homeStudioTitle, compact && styles.homeStudioTitleCompact, tablet && styles.homeStudioTitleTablet]} numberOfLines={2} adjustsFontSizeToFit={Platform.OS === 'ios'} minimumFontScale={0.88}>{'See it. Try it.\nLove it.'}</Text>
         <Text style={[styles.homeStudioText, tablet && styles.homeStudioTextTablet]}>Preview outfits on yourself before you buy.</Text>
         <TouchableOpacity style={[styles.homeStudioPrimaryButton, fontScale > 1 && styles.homeStudioPrimaryButtonLargeText, tablet && styles.homeStudioPrimaryButtonTablet]} activeOpacity={0.88} accessibilityRole="button" accessibilityLabel="Create Your Look" onPress={() => onNavigate('tryon')}>
-          <Text style={[styles.homeStudioPrimaryText, tablet && styles.homeStudioPrimaryTextTablet]}>Create Your Look</Text>
+          <Text numberOfLines={1} style={[styles.homeStudioPrimaryText, tablet && styles.homeStudioPrimaryTextTablet]}>Create Your Look</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 }
 
-function HomeStudioActionTile({ item, onNavigate, narrow = false }) {
+function HomeStudioActionTile({ item, onNavigate, narrow = false, largeText = false }) {
   return (
     <TouchableOpacity
-      style={[styles.homeStudioActionTile, Platform.OS === 'ios' && styles.iosGlassCard, narrow && styles.homeStudioActionTileNarrow]}
+      style={[styles.homeStudioActionTile, styles.surfaceCard, narrow && styles.homeStudioActionTileNarrow, largeText && styles.homeStudioActionTileLargeText]}
       activeOpacity={0.84}
       accessibilityRole="button"
       accessibilityLabel={`${item.title}. ${item.text}`}
       onPress={() => onNavigate(item.route, item.params || {})}
     >
-      <IosGlassBackdrop />
-      <View style={[styles.homeStudioActionIcon, narrow && styles.homeStudioActionIconNarrow]}>
+      <SurfaceBackdrop />
+      <View style={[styles.homeStudioActionIcon, narrow && styles.homeStudioActionIconNarrow, largeText && styles.homeStudioActionIconLargeText]}>
         <Ionicons name={item.icon} size={26} color="#171412" />
       </View>
-      <View style={narrow ? styles.homeStudioActionCopyNarrow : null}>
+      <View style={[narrow && styles.homeStudioActionCopyNarrow, largeText && styles.homeStudioActionCopyLargeText]}>
         <Text style={[styles.homeStudioActionTitle, narrow && styles.homeStudioActionTitleNarrow]}>{item.title}</Text>
         <Text style={[styles.homeStudioActionText, narrow && styles.homeStudioActionTextNarrow]}>{item.text}</Text>
       </View>
@@ -3173,13 +3469,14 @@ function HomeStudioActionTile({ item, onNavigate, narrow = false }) {
 }
 
 function HomeStyleStudio({ onNavigate }) {
-  const { width } = useWindowDimensions();
-  const narrow = width < 350;
+  const { width, fontScale } = useWindowDimensions();
+  const narrow = width / Math.max(1, fontScale) < 350;
+  const largeText = narrow && fontScale >= 2;
   return (
     <View style={[styles.homeStudioPanel, styles.homeStyleStudioPanel]}>
       <HomeStudioSectionHead title="Your Style Studio" subtitle="Three ways to begin." />
       <View style={[styles.homeStudioActionGrid, narrow && styles.homeStudioActionGridNarrow]}>
-        {homeStudioActions.map((item) => <HomeStudioActionTile key={item.key} item={item} onNavigate={onNavigate} narrow={narrow} />)}
+        {homeStudioActions.map((item) => <HomeStudioActionTile key={item.key} item={item} onNavigate={onNavigate} narrow={narrow} largeText={largeText} />)}
       </View>
     </View>
   );
@@ -3236,18 +3533,20 @@ function HomeCuratedStyleRail({ products = [], onNavigate, onAddToWishlist, wish
 }
 
 function HomeStudioWardrobeBanner({ closetItems = [], onNavigate }) {
+  const { width, fontScale } = useWindowDimensions();
+  const stacked = width / Math.max(1, fontScale) < 350;
   const savedItems = closetItems.filter((item) => item?.imageUrl).slice(0, 3);
   const returning = closetItems.length > 0;
   return (
     <TouchableOpacity
       accessibilityRole="button"
       accessibilityLabel={returning ? 'Explore your wardrobe' : 'Add your first wardrobe item'}
-      style={[styles.homeStudioWardrobeBanner, Platform.OS === 'ios' && styles.iosGlassCard]}
+      style={[styles.homeStudioWardrobeBanner, styles.surfaceCard, stacked && styles.homeStudioWardrobeBannerStacked]}
       activeOpacity={0.86}
-      onPress={() => onNavigate('closet', returning ? { view: 'wardrobe' } : { view: 'add' })}
+      onPress={() => onNavigate('closet', returning ? { view: 'stylist' } : { view: 'add' })}
     >
-      <IosGlassBackdrop />
-      <View style={styles.homeStudioWardrobeBannerCopy}>
+      <SurfaceBackdrop />
+      <View style={[styles.homeStudioWardrobeBannerCopy, stacked && styles.homeStudioWardrobeBannerCopyStacked]}>
         <Text style={styles.homeStudioBannerTitle}>{returning ? 'Your Wardrobe' : 'Your wardrobe, reimagined.'}</Text>
         <Text style={styles.homeStudioBannerText}>
           {returning ? 'Rediscover the pieces you have saved.' : 'Save your clothes. Discover new ways to style them.'}
@@ -3258,7 +3557,7 @@ function HomeStudioWardrobeBanner({ closetItems = [], onNavigate }) {
         </View>
       </View>
       {savedItems.length ? (
-        <View style={styles.homeStudioSavedPreview}>
+        <View style={[styles.homeStudioSavedPreview, stacked && styles.homeStudioSavedPreviewStacked]}>
           {savedItems.map((item, index) => (
             <ResilientImage
               key={item.id || item._id || `${item.imageUrl}-${index}`}
@@ -3270,11 +3569,11 @@ function HomeStudioWardrobeBanner({ closetItems = [], onNavigate }) {
           ))}
         </View>
       ) : returning ? (
-        <View style={styles.homeStudioSavedPreviewFallback}>
+        <View style={[styles.homeStudioSavedPreviewFallback, stacked && styles.homeStudioSavedPreviewStacked]}>
           <Ionicons name="shirt-outline" size={34} color="#5e5853" />
         </View>
       ) : (
-        <Image source={images.homeStarterWardrobe} style={styles.homeStudioBannerImage} resizeMode="cover" />
+        <Image source={images.homeStarterWardrobe} style={[styles.homeStudioBannerImage, stacked && styles.homeStudioBannerImageStacked]} resizeMode="cover" />
       )}
     </TouchableOpacity>
   );
@@ -3493,10 +3792,9 @@ function ConciergeSuggestionCard({ product, fallback, featured, onOpenProduct, o
   const handleCardPress = onOpenProduct || onShop;
   const handleImagePress = onPreview || handleCardPress;
   const onlineProduct = isOnlineAiStudioProduct(product);
-  const sourceLabel = onlineProduct ? 'Amazon result' : product?.sourceLabel || (product?.source === 'wardrobe' ? 'Wardrobe item' : product?.source ? 'Lookmefy catalog' : '');
-  const externalUrl = product?.affiliateLink || product?.sourceUrl;
+  const sourceLabel = onlineProduct ? 'Online result' : product?.sourceLabel || (product?.source === 'wardrobe' ? 'Wardrobe item' : product?.source ? 'Lookmefy catalog' : '');
   return (
-    <View style={[styles.conciergeSuggestionCard, Platform.OS === 'ios' && styles.iosGlassCard]}>
+    <View style={[styles.conciergeSuggestionCard, styles.surfaceCard]}>
       <TouchableOpacity
         style={styles.conciergeSuggestionImageWrap}
         activeOpacity={0.88}
@@ -3528,13 +3826,9 @@ function ConciergeSuggestionCard({ product, fallback, featured, onOpenProduct, o
         <TouchableOpacity style={[styles.conciergeShopButton, tryOnLoading && styles.disabledButton]} disabled={tryOnLoading} onPress={onTryOn || onShop}>
           <Text style={styles.conciergeShopText}>{tryOnLoading ? 'Generating...' : actionLabel}</Text>
         </TouchableOpacity>
-        {tryOn?.imageUrl ? <AiPreviewNote content={reportContentReference(tryOn, isOnlineAiStudioProduct(product) ? 'external_tryon' : 'product_tryon')} /> : null}
+        {tryOn?.imageUrl ? <ReportContentAction content={reportContentReference(tryOn, isOnlineAiStudioProduct(product) ? 'external_tryon' : 'product_tryon')} /> : null}
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
-        {externalUrl && onShop && onTryOn ? (
-          <TouchableOpacity style={styles.conciergeExternalLink} onPress={onShop}>
-            <Text style={styles.conciergeExternalLinkText}>{product?.searchLink ? 'Open search' : 'View on Amazon'}</Text>
-          </TouchableOpacity>
-        ) : null}
+        {product?.id && !onlineProduct && onShop && onTryOn ? <TouchableOpacity style={styles.conciergeExternalLink} onPress={onShop}><Text style={styles.conciergeExternalLinkText}>View product</Text></TouchableOpacity> : null}
       </View>
     </View>
   );
@@ -3546,7 +3840,7 @@ function AiStudioOutfitCard({ outfit }) {
     <View style={styles.aiOutfitCard}>
       <View style={styles.aiOutfitHead}>
         <Text style={styles.aiOutfitTitle} numberOfLines={2}>{outfit?.title || 'Recommended outfit'}</Text>
-        {outfit?.sourceLabel ? <Text style={styles.aiOutfitSource} numberOfLines={1}>{outfit.sourceLabel}</Text> : null}
+        {outfit?.sourceLabel ? <Text style={styles.aiOutfitSource} numberOfLines={1}>{stylistResponseText(outfit.sourceLabel)}</Text> : null}
       </View>
       {outfit?.reason ? <Text style={styles.aiOutfitReason}>{outfit.reason}</Text> : null}
       {items.length ? (
@@ -3573,6 +3867,10 @@ function AiStudioOutfitCard({ outfit }) {
 function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, registerTourTarget, tourFocusRequest, initialScrollY = 0, onScrollPositionChange }) {
   const layout = useResponsiveLayout();
   const homeScrollRef = useRef(null);
+  const homeScrollMetricsRef = useRef({ offset: 0, viewport: 0, content: 0 });
+  const homeRestorePendingRef = useRef(initialScrollY > 0 ? initialScrollY : null);
+  const homeRestoreWarmedContentRef = useRef(0);
+  const homeRestoreSettleTimerRef = useRef(null);
   const [homeRefreshKey, setHomeRefreshKey] = useState(0);
   const [homeRefreshing, setHomeRefreshing] = useState(false);
   const [homeAiRecommendationSeed, setHomeAiRecommendationSeed] = useState(0);
@@ -3580,7 +3878,7 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
   const preferredApiGender = productApiGenderForUser(user);
   const curated = useProducts({ sort: 'newest', limit: homeProductFeedPageSize, gender: preferredApiGender, refreshKey: homeRefreshKey }, token);
   const recommended = useRecommendedProducts(user, token, 16, homeRefreshKey);
-  const shopLooks = usePagedShopProducts({ sort: 'newest', refreshKey: homeRefreshKey }, token, null, 24);
+  const shopLooks = usePagedShopProducts({ sort: 'newest', refreshKey: homeRefreshKey }, token, null, layout.isTablet ? 12 : 24);
   const closet = useApiState('/closet', token, Boolean(user), { items: [], outfits: [], suggestions: [], stats: {} });
   const closetData = closet.data || {};
   const closetItems = Array.isArray(closetData.items) ? closetData.items : [];
@@ -3669,18 +3967,49 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
       }
     ].filter((section) => section.loading || uniqueProductsWithImages(section.products).length >= 4);
   }, [catalogProducts, curated.error, curated.loading, preferredGender, recommended.error, recommended.loading, recommendedProducts]);
-  const shopLookProducts = shopLooks.products.filter((product) => product.imageUrl || product.imageUrls?.length);
-  const lookLabels = preferredGender === 'men'
-    ? ['Office Sharp', 'Weekend Fit', 'Denim Day', 'Sneaker Edit', 'Layered Look', 'Evening Ready']
-    : ['Dinner Ready', 'Soft Floral', 'Denim Day', 'Party Edit', 'Vacation', 'Weekend'];
+  const shopLookProducts = shopLooks.products;
+  const shopLookRows = useMemo(() => {
+    const columns = layout.isTablet ? 3 : 2;
+    const rows = [];
+    for (let index = 0; index < shopLookProducts.length; index += columns) {
+      rows.push(shopLookProducts.slice(index, index + columns));
+    }
+    return rows;
+  }, [layout.isTablet, shopLookProducts]);
+  const loadMoreHomeLooksNearEnd = useCallback(() => {
+    const { offset, viewport, content } = homeScrollMetricsRef.current;
+    if (viewport > 0 && content > 0 && content - offset - viewport < 700
+      && shopLooks.hasMore && !shopLooks.loading && !shopLooks.loadingMore && !shopLooks.loadMoreError) {
+      shopLooks.loadMore();
+    }
+  }, [shopLooks.hasMore, shopLooks.loading, shopLooks.loadingMore, shopLooks.loadMoreError, shopLooks.loadMore]);
+  const restoreHomeScrollWhenReady = useCallback(() => {
+    const offset = homeRestorePendingRef.current;
+    if (offset == null) return;
+    const { viewport, content } = homeScrollMetricsRef.current;
+    if (viewport <= 0) return;
+    if (content - viewport < offset - 24) {
+      // FlatList measures distant rows lazily. Warm its end once per content-size change
+      // so a saved position beyond the initial render window becomes reachable.
+      if (!shopLooks.loading && shopLookRows.length && content > homeRestoreWarmedContentRef.current + 1) {
+        homeRestoreWarmedContentRef.current = content;
+        requestAnimationFrame(() => homeScrollRef.current?.scrollToEnd?.({ animated: false }));
+      }
+      return;
+    }
+    homeScrollRef.current?.scrollToOffset?.({ offset, animated: false });
+    if (homeRestoreSettleTimerRef.current) clearTimeout(homeRestoreSettleTimerRef.current);
+    homeRestoreSettleTimerRef.current = setTimeout(() => {
+      homeScrollRef.current?.scrollToOffset?.({ offset, animated: false });
+      homeRestorePendingRef.current = null;
+      homeRestoreSettleTimerRef.current = null;
+    }, 350);
+  }, [shopLooks.loading, shopLookRows.length]);
+  useEffect(() => {
+    const timer = setTimeout(loadMoreHomeLooksNearEnd, 120);
+    return () => clearTimeout(timer);
+  }, [loadMoreHomeLooksNearEnd, shopLookProducts.length]);
   const homeCurationTitle = preferredGender === 'men' ? "Men's New Arrivals" : preferredGender === 'women' ? "Women's New Arrivals" : 'Curated New Arrivals';
-  const journalTitle = preferredGender === 'men' ? "Men's Style Edit" : 'Shop by Look';
-  const journalKicker = preferredGender === 'men' ? 'MENSWEAR EDIT' : 'DRESS EDIT';
-  const journalIntro = preferredGender === 'men'
-    ? 'Sharp menswear picks from the live catalog, selected for quick outfit discovery.'
-    : preferredGender === 'women'
-      ? 'Real dress picks from the live catalog, selected for quick outfit discovery.'
-      : 'Live catalog picks selected for quick outfit discovery.';
   const isReturningHomeUser = Boolean(user && (closetItems.length || (Array.isArray(closetData.outfits) && closetData.outfits.length) || (Array.isArray(closetData.suggestions) && closetData.suggestions.length)));
   const studioProducts = uniqueProductsWithImages([...recommendedProducts, ...arrivalProducts, ...tryOnPickProducts, ...catalogProducts]);
   const catalogTourTarget = useTourTarget('home-catalog', registerTourTarget, { request: tourFocusRequest, scrollRef: homeScrollRef, scrollOffset: 92 });
@@ -3705,20 +4034,38 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
   }, [curated.loading, homeRefreshing, recommended.loading, shopLooks.loading]);
 
   useEffect(() => {
-    if (!initialScrollY) return undefined;
-    const restoreTimer = setTimeout(() => {
-      homeScrollRef.current?.scrollTo?.({ y: initialScrollY, animated: false });
-    }, 80);
-    return () => clearTimeout(restoreTimer);
-  }, [initialScrollY]);
+    const restoreTimer = setTimeout(restoreHomeScrollWhenReady, 80);
+    return () => {
+      clearTimeout(restoreTimer);
+      if (homeRestoreSettleTimerRef.current) clearTimeout(homeRestoreSettleTimerRef.current);
+    };
+  }, [restoreHomeScrollWhenReady]);
 
   return (
     <View style={styles.homeScreen}>
       <AppHeader onNavigate={onNavigate} user={user} compact showSearch={false} />
-      <ScrollView
+      <FlatList
         ref={homeScrollRef}
         style={styles.homeScroll}
         contentContainerStyle={[styles.homeContent, layout.isTablet && styles.homeContentTablet]}
+        data={shopLookRows}
+        keyExtractor={(row) => row[0].id}
+        initialNumToRender={3}
+        maxToRenderPerBatch={4}
+        updateCellsBatchingPeriod={40}
+        windowSize={5}
+        onEndReached={shopLooks.loadMore}
+        onEndReachedThreshold={0.5}
+        onLayout={(event) => {
+          homeScrollMetricsRef.current.viewport = event.nativeEvent.layout.height;
+          restoreHomeScrollWhenReady();
+          loadMoreHomeLooksNearEnd();
+        }}
+        onContentSizeChange={(_width, height) => {
+          homeScrollMetricsRef.current.content = height;
+          restoreHomeScrollWhenReady();
+          loadMoreHomeLooksNearEnd();
+        }}
         refreshControl={(
           <RefreshControl
             refreshing={homeRefreshing}
@@ -3730,11 +4077,17 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
         )}
         onScroll={(event) => {
           const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-          onScrollPositionChange?.(contentOffset.y);
-          if (contentSize.height - contentOffset.y - layoutMeasurement.height < 600) shopLooks.loadMore();
+          homeScrollMetricsRef.current = {
+            offset: contentOffset.y,
+            viewport: layoutMeasurement.height,
+            content: contentSize.height
+          };
+          if (homeRestorePendingRef.current == null) onScrollPositionChange?.(contentOffset.y);
+          loadMoreHomeLooksNearEnd();
         }}
         {...screenScrollProps}
-      >
+        scrollEventThrottle={32}
+        ListHeaderComponent={<>
         {isReturningHomeUser ? (
           <ReturningUserHomeStudio
             products={studioProducts}
@@ -3798,27 +4151,27 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
       <View style={styles.homeJournalBand}>
         <View style={styles.homeJournalHead}>
           <View>
-            <Text style={styles.homeJournalKicker}>{journalKicker}</Text>
-            <Text style={styles.homeJournalTitle}>{journalTitle}</Text>
+            <Text style={styles.homeJournalKicker}>LIVE CATALOG</Text>
+            <Text style={styles.homeJournalTitle}>Explore the Catalog</Text>
           </View>
         </View>
-        <Text style={[styles.homeJournalIntro, layout.isTablet && styles.homeJournalIntroTablet]}>{journalIntro}</Text>
+        <Text style={[styles.homeJournalIntro, layout.isTablet && styles.homeJournalIntroTablet]}>Browse products from the live catalog. Open an item for details and try-on options.</Text>
         {shopLooks.loading || (!shopLookProducts.length && shopLooks.loadingMore) ? (
           <HomeJournalSkeletonGrid />
         ) : shopLooks.error || !shopLookProducts.length ? (
-          <StatusPanel error={shopLooks.error} empty={!shopLookProducts.length} text={preferredGender === 'men' ? 'No men looks found yet.' : 'No looks found yet.'} />
-        ) : (
-          <View style={styles.homeJournalGrid}>
-            {shopLookProducts.map((product, index) => {
+          <StatusPanel error={shopLooks.error} empty={!shopLookProducts.length} text="No catalog products found yet." />
+        ) : null}
+      </View>
+        </>}
+        renderItem={({ item: row }) => (
+          <View style={[styles.homeJournalGridRow, layout.isTablet && styles.homeJournalGridRowTablet]}>
+            {row.map((product) => {
               const price = Number(product.price);
               return (
-                <TouchableOpacity key={product.id} style={[styles.homeJournalProductCard, Platform.OS === 'ios' && styles.iosGlassCard, layout.productGridWidthStyle]} activeOpacity={0.86} onPress={() => onNavigate('product', { id: product.id })}>
+                <TouchableOpacity key={product.id} style={[styles.homeJournalProductCard, styles.surfaceCard, layout.isTablet && styles.homeJournalProductCardTablet]} activeOpacity={0.86} onPress={() => onNavigate('product', { id: product.id })}>
                   <View style={styles.homeJournalImageFrame}>
                     <ProductImage product={product} style={styles.homeJournalImage} resizeMode="cover" alt={product.title || product.name} />
                     {onAddToWishlist ? <WishlistDoneButton saved={wishlistIds?.has(product.id)} compact onPress={() => onAddToWishlist(product)} /> : null}
-                    <View style={styles.homeJournalOverlay}>
-                      <Text style={styles.homeJournalLookLabel} numberOfLines={1}>{lookLabels[index % lookLabels.length]}</Text>
-                    </View>
                   </View>
                   <View style={styles.homeJournalProductBody}>
                     <Text style={styles.homeJournalProductLabel} numberOfLines={1}>{product.displayLabel || titleCase(product.category || 'Catalog')}</Text>
@@ -3852,14 +4205,22 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
             })}
           </View>
         )}
+        ListFooterComponent={<View style={styles.homeJournalFooter}>
         {shopLooks.loadingMore && shopLookProducts.length ? <ActivityIndicator style={styles.shopProductLoadingMore} color="#252221" /> : null}
         {shopLooks.loadMoreError ? (
           <TouchableOpacity accessibilityRole="button" style={styles.shopProductRetry} onPress={shopLooks.retryLoadMore}>
             <Text style={styles.shopProductRetryText}>{shopLooks.loadMoreError} Tap to retry.</Text>
           </TouchableOpacity>
         ) : null}
-      </View>
-      </ScrollView>
+        {shopLookProducts.length ? (
+          <Text style={styles.homeJournalCount}>
+            {shopLooks.hasMore
+              ? `${shopLookProducts.length.toLocaleString('en-IN')} products loaded · Scroll for more`
+              : `All ${shopLookProducts.length.toLocaleString('en-IN')} available products shown`}
+          </Text>
+        ) : null}
+        </View>}
+      />
     </View>
   );
 }
@@ -4339,16 +4700,17 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
         )}
         columnWrapperStyle={styles.shopProductGridRow}
         contentContainerStyle={styles.shopProductListContent}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        updateCellsBatchingPeriod={40}
+        windowSize={5}
         onEndReached={state.loadMore}
         onEndReachedThreshold={0.65}
         onScroll={(event) => {
-          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-          onScrollPositionChange?.(contentOffset.y);
-          if (contentSize.height - contentOffset.y - layoutMeasurement.height <= Math.max(240, layoutMeasurement.height * 0.6)) {
-            state.loadMore();
-          }
+          onScrollPositionChange?.(event.nativeEvent.contentOffset.y);
         }}
         {...screenScrollProps}
+        scrollEventThrottle={32}
         ListHeaderComponent={<View style={styles.shopProductListHeader}>
       <View style={styles.searchPanel}>
         <View style={styles.searchRow}>
@@ -4424,16 +4786,19 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
   const layout = useResponsiveLayout();
   const [state, setState] = useState({ product: null, loading: true, error: '' });
   const [tryOn, setTryOn] = useState(null);
+  const [tryOnLoaded, setTryOnLoaded] = useState(false);
   const [tryOnLoading, setTryOnLoading] = useState(false);
   const [tryOnVideoLoading, setTryOnVideoLoading] = useState(false);
   const [tryOnError, setTryOnError] = useState('');
   const [tryOnVideoError, setTryOnVideoError] = useState('');
+  const [tryOnPreviewFailed, setTryOnPreviewFailed] = useState(false);
+  const [tryOnPreviewRetry, setTryOnPreviewRetry] = useState(0);
   const [titleExpanded, setTitleExpanded] = useState(false);
   const [lightbox, setLightbox] = useState(null);
   const productScrollRef = useRef(null);
   const mediaScrollRef = useRef(null);
   const detailContentWidth = layout.contentWidth || width;
-  const mediaWidth = Math.max(1, Math.round(detailContentWidth - 28));
+  const mediaWidth = Math.max(1, Math.round(layout.isTablet ? Math.min(520, detailContentWidth - 28) : detailContentWidth - 28));
   const categoryPresentation = useMemo(() => productCategoryPresentation(state.product || {}), [state.product]);
   const related = useProducts({ category: categoryPresentation.category, limit: 5, enabled: categoryPresentation.reliable }, token);
   const relatedProducts = related.products.filter((item) => item.id !== id).slice(0, 4);
@@ -4455,14 +4820,22 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
   }, [id]);
 
   useEffect(() => {
+    setTryOnPreviewFailed(false);
+    setTryOnPreviewRetry(0);
+  }, [id, tryOn?.imageUrl, tryOn?.updatedAt]);
+
+  useEffect(() => {
     if (!user || !id) {
       setTryOn(null);
+      setTryOnLoaded(true);
       return undefined;
     }
     let alive = true;
+    setTryOn(null);
+    setTryOnLoaded(false);
     fetchProductTryOn(id)
-      .then((data) => alive && setTryOn(data || null))
-      .catch(() => alive && setTryOn(null));
+      .then((data) => { if (alive) { setTryOn(data || null); setTryOnLoaded(true); } })
+      .catch(() => { if (alive) { setTryOn(null); setTryOnLoaded(true); } });
     return () => {
       alive = false;
     };
@@ -4521,6 +4894,17 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
     }
   };
 
+  const handleTryOnAction = () => {
+    if (tryOn?.imageUrl && tryOnPreviewFailed) {
+      setTryOnPreviewFailed(false);
+      setTryOnPreviewRetry((current) => current + 1);
+      scrollToTryOnPreview();
+      return;
+    }
+    if (savedLegacyProduct) return;
+    generate();
+  };
+
   const generateVideo = async () => {
     if (!user) {
       onRequireAuth?.('Log in with your mobile number to create a video try-on.');
@@ -4573,12 +4957,14 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
     }
   };
 
-  if (state.loading || state.error || !state.product) {
+  const savedLegacyProduct = Boolean(state.product && isMarketplaceProduct(state.product));
+  const legacyLookUnavailable = savedLegacyProduct && tryOnLoaded && !tryOn?.imageUrl;
+  if (state.loading || state.error || !state.product || (savedLegacyProduct && !tryOnLoaded) || legacyLookUnavailable) {
     return (
       <View style={styles.productDetailScreen}>
         <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack} />
         <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
-          <StatusPanel loading={state.loading} error={state.error} empty={!state.loading && !state.product} text="This item may have been removed from the catalog." />
+          <StatusPanel loading={state.loading || (savedLegacyProduct && !tryOnLoaded)} error={state.error} empty={!state.loading && (!state.product || legacyLookUnavailable)} text="This item may have been removed from the catalog." />
         </ScrollView>
       </View>
     );
@@ -4599,9 +4985,8 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
   ].filter(Boolean);
   const productRating = verifiedProductRating(product);
   const mediaHeight = layout.isTablet
-    ? Math.min(520, Math.max(380, Math.round(mediaWidth * 0.58)))
+    ? Math.min(690, Math.max(480, Math.round(mediaWidth * 1.3)))
     : Math.min(425, Math.max(300, Math.round(mediaWidth * 1.04)));
-  const merchantUrl = productMerchantUrl(product);
   const productColors = (product.colors || [])
     .map((color) => String(color?.name || color || '').trim())
     .filter((color) => color && color.length <= 32 && !/[₹$€£]|\b(?:get it|delivery|discount|offer)\b/i.test(color))
@@ -4609,11 +4994,10 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
   const productSizes = (product.sizes || []).map((size) => String(size || '').trim()).filter(Boolean).slice(0, 8);
   const openShop = () => {
     if (!user) {
-      onRequireAuth?.('Log in with your mobile number to shop this brand.');
+      onRequireAuth?.('Log in with your mobile number to checkout.');
       return;
     }
-    if (merchantUrl) openExternalWebUrl(merchantUrl);
-    else onNavigate('shop');
+    onNavigate('checkout', { productId: product.id });
   };
   const openCategory = () => onNavigate('shop', categoryPresentation.reliable ? { category: categoryPresentation.category } : {});
 
@@ -4621,7 +5005,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
     <View style={styles.productDetailScreen}>
       <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack} showSearch={false} />
       <ScrollView ref={productScrollRef} contentContainerStyle={styles.productDetailContent} {...screenScrollProps}>
-      <View style={[styles.productHeroMedia, { height: mediaHeight, width: mediaWidth }]}>
+      <View style={[styles.productHeroMedia, layout.isTablet && styles.productHeroMediaTablet, { height: mediaHeight, width: mediaWidth }]}>
         <ScrollView ref={mediaScrollRef} {...horizontalScrollProps} pagingEnabled contentContainerStyle={styles.productMediaTrack}>
           {mediaItems.map((item, index) => (
             <Pressable key={item.key} style={[styles.productMediaSlide, { width: mediaWidth }]} onPress={() => item.type !== 'video' && item.uri && setLightbox(item.uri)}>
@@ -4629,8 +5013,8 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
                 <TryOnVideoPlayer uri={item.uri} style={styles.productHeroVideo} nativeControls />
               ) : item.key === 'original' ? (
                 <ProductImage product={product} style={styles.productHeroImage} resizeMode="contain" alt={productTitle} />
-              ) : item.source ? (
-                <Image source={item.source} style={styles.productHeroImage} resizeMode="contain" />
+              ) : item.key === 'tryon' ? (
+                <ProductImage key={`${tryOn?.id || 'tryon'}:${tryOnPreviewRetry}`} product={product} tryOn={tryOn} verifyPrivateTryOn onLoadSuccess={() => setTryOnPreviewFailed(false)} onLoadFailure={() => setTryOnPreviewFailed(true)} style={styles.productHeroImage} resizeMode="contain" alt="Your AI try-on" />
               ) : (
                 <ProductImage product={item.product} style={styles.productHeroImage} resizeMode="contain" alt={product.title} />
               )}
@@ -4658,7 +5042,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
       </View>
 
       <View style={styles.productSummary}>
-        {productBrand ? <Text style={styles.productBrandLabel}>{productBrand}</Text> : null}
+        {savedLegacyProduct ? <Text style={styles.productBrandLabel}>SAVED TRY-ON</Text> : productBrand ? <Text style={styles.productBrandLabel}>{productBrand}</Text> : null}
         <Text
           accessibilityLabel={productTitle}
           numberOfLines={collapsibleTitle && !titleExpanded ? 2 : undefined}
@@ -4679,7 +5063,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
             <Ionicons name={titleExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#625a55" />
           </TouchableOpacity>
         ) : null}
-        <View style={styles.productValueRow}>
+        {!savedLegacyProduct ? <View style={styles.productValueRow}>
           <Text style={styles.productDetailPrice}>{Number.isFinite(Number(product.price)) ? formatMoney(Number(product.price), product.currency) : 'Price unavailable'}</Text>
           {productRating ? (
             <View style={styles.productRatingLine}>
@@ -4687,8 +5071,8 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
               <Text style={styles.productRatingText}>{productRating.rating.toFixed(1)} ({productRating.ratingCount})</Text>
             </View>
           ) : null}
-        </View>
-        <View style={styles.productMetadataRow}>
+        </View> : null}
+        {!savedLegacyProduct ? <View style={styles.productMetadataRow}>
           <TouchableOpacity style={styles.productMetadataItem} activeOpacity={0.76} onPress={openCategory}>
             <Text style={styles.productCategoryMetaLabel}>PRODUCT TYPE</Text>
             <Text style={styles.productCategoryMetaValue}>{categoryPresentation.label}</Text>
@@ -4699,34 +5083,38 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
               <Text style={styles.productCategoryMetaValue}>{titleCase(product.gender)}</Text>
             </View>
           ) : null}
-        </View>
+        </View> : null}
 
-        <View style={styles.productActionRow}>
-          <TouchableOpacity style={[styles.productPrimaryAction, tryOnLoading && styles.disabledButton]} activeOpacity={0.86} disabled={tryOnLoading} onPress={generate}>
+        {!savedLegacyProduct || tryOnPreviewFailed ? <View style={styles.productActionRow}>
+          <TouchableOpacity style={[styles.productPrimaryAction, tryOnLoading && styles.disabledButton]} activeOpacity={0.86} disabled={tryOnLoading} onPress={handleTryOnAction} accessibilityHint="Creates a look by sending your profile and product photos to AI providers.">
             <Ionicons name="sparkles-outline" size={17} color="#ffffff" />
-            <Text style={styles.productPrimaryActionText}>{tryOnLoading ? 'Creating your try-on…' : tryOn?.imageUrl ? 'Try It On Again' : 'Try It On'}</Text>
+            <Text style={styles.productPrimaryActionText}>{tryOnLoading ? 'Creating your try-on…' : tryOnPreviewFailed ? 'Retry Preview — no credits' : tryOn?.imageUrl ? 'Try It On Again' : 'Try It On'}</Text>
             {!tryOnLoading ? <Ionicons name="arrow-forward" size={17} color="#ffffff" /> : null}
           </TouchableOpacity>
-          <View style={styles.productSecondaryActionRow}>
-            {merchantUrl ? (
-              <TouchableOpacity accessibilityRole="link" accessibilityLabel="View product on merchant site" style={styles.productSecondaryAction} activeOpacity={0.8} onPress={openShop}>
-                <Text style={styles.productSecondaryActionText}>View Product</Text>
+          {!savedLegacyProduct ? <View style={styles.productSecondaryActionRow}>
+            {Number.isFinite(Number(product.price)) && Number(product.price) > 0 ? (
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Checkout this product" style={styles.productSecondaryAction} activeOpacity={0.8} onPress={openShop}>
+                <Text style={styles.productSecondaryActionText}>Checkout</Text>
                 <Ionicons name="arrow-forward" size={15} color="#211f1d" />
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity style={[styles.productVideoAction, !merchantUrl && styles.productVideoActionWide, (tryOnLoading || tryOnVideoLoading) && styles.disabledButton]} activeOpacity={0.8} disabled={tryOnLoading || tryOnVideoLoading} onPress={generateVideo}>
+            <TouchableOpacity style={[styles.productVideoAction, (tryOnLoading || tryOnVideoLoading) && styles.disabledButton]} activeOpacity={0.8} disabled={tryOnLoading || tryOnVideoLoading} onPress={generateVideo}>
               <Ionicons name="play-circle-outline" size={17} color="#514b47" />
               <Text style={styles.productVideoActionText}>{tryOnVideoLoading ? 'Creating…' : tryOn?.videoUrl ? 'New Video' : 'Video Try-On'}</Text>
             </TouchableOpacity>
-          </View>
-          {!merchantUrl ? <Text style={styles.productCommerceUnavailable}>Shopping link unavailable for this item.</Text> : null}
-        </View>
+          </View> : null}
+          {!savedLegacyProduct && !(Number.isFinite(Number(product.price)) && Number(product.price) > 0) ? <Text style={styles.productCommerceUnavailable}>Checkout is unavailable for this item.</Text> : null}
+          {!savedLegacyProduct ? <Text style={styles.productTryOnDisclosure}>
+            Try-On shares your profile and product photos with AI providers.{' '}
+            <Text accessibilityRole="link" style={styles.aiPhotoDisclosureLink} onPress={() => openLegalPolicy('privacy')}>Privacy Policy</Text>
+          </Text> : null}
+        </View> : null}
         {tryOn?.imageUrl || tryOn?.videoUrl ? <AiPreviewNote content={reportContentReference(tryOn, 'product_tryon')} /> : null}
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
         {tryOnVideoError ? <Text style={styles.errorText}>{tryOnVideoError}</Text> : null}
       </View>
 
-      <View style={styles.productStorySection}>
+      {!savedLegacyProduct ? <View style={styles.productStorySection}>
         <Text style={styles.productStoryTitle}>Product Description</Text>
         <Text style={styles.productStoryText}>
           {product.description || 'No additional product description is available yet.'}
@@ -4753,9 +5141,9 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
             ) : null}
           </View>
         ) : null}
-      </View>
+      </View> : null}
 
-      <View style={styles.completeLookSection}>
+      {!savedLegacyProduct ? <View style={styles.completeLookSection}>
         <View style={styles.completeLookHead}>
           <Text style={styles.completeLookTitle}>Complete the Look</Text>
           <TouchableOpacity onPress={openCategory}>
@@ -4775,7 +5163,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
             );
           }) : <StatusPanel empty text={categoryPresentation.reliable ? 'No related products found yet.' : 'Related products are unavailable while this item’s category is reviewed.'} />}
         </View>
-      </View>
+      </View> : null}
       </ScrollView>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </View>
@@ -4819,9 +5207,12 @@ function AuthPasswordField({ value, onChangeText, placeholder, visible, onToggle
   );
 }
 
-function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
+function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated, onBack, onExit, registerBackHandler }) {
   const isSignup = mode === 'signup';
+  const leaveScreen = onExit || (() => onNavigate('home'));
+  const returnToPreviousScreen = onBack || leaveScreen;
   const { width, height } = useWindowDimensions();
+  const tablet = width >= 900;
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [otpSent, setOtpSent] = useState(false);
@@ -4847,7 +5238,7 @@ function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
   const authScreenPadding = clamp(width * 0.064, 20, 30);
   const titleSize = clamp(width * 0.082, 31, 38);
   const fieldHeight = clamp(height * 0.052, 54, 60);
-  const authEditorialHeight = clamp(height * 0.17, 118, 158);
+  const authEditorialHeight = tablet ? clamp(height * 0.34, 240, 360) : clamp(height * 0.17, 118, 158);
   const completingSignup = isSignup && signupStage === 'details';
   const resetOtpStage = !isSignup && resetStage === 'otp';
   const resetPasswordStage = !isSignup && resetStage === 'password';
@@ -5106,14 +5497,29 @@ function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
     setSignupStage('otp');
     clearPasswordDrafts();
     setMessage('');
-    onNavigate('home');
+    leaveScreen();
   };
 
   const leaveAuth = async (routeName) => {
     if (isSignup && otpSent) await cancelPendingOtp('signup');
     if (!isSignup && resetStage !== 'idle') await cancelPendingOtp('password-reset');
-    onNavigate(routeName);
+    if (routeName === 'home') leaveScreen();
+    else onNavigate(routeName);
   };
+
+  useEffect(() => {
+    if (!registerBackHandler) return undefined;
+    registerBackHandler(async () => {
+      if (completingSignup) {
+        await exitSignupDetails();
+        return;
+      }
+      if (isSignup && otpSent) await cancelPendingOtp('signup');
+      if (!isSignup && resetStage !== 'idle') await cancelPendingOtp('password-reset');
+      returnToPreviousScreen();
+    });
+    return () => registerBackHandler(null);
+  });
 
   const pickDetailPhoto = async () => {
     try {
@@ -5237,17 +5643,11 @@ function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
         <ScrollView
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={[styles.phoneAuthContent, { paddingHorizontal: authScreenPadding, paddingTop: clamp(height * 0.06, 46, 72) }]}
+          contentContainerStyle={[styles.phoneAuthContent, tablet && styles.phoneAuthContentTablet, { paddingHorizontal: authScreenPadding, paddingTop: clamp(height * 0.06, 46, 72) }]}
           {...screenScrollProps}
         >
-          <View style={styles.phoneAuthTopRow}>
-            <TouchableOpacity style={styles.phoneAuthClose} activeOpacity={0.78} onPress={exitSignupDetails}>
-              <Ionicons name="close" size={20} color="#2b2321" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={[styles.signupDetailsCard, Platform.OS === 'ios' && styles.iosGlassCard]}>
-            <IosGlassBackdrop />
+          <View style={[styles.signupDetailsCard, tablet && styles.signupDetailsCardTablet, styles.surfaceCard]}>
+            <SurfaceBackdrop />
             <View style={styles.phoneAuthIcon}>
               <Ionicons name="scan-outline" size={24} color="#625c56" />
             </View>
@@ -5342,6 +5742,9 @@ function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
 
             {message ? <Text style={[styles.formMessage, styles.signupMessage, /saving/i.test(message) ? styles.phoneAuthMessage : styles.errorText]}>{message}</Text> : null}
           </View>
+          <TouchableOpacity accessibilityRole="button" style={styles.phoneAuthBrowseButton} activeOpacity={0.75} onPress={exitSignupDetails}>
+            <Text style={styles.phoneAuthBrowseText}>Continue browsing products</Text>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     );
@@ -5352,16 +5755,12 @@ function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
       <ScrollView
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.phoneAuthContent, { paddingHorizontal: authScreenPadding, paddingTop: clamp(height * 0.065, 46, 70) }]}
+        contentContainerStyle={[styles.phoneAuthContent, tablet && styles.phoneAuthContentTablet, { paddingHorizontal: authScreenPadding, paddingTop: tablet ? 30 : clamp(height * 0.065, 46, 70) }]}
         {...screenScrollProps}
       >
-        <View style={styles.phoneAuthTopRow}>
-          <TouchableOpacity style={styles.phoneAuthClose} activeOpacity={0.78} onPress={() => leaveAuth('home')}>
-            <Ionicons name="close" size={20} color="#2b2321" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.phoneAuthCard}>
+        <View style={[styles.phoneAuthLayout, tablet && styles.phoneAuthLayoutTablet]}>
+        <View style={[styles.phoneAuthFormColumn, tablet && styles.phoneAuthFormColumnTablet]}>
+        <View style={[styles.phoneAuthCard, tablet && styles.phoneAuthCardTablet]}>
           <View style={styles.phoneAuthIcon}>
             <Ionicons name={authIcon} size={26} color="#9b5658" />
           </View>
@@ -5377,11 +5776,11 @@ function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
                 ref={phoneInputRef}
                 accessibilityLabel="Mobile number"
                 style={styles.loginInput}
-                defaultValue={phone}
+                value={phone}
                 onChangeText={(value) => {
                   phoneDraftRef.current = value;
+                  setPhone(value);
                 }}
-                onBlur={() => setPhone(normalizePhoneInput(phoneDraftRef.current))}
                 placeholder="Mobile number"
                 placeholderTextColor="#6f7687"
                 keyboardType="phone-pad"
@@ -5390,7 +5789,6 @@ function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
                 maxLength={16}
                 editable={!loading && !resetPasswordStage}
                 returnKeyType="next"
-                contextMenuHidden
                 selectTextOnFocus={false}
               />
             </View>
@@ -5494,8 +5892,10 @@ function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
             </TouchableOpacity>
           </View>
         </View>
+        </View>
 
-        <View style={styles.phoneAuthEditorial}>
+        <View style={[styles.phoneAuthStoryColumn, tablet && styles.phoneAuthStoryColumnTablet]}>
+        <View style={[styles.phoneAuthEditorial, tablet && styles.phoneAuthEditorialTablet]}>
           <View style={[styles.phoneAuthEditorialImageFrame, { height: authEditorialHeight }]}>
             <Image source={images.homeSliderAtelier} style={styles.phoneAuthEditorialImage} resizeMode="cover" />
             <View style={styles.phoneAuthEditorialShade} />
@@ -5515,9 +5915,11 @@ function AuthScreen({ mode, setUser, setToken, onNavigate, onAuthenticated }) {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.phoneAuthBrowseButton} activeOpacity={0.75} onPress={() => leaveAuth('home')}>
+        <TouchableOpacity accessibilityRole="button" style={styles.phoneAuthBrowseButton} activeOpacity={0.75} onPress={() => leaveAuth('home')}>
           <Text style={styles.phoneAuthBrowseText}>Continue browsing products</Text>
         </TouchableOpacity>
+        </View>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -5602,7 +6004,8 @@ function AuthEntryScreen({ onNavigate }) {
   );
 }
 
-const closetCategories = ['tops', 'bottoms', 'dresses', 'suits', 'outerwear', 'shoes', 'accessories', 'activewear', 'ethnic', 'other'];
+const closetCategories = ['tops', 'bottoms', 'dresses', 'suits', 'full-outfit', 'outerwear', 'shoes', 'accessories', 'activewear', 'ethnic', 'other'];
+const closetCategoryLabel = (category) => category === 'full-outfit' ? 'Full Outfit' : titleCase(category || '');
 const closetViews = ['stylist', 'combo', 'add', 'wardrobe', 'looks'];
 const closetOccasions = ['today casual', 'office meeting', 'date night', 'party', 'wedding function', 'college day', 'travel', 'rainy weather'];
 const closetSceneOptions = {
@@ -5611,7 +6014,7 @@ const closetSceneOptions = {
   lighting: ['natural light', 'studio softbox', 'evening warm', 'bright daylight']
 };
 const closetComboSlots = [
-  { key: 'topwear', label: 'Topwear', helper: 'Shirts, tops, kurtas', short: 'To', categories: ['tops', 'dresses', 'suits', 'outerwear', 'activewear', 'ethnic'] },
+  { key: 'topwear', label: 'Topwear', helper: 'Shirts, tops, kurtas', short: 'To', categories: ['tops', 'dresses', 'suits', 'full-outfit', 'outerwear', 'activewear', 'ethnic'] },
   { key: 'bottomwear', label: 'Bottomwear', helper: 'Pants, denim, skirts', short: 'Bo', categories: ['bottoms'] },
   { key: 'goggles', label: 'Goggles', helper: 'Glasses and shades', short: 'Go', categories: ['accessories'], keywords: ['goggle', 'goggles', 'glass', 'glasses', 'sunglass', 'eyewear'] },
   { key: 'watch', label: 'Watch', helper: 'Watches and wristwear', short: 'Wa', categories: ['accessories'], keywords: ['watch', 'watches', 'wristwatch', 'wristwear'] },
@@ -5624,10 +6027,47 @@ const wardrobeCategoryTabs = [
   { key: 'outerwear', label: 'Outerwear', icon: 'body-outline', slot: 'topwear', side: 'left' },
   { key: 'shoes', label: 'Footwear', icon: 'shoe', slot: 'footwear', side: 'left' },
   { key: 'accessories', label: 'Accessories', icon: 'sparkles-outline', slot: 'goggles', side: 'right', filter: 'accessories' },
-  { key: 'glasses', label: 'Glasses', icon: 'glasses-outline', slot: 'goggles', side: 'right', filter: 'accessories' },
+  { key: 'full-outfit', label: 'Full Outfit', icon: 'layers-outline', slot: 'topwear', side: 'right', filter: 'all' },
   { key: 'watches', label: 'Watches', icon: 'watch-outline', slot: 'watch', side: 'right', filter: 'accessories' },
   { key: 'bags-hats', label: 'Bags & Hats', icon: 'bag-handle-outline', slot: 'cap', side: 'right', filter: 'accessories' }
 ];
+function wardrobeStoredCategoryForTab(tabKey) {
+  if (tabKey === 'watches' || tabKey === 'bags-hats') return 'accessories';
+  return tabKey;
+}
+
+function wardrobeTabKeyForItem(item = {}) {
+  if (!item.category) return '';
+  if (item.category === 'accessories') {
+    if (wardrobeTabMatchesItem(wardrobeCategoryTabs.find((tab) => tab.key === 'watches'), item)) return 'watches';
+    if (wardrobeTabMatchesItem(wardrobeCategoryTabs.find((tab) => tab.key === 'bags-hats'), item)) return 'bags-hats';
+    return 'accessories';
+  }
+  if (['dresses', 'suits', 'full-outfit'].includes(item.category)) return 'full-outfit';
+  if (['ethnic', 'activewear'].includes(item.category)) {
+    return wardrobeTabMatchesItem(wardrobeCategoryTabs.find((tab) => tab.key === 'full-outfit'), item) ? 'full-outfit' : 'tops';
+  }
+  return wardrobeCategoryTabs.some((tab) => tab.key === item.category) ? item.category : '';
+}
+
+function wardrobeTypeFromItemDetails(fields = {}) {
+  const categoryType = wardrobeTabKeyForItem(fields);
+  if (categoryType) return categoryType;
+  const name = String(fields.name || '').toLowerCase();
+  if (/\b(dress(?:es)?|gowns?|frocks?|jumpsuits?|rompers?)\b/.test(name)) return 'full-outfit';
+  if (/\b(watches?|wristwatches?)\b/.test(name)) return 'watches';
+  if (/\b(bags?|handbags?|purses?|caps?|hats?)\b/.test(name)) return 'bags-hats';
+  if (/\b(shoes?|sneakers?|boots?|heels?|sandals?|slippers?)\b/.test(name)) return 'shoes';
+  if (/\b(pants?|trousers?|jeans?|skirts?|leggings?|shorts?)\b/.test(name)) return 'bottoms';
+  if (/\b(jackets?|coats?|cardigans?|shrugs?)\b/.test(name)) return 'outerwear';
+  if (/\b(shirts?|t-?shirts?|tees?|tops?|blouses?|kurtis?|hoodies?|sweaters?)\b/.test(name)) return 'tops';
+  return '';
+}
+
+function wardrobeTypeTag(tabKey) {
+  if (tabKey === 'watches' || tabKey === 'bags-hats') return `wardrobe:${tabKey}`;
+  return '';
+}
 const wardrobeFallbackRecommendations = [
   { title: 'Urban Sophisticate', images: ['trending-2.jpg', 'category-3.jpg', 'category-6.jpg'] },
   { title: 'Neutral Casual', images: ['arrival-1.jpg', 'arrival-2.jpg', 'category-8.jpg'] },
@@ -5654,7 +6094,7 @@ function buildLocalWardrobeSuggestions(entries = [], occasion = 'today casual', 
   if (!wardrobeItems.length) return [];
 
   const tops = wardrobeItems.filter((item) => ['tops', 'outerwear', 'activewear', 'ethnic'].includes(item.category));
-  const statementPieces = wardrobeItems.filter((item) => ['dresses', 'suits'].includes(item.category));
+  const statementPieces = wardrobeItems.filter((item) => ['dresses', 'suits', 'full-outfit'].includes(item.category));
   const bottoms = wardrobeItems.filter((item) => item.category === 'bottoms');
   const shoes = wardrobeItems.filter((item) => item.category === 'shoes');
   const accessories = wardrobeItems.filter((item) => item.category === 'accessories');
@@ -5757,6 +6197,7 @@ function optionsForSlot(slot, items) {
 }
 
 function wardrobeUploadCategory(tab) {
+  if (tab?.key === 'full-outfit') return 'all';
   const category = tab?.filter || tab?.key || 'tops';
   return closetCategories.includes(category) ? category : 'accessories';
 }
@@ -5773,7 +6214,10 @@ function wardrobeTabMatchesItem(tab, item = {}) {
   const category = wardrobeUploadCategory(tab);
   if (category !== 'all' && item.category !== category) return false;
   const text = wardrobeTabItemText(item);
-  if (tab.key === 'glasses') return /\b(glasses?|goggles?|sunglasses?|eyewear|spectacles?)\b/.test(text);
+  if (tab.key === 'full-outfit') return ['dresses', 'suits', 'full-outfit'].includes(item.category) || /\b(jumpsuits?|rompers?|gowns?|sarees?|saris?|lehengas?|sherwanis?|co[-\s]?ords?|matching sets?|kurta sets?|outfits?)\b/.test(text);
+  const explicitAccessoryType = (Array.isArray(item.tags) ? item.tags : []).find((tag) => /^wardrobe:(watches|bags-hats)$/.test(String(tag || '').toLowerCase()))?.slice('wardrobe:'.length);
+  if (tab.key === 'accessories' && explicitAccessoryType) return false;
+  if (explicitAccessoryType && (tab.key === 'watches' || tab.key === 'bags-hats')) return explicitAccessoryType === tab.key;
   if (tab.key === 'watches') return /\b(watches?|wrist\s*watches?|wristwatch|wristwear)\b/.test(text);
   if (tab.key === 'bags-hats') return /\b(bags?|purses?|handbags?|caps?|hats?)\b/.test(text);
   return true;
@@ -5781,7 +6225,7 @@ function wardrobeTabMatchesItem(tab, item = {}) {
 
 function isSupportedWardrobeLookItem(item = {}) {
   const category = String(item.category || '').toLowerCase();
-  if (['tops', 'bottoms', 'dresses', 'suits', 'outerwear', 'shoes', 'accessories', 'activewear', 'ethnic'].includes(category)) return true;
+  if (['tops', 'bottoms', 'dresses', 'suits', 'full-outfit', 'outerwear', 'shoes', 'accessories', 'activewear', 'ethnic'].includes(category)) return true;
   return /\b(dress|gown|jumpsuit|romper|saree|sari|lehenga|sherwani|kurta set|co-ord|coord|one[-\s]?piece|shirt|top|pants|jeans|shoe|sneaker|watch|glasses|bag|hat)\b/i.test(wardrobeTabItemText(item));
 }
 
@@ -5817,7 +6261,7 @@ function wardrobeTryOnSlotForItem(item = {}) {
   if (category === 'shoes') return 'footwear';
   if (category === 'bottoms') return 'bottomwear';
   if (category === 'outerwear') return 'outerwear';
-  if (category === 'dresses' || category === 'suits') return category;
+  if (category === 'dresses' || category === 'suits' || category === 'full-outfit') return category;
   if (['tops', 'activewear', 'ethnic'].includes(category)) return 'topwear';
   if (category === 'accessories') {
     if (/\b(watches?|wrist\s*watches?|wristwear)\b/.test(text)) return 'watch';
@@ -5844,22 +6288,6 @@ function wardrobeGarmentForTryOn(items, itemId, user) {
   const itemOwner = item.userId || item.ownerId;
   if (itemOwner && String(itemOwner) !== owner) return null;
   return { uri: imageUrl(item.imageUrl), wardrobeItemId: item.id, ownerId: owner };
-}
-
-function closetCategoryEntryLabel(category) {
-  const labels = {
-    accessories: 'Accessory',
-    shoes: 'Shoe',
-    bottoms: 'Bottom',
-    dresses: 'Dress',
-    suits: 'Suit',
-    tops: 'Top',
-    outerwear: 'Outerwear',
-    activewear: 'Activewear',
-    ethnic: 'Ethnic',
-    other: 'Item'
-  };
-  return labels[category] || titleCase(category || 'Item');
 }
 
 function ClosetDetectionCard({ detection, fields, compact = false }) {
@@ -5896,24 +6324,43 @@ function ClosetDetectionCard({ detection, fields, compact = false }) {
 
 function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, initial = {}, registerTourTarget, tourFocusRequest }) {
   const { height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
+  const [wardrobeMeasurements, setWardrobeMeasurements] = useState({ viewport: 0, header: 0, controls: 0 });
+  const measureWardrobePart = useCallback((part, value) => {
+    const rounded = Math.round(value);
+    setWardrobeMeasurements((current) => current[part] === rounded ? current : { ...current, [part]: rounded });
+  }, []);
   const addStudioScrollRef = useRef(null);
+  const wardrobeScrollRef = useRef(null);
   const emptyCloset = { items: [], outfits: [], suggestions: [], stats: {} };
   const closet = useApiState('/closet', token, Boolean(user), emptyCloset);
-  const initialItemCategory = closetCategories.includes(initial.category) ? initial.category : initial.view === 'add' ? 'dresses' : 'tops';
+  const initialItemCategory = closetCategories.includes(initial.category)
+    ? initial.category
+    : wardrobeCategoryTabs.some((tab) => tab.key === initial.type) ? wardrobeStoredCategoryForTab(initial.type) : '';
+  const initialWardrobeType = wardrobeCategoryTabs.some((tab) => tab.key === initial.type)
+    ? initial.type
+    : wardrobeTabKeyForItem({ category: initialItemCategory });
   const [closetView, setClosetView] = useState(initial.view === 'add' ? 'add' : 'stylist');
   const [selectedIds, setSelectedIds] = useState([]);
   const [comboSlots, setComboSlots] = useState({});
+  const [wardrobePreviewSelections, setWardrobePreviewSelections] = useState(() => initial.selectedCategoryKey && initial.selectedItemId
+    ? { [initial.selectedCategoryKey]: initial.selectedItemId }
+    : {});
+  const [wardrobePickerTab, setWardrobePickerTab] = useState(null);
   const [activeSlot, setActiveSlot] = useState('topwear');
   const [filter, setFilter] = useState('all');
   const [activeWardrobeTabKey, setActiveWardrobeTabKey] = useState('');
   const [itemPhoto, setItemPhoto] = useState(null);
   const [itemName, setItemName] = useState('');
   const [itemCategory, setItemCategory] = useState(initialItemCategory);
+  const [itemWardrobeType, setItemWardrobeType] = useState(initialWardrobeType);
+  const itemTypeChosenManuallyRef = useRef(Boolean(initial.type));
+  const [itemCategoryPickerOpen, setItemCategoryPickerOpen] = useState(false);
   const [itemColor, setItemColor] = useState('');
   const [itemFabric, setItemFabric] = useState('');
   const [itemPattern, setItemPattern] = useState('');
-  const [itemSeason, setItemSeason] = useState(initial.view === 'add' ? 'summer' : 'all-season');
+  const [itemSeason, setItemSeason] = useState('all-season');
   const [itemFormality, setItemFormality] = useState('any');
   const [itemOccasions, setItemOccasions] = useState('');
   const [itemTags, setItemTags] = useState('');
@@ -5934,18 +6381,24 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
   const [lightbox, setLightbox] = useState(null);
+  const [generatedWardrobeOutfit, setGeneratedWardrobeOutfit] = useState(null);
   const wardrobeUploadTourTarget = useTourTarget('wardrobe-upload', registerTourTarget, { request: tourFocusRequest, scrollRef: addStudioScrollRef, scrollOffset: 116 });
 
   useEffect(() => {
-    if (closetViews.includes(initial.view)) setClosetView(initial.view);
+    if (initial.view === 'wardrobe') setClosetView('stylist');
+    else if (closetViews.includes(initial.view)) setClosetView(initial.view);
     else setClosetView('stylist');
     if (!initial.view || initial.view === 'wardrobe') {
       setSelectedIds([]);
       setComboSlots({});
     }
-    if (closetCategories.includes(initial.category)) {
-      setFilter(initial.category);
-      setItemCategory(initial.category);
+    const validType = wardrobeCategoryTabs.some((tab) => tab.key === initial.type) ? initial.type : '';
+    const validCategory = closetCategories.includes(initial.category) ? initial.category : '';
+    if (validCategory) setFilter(validCategory);
+    if (initial.view === 'add') {
+      itemTypeChosenManuallyRef.current = Boolean(validType);
+      setItemCategory(validCategory || (validType ? wardrobeStoredCategoryForTab(validType) : ''));
+      setItemWardrobeType(validType || wardrobeTabKeyForItem({ category: validCategory }));
     }
     if (initial.type && wardrobeCategoryTabs.some((tab) => tab.key === initial.type)) {
       setActiveWardrobeTabKey(initial.type);
@@ -5973,10 +6426,12 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
     if (filter !== 'all' && item.category !== filter) return false;
     return wardrobeTabMatchesItem(activeWardrobeTab, item);
   });
-  const activeAddSectionItems = items.filter((item) => item.category === itemCategory).slice(0, 8);
+  const activeAddTab = wardrobeCategoryTabs.find((tab) => tab.key === itemWardrobeType);
+  const addItemTypeLabel = activeAddTab?.label || 'Clothing';
+  const activeAddSectionItems = activeAddTab ? items.filter((item) => wardrobeTabMatchesItem(activeAddTab, item)).slice(0, 8) : [];
   const selectedKey = selectedIds.slice().sort().join(':');
   const comboPreviewItems = (selectedItems.length ? selectedItems : items.filter((item) => ['tops', 'bottoms', 'suits', 'outerwear', 'shoes'].includes(item.category))).slice(0, 4);
-  const mainPreview = user.bodyPhotoUrl || latestOutfit?.imageUrl || comboPreviewItems[0]?.imageUrl || null;
+  const mainPreview = generatedWardrobeOutfit?.imageUrl || user.bodyPhotoUrl || latestOutfit?.imageUrl || null;
   const lookbookCards = outfits.length
     ? outfits.slice(0, 5).map((outfit) => ({ id: outfit.id, title: outfit.title, imageUrl: outfit.imageUrl, items: outfit.items || [] }))
     : suggestions.slice(0, 5).map((suggestion, index) => ({ id: suggestion.key || `${suggestion.title}-${index}`, title: suggestion.title, items: suggestion.items || [] }));
@@ -6026,15 +6481,19 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
     : null;
   const wardrobeLeftCategoryTabs = wardrobeCategoryTabs.filter((tab) => tab.side !== 'right');
   const wardrobeRightCategoryTabs = wardrobeCategoryTabs.filter((tab) => tab.side === 'right');
+  const wardrobePickerItems = wardrobePickerTab ? items.filter((item) => wardrobeTabMatchesItem(wardrobePickerTab, item)) : [];
   const wardrobeFilterLabel = activeWardrobeTab?.label || (filter === 'all' ? 'All Items' : titleCase(filter));
   const wardrobeFilterTitle = filter === 'all' && !activeWardrobeTab ? 'Your Closet' : `${wardrobeFilterLabel} Entries`;
   const comboSlotSelectedIds = selectedIdsFromComboSlots(comboSlots);
-  const tryThisSelections = tryOnSelectionsFromWardrobe(slotItems, comboPreviewItems);
-  const tryThisLookIds = tryThisSelections.map((selection) => selection.item.id).filter(Boolean);
-  const tryThisItemSlots = tryThisSelections.map((selection) => ({
-    slot: selection.slot,
-    label: selection.label,
-    itemId: selection.item.id
+  const tryThisSelections = wardrobeCategoryTabs.map((tab) => {
+    const item = items.find((entry) => entry.id === wardrobePreviewSelections[tab.key]);
+    return item && wardrobeTabMatchesItem(tab, item) ? { tab, item } : null;
+  }).filter(Boolean).filter((selection, index, selections) => selections.findIndex((entry) => entry.item.id === selection.item.id) === index);
+  const tryThisLookIds = tryThisSelections.map(({ item }) => item.id);
+  const tryThisItemSlots = tryThisSelections.map(({ tab, item }) => ({
+    slot: wardrobeTryOnSlotForItem(item),
+    label: tab.label,
+    itemId: item.id
   }));
   const selectedWardrobeEntries = selectedIds.map((id) => items.find((item) => item.id === id)).filter(Boolean);
   const selectedWardrobeHasSupportedItem = hasSupportedWardrobeLookItem(selectedWardrobeEntries);
@@ -6044,18 +6503,25 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
     : '';
   const compactWardrobePreview = height < 640 || layout.windowWidth < 350;
   const wardrobeStudioImageHeight = Math.max(1, layout.windowWidth - 36) * 1.5;
-  const wardrobePreviewHeight = compactWardrobePreview
-    ? clamp(wardrobeStudioImageHeight, 390, 450)
-    : clamp(wardrobeStudioImageHeight, 480, 590);
+  const wardrobeTabletSideWidth = 120;
+  const wardrobeBasePreviewHeight = layout.isTablet
+    ? clamp(Math.round(Math.min(height - 290, (layout.contentWidth - wardrobeTabletSideWidth * 2) / 0.67)), 600, 980)
+    : compactWardrobePreview
+      ? clamp(wardrobeStudioImageHeight, 390, 450)
+      : clamp(Math.min((layout.windowWidth - 66) / 0.7, height - 390), 360, 560);
+  const wardrobeBottomClearance = 66 + (Platform.OS === 'ios' ? Math.max(insets.bottom - 10, 10) : Math.max(insets.bottom, 10)) + 16;
+  const wardrobePreviewHeight = !layout.isTablet && wardrobeMeasurements.viewport && wardrobeMeasurements.header && wardrobeMeasurements.controls
+    ? Math.max(wardrobeBasePreviewHeight, wardrobeMeasurements.viewport - wardrobeMeasurements.header - wardrobeMeasurements.controls - 12 - wardrobeBottomClearance - (generatedWardrobeOutfit?.imageUrl ? 32 : 0))
+    : wardrobeBasePreviewHeight;
+  const wardrobePhonePhotoWidth = Math.min(layout.windowWidth - 36, Math.round(wardrobeBasePreviewHeight * 0.7));
+  const wardrobeTabletPhotoWidth = layout.isTablet
+    ? Math.max(280, Math.min(Math.round(wardrobePreviewHeight * 0.67), layout.contentWidth - wardrobeTabletSideWidth * 2, 700))
+    : null;
   const recommendationSource = suggestions.slice(0, 3);
   const detectionSummaryFields = [
     ['Name', itemName],
-    ['Type', titleCase(itemCategory || '')],
-    ['Color', itemColor],
-    ['Fabric', itemFabric],
-    ['Pattern', itemPattern],
-    ['Occasion', itemOccasions],
-    ['Tags', itemTags]
+    ['Type', activeAddTab?.label || ''],
+    ['Color', itemColor]
   ].filter(([, value]) => String(value || '').trim());
 
   const toggleItem = (id) => {
@@ -6113,15 +6579,19 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
   };
 
   const openWardrobeCategory = (tab) => {
-    const category = wardrobeUploadCategory(tab);
-    setActiveSlot(tab.slot);
-    setFilter(category);
-    setActiveWardrobeTabKey(tab.key);
-    setItemCategory(category);
-    setSelectedIds([]);
-    setComboSlots({});
-    setClosetView('wardrobe');
-    onNavigate('closet', { view: 'wardrobe', category, type: tab.key });
+    setWardrobePickerTab(tab);
+  };
+
+  const chooseWardrobePreviewItem = (item) => {
+    if (!wardrobePickerTab) return;
+    setWardrobePreviewSelections((current) => {
+      const next = { ...current };
+      if (next[wardrobePickerTab.key] === item.id) delete next[wardrobePickerTab.key];
+      else next[wardrobePickerTab.key] = item.id;
+      return next;
+    });
+    setGeneratedWardrobeOutfit(null);
+    setWardrobePickerTab(null);
   };
 
   const switchClosetView = (nextView) => {
@@ -6129,22 +6599,29 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
       setSelectedIds([]);
       setComboSlots({});
     }
-    setClosetView(nextView);
+    setClosetView(nextView === 'wardrobe' ? 'stylist' : nextView);
   };
 
+  const tabletWardrobeEmpty = layout.isTablet && closetView === 'wardrobe' && !closet.loading && !closet.error && !items.length;
+
   const openSavedAddSectionItem = (item) => {
-    const slot = closetComboSlots.find((entry) => slotMatchesItem(entry, item));
-    if (slot) chooseSlotItem(slot.key, item);
-    setFilter(item.category);
-    setActiveWardrobeTabKey('');
-    setClosetView('wardrobe');
-    onNavigate('closet', { view: 'wardrobe', category: item.category });
+    const tab = wardrobeCategoryTabs.find((entry) => entry.key === wardrobeTabKeyForItem(item));
+    if (tab) setWardrobePreviewSelections((current) => ({ ...current, [tab.key]: item.id }));
+    setGeneratedWardrobeOutfit(null);
+    setClosetView('stylist');
+    onNavigate('closet', { view: 'stylist', selectedCategoryKey: tab?.key, selectedItemId: item.id });
   };
 
   const applyDetectedItemFields = (fields = {}) => {
     const nextCategory = closetCategories.includes(fields.category) && fields.category !== 'other' ? fields.category : '';
     if (fields.name) setItemName(fields.name);
-    if (nextCategory) setItemCategory(nextCategory);
+    if (!itemTypeChosenManuallyRef.current) {
+      const detectedType = wardrobeTypeFromItemDetails(fields);
+      if (detectedType) {
+        setItemCategory(nextCategory || wardrobeStoredCategoryForTab(detectedType));
+        setItemWardrobeType(detectedType);
+      }
+    }
     if (fields.color) setItemColor(fields.color);
     if (fields.fabric) setItemFabric(fields.fabric);
     if (fields.pattern) setItemPattern(fields.pattern);
@@ -6160,7 +6637,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
     const asset = await pickImage();
     if (!asset?.uri) return;
     setItemPhoto(asset);
-    setItemDetection({ status: 'loading', message: 'Reading item type, color, material, pattern, and tags.' });
+    setItemDetection({ status: 'loading', message: 'Reading item details.' });
     setBusy('analyze-item');
     setMessage('Analyzing clothing photo...');
     try {
@@ -6170,14 +6647,16 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
       form.append('tags', itemTags);
       const data = await api('/closet/items/analyze', { method: 'POST', body: form, timeoutMs: 45000 });
       const detection = data.detection || {};
-      applyDetectedItemFields(detection.fields || {});
+      const fields = data.details || detection.fields || {};
+      const visualProfile = data.visualProfile || {};
+      applyDetectedItemFields(fields);
       setItemDetection({
         status: 'ready',
-        source: detection.source || 'basic',
-        confidence: detection.confidence,
-        message: detection.message || 'Review and edit before saving.'
+        source: visualProfile.source || detection.source || 'basic',
+        confidence: visualProfile.confidence ?? detection.confidence,
+        message: detection.message || 'Review the item name, type, and color before saving.'
       });
-      setMessage(detection.message || 'Detected details added. Review and edit before saving.');
+      setMessage(detection.message || 'Item details added. Review the name, type, and color before saving.');
     } catch (error) {
       const missingRoute = isMissingRouteError(error.message);
       const detectionMessage = missingRoute
@@ -6191,11 +6670,6 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
     } finally {
       setBusy('');
     }
-  };
-
-  const clearItemPhoto = () => {
-    setItemPhoto(null);
-    setItemDetection(null);
   };
 
   const swapSelected = (item) => {
@@ -6239,23 +6713,27 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
       setMessage('Upload a closet item photo first.');
       return;
     }
+    if (!itemWardrobeType) {
+      setMessage('Choose a clothing type before saving.');
+      return;
+    }
     setBusy('add');
     setMessage('Saving closet item...');
     try {
       const form = new FormData();
       form.append('item', filePart(itemPhoto, 'closet-item.jpg'));
       form.append('name', itemName || itemPhoto.fileName || 'Closet item');
-      form.append('category', itemCategory);
+      form.append('category', wardrobeStoredCategoryForTab(itemWardrobeType));
       form.append('color', itemColor);
       form.append('fabric', itemFabric);
       form.append('pattern', itemPattern);
       form.append('season', itemSeason);
       form.append('formality', itemFormality);
       form.append('occasions', itemOccasions);
-      form.append('tags', itemTags);
+      form.append('tags', [itemTags, wardrobeTypeTag(itemWardrobeType)].filter(Boolean).join(', '));
       const data = await api('/closet/items', { method: 'POST', body: form });
       const savedItem = data.item;
-      const savedCategory = savedItem?.category || itemCategory;
+      const savedCategory = savedItem?.category || wardrobeStoredCategoryForTab(itemWardrobeType);
       setSuggestionOverrides(null);
       setItemPhoto(null);
       setItemDetection(null);
@@ -6271,10 +6749,14 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
       setComboSlots({});
       setSelectedIds([]);
       setFilter(savedCategory);
-      setClosetView('wardrobe');
-      setMessage(`${savedItem?.name || 'Closet item'} added to ${titleCase(savedCategory)}.`);
+      const savedTab = wardrobeCategoryTabs.find((entry) => entry.key === itemWardrobeType)
+        || wardrobeCategoryTabs.find((entry) => savedItem && wardrobeTabMatchesItem(entry, savedItem));
+      if (savedTab) setWardrobePreviewSelections((current) => ({ ...current, [savedTab.key]: savedItem.id }));
+      setGeneratedWardrobeOutfit(null);
+      setClosetView('stylist');
+      setMessage(`${savedItem?.name || 'Closet item'} added to ${closetCategoryLabel(savedCategory)}.`);
       closet.reload();
-      onNavigate('closet', { view: 'wardrobe', category: savedCategory });
+      onNavigate('closet', { view: 'stylist', selectedCategoryKey: savedTab?.key, selectedItemId: savedItem?.id });
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -6322,6 +6804,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
       if (data.user) setUser(data.user);
       setSuggestionOverrides(null);
       setMessage('Closet look is ready.');
+      setGeneratedWardrobeOutfit(data.outfit);
       if (details.clearSelectionAfterGenerate) {
         setSelectedIds([]);
         setComboSlots({});
@@ -6329,7 +6812,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
         setSelectedIds(ids);
       }
       closet.reload();
-      if (data.outfit?.imageUrl) setLightbox(imageUrl(data.outfit.imageUrl));
+      if (!details.showInWardrobe && data.outfit?.imageUrl) setLightbox(imageUrl(data.outfit.imageUrl));
     } catch (error) {
       setMessage(aiFeatureErrorMessage(error, 'Could not generate the closet look. Try again in a moment.'));
     } finally {
@@ -6348,24 +6831,12 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
       setMessage('Select a clothing, footwear, or accessory item before generating a look.');
       return;
     }
-    setComboSlots({});
-    setSelectedIds([]);
-    setClosetView('stylist');
-    onNavigate('closet', { view: 'stylist' });
     generateOutfit(ids, {
       title: 'My wardrobe look',
       itemSlots: wardrobeItemSlotsFromItems(entries),
-      clearSelectionAfterGenerate: true
+      clearSelectionAfterGenerate: true,
+      showInWardrobe: true
     });
-  };
-
-  const openWardrobeTryOn = (ids) => {
-    const garment = ids.length === 1 ? wardrobeGarmentForTryOn(items, ids[0], user) : null;
-    if (!garment) {
-      setMessage('Select an available wardrobe garment first.');
-      return;
-    }
-    onNavigate('tryon', { wardrobeItemId: garment.wardrobeItemId });
   };
 
   const askForSuggestions = async (nextOccasion = occasion) => {
@@ -6429,6 +6900,12 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
     }
   };
 
+  const leaveAddStudio = () => {
+    Keyboard.dismiss();
+    if (onBack) onBack();
+    else onNavigate('closet', { view: 'stylist' });
+  };
+
   const discardAddDraft = () => {
     setItemPhoto(null);
     setItemDetection(null);
@@ -6441,38 +6918,34 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
     setItemOccasions('');
     setItemTags('');
     setMessage('');
-    onNavigate('closet');
-  };
-
-  const cycleItemCategory = () => {
-    const order = ['dresses', 'tops', 'bottoms', 'outerwear', 'shoes', 'accessories'];
-    const currentIndex = order.indexOf(itemCategory);
-    setItemCategory(order[(currentIndex + 1) % order.length]);
+    leaveAddStudio();
   };
 
   const renderWardrobeCategoryButton = (tab) => {
-    const selected = activeWardrobeTabKey === tab.key;
+    const selectedItem = items.find((item) => item.id === wardrobePreviewSelections[tab.key]);
+    const selected = Boolean(selectedItem);
     const renderCategoryIcon = () => {
-      if (tab.icon === 'pants') return <Image source={wardrobeBottomsIcon} style={styles.wardrobeCategoryAssetIcon} resizeMode="contain" />;
-      if (tab.icon === 'shoe') return <Image source={wardrobeFootwearIcon} style={styles.wardrobeCategoryAssetIcon} resizeMode="contain" />;
-      return <Ionicons name={tab.icon} size={22} color={selected ? '#211f1d' : '#514b47'} />;
+      if (tab.icon === 'pants') return <Image source={wardrobeBottomsIcon} style={[styles.wardrobeCategoryAssetIcon, layout.isTablet && styles.wardrobeCategoryAssetIconTablet]} resizeMode="contain" />;
+      if (tab.icon === 'shoe') return <Image source={wardrobeFootwearIcon} style={[styles.wardrobeCategoryAssetIcon, layout.isTablet && styles.wardrobeCategoryAssetIconTablet]} resizeMode="contain" />;
+      return <Ionicons name={tab.icon} size={layout.isTablet ? 28 : 22} color="#514b47" />;
     };
     return (
       <Pressable
         key={tab.key}
         accessibilityRole="button"
-        accessibilityLabel={`Open ${tab.label} in your wardrobe`}
+        accessibilityLabel={selectedItem ? `${tab.label}: ${selectedItem.name || 'selected item'}. Change selection` : `Choose ${tab.label} from your wardrobe`}
         accessibilityState={{ selected }}
-        style={[styles.wardrobeCategoryButton, compactWardrobePreview && styles.wardrobeCategoryButtonCompact]}
+        style={[styles.wardrobeCategoryButton, compactWardrobePreview && styles.wardrobeCategoryButtonCompact, layout.isTablet && styles.wardrobeCategoryButtonTablet]}
         onPress={() => openWardrobeCategory(tab)}
       >
         {({ pressed }) => (
           <>
-            <View style={[styles.wardrobeCategoryIcon, compactWardrobePreview && styles.wardrobeCategoryIconCompact, selected && styles.wardrobeCategoryIconSelected, pressed && styles.wardrobeCategoryIconPressed]}>
-              {renderCategoryIcon()}
+            <View style={[styles.wardrobeCategoryIcon, compactWardrobePreview && styles.wardrobeCategoryIconCompact, layout.isTablet && styles.wardrobeCategoryIconTablet, selected && styles.wardrobeCategoryIconSelected, selected && layout.isTablet && styles.wardrobeCategoryIconSelectedTablet, pressed && styles.wardrobeCategoryIconPressed]}>
+              {selectedItem?.imageUrl ? <ResilientImage source={{ uri: imageUrl(selectedItem.imageUrl) }} style={styles.wardrobeCategorySelectedImage} resizeMode="contain" fallbackIcon="shirt-outline" /> : renderCategoryIcon()}
+              {selected ? <View pointerEvents="none" style={styles.wardrobeCategorySelectedBadge}><Ionicons name="checkmark" size={layout.isTablet ? 12 : 10} color="#ffffff" /></View> : null}
             </View>
             <Text
-              style={[styles.wardrobeCategoryLabel, compactWardrobePreview && styles.wardrobeCategoryLabelCompact, selected && styles.wardrobeCategoryLabelSelected]}
+              style={[styles.wardrobeCategoryLabel, compactWardrobePreview && styles.wardrobeCategoryLabelCompact, layout.isTablet && styles.wardrobeCategoryLabelTablet, selected && styles.wardrobeCategoryLabelSelected]}
               numberOfLines={2}
               maxFontSizeMultiplier={1.2}
             >
@@ -6485,26 +6958,44 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
   };
 
   if (isAddStudio) {
+    const addStudioFooter = (
+      <View style={[styles.addStudioFooter, layout.isTablet && styles.addStudioFooterTablet]}>
+        <TouchableOpacity style={styles.addStudioDiscardButton} onPress={discardAddDraft}>
+          <Text style={styles.addStudioDiscardText}>DISCARD DRAFT</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.addStudioSaveButton, (busy === 'add' || busy === 'analyze-item') && styles.disabledButton]} disabled={busy === 'add' || busy === 'analyze-item'} onPress={addItem}>
+          <Text style={styles.addStudioSaveText}>{busy === 'analyze-item' ? 'ANALYZING...' : busy === 'add' ? 'SAVING...' : 'SAVE CLOTHING\nITEM'}</Text>
+        </TouchableOpacity>
+      </View>
+    );
     return (
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.addStudioScreen}>
-        <ScrollView ref={addStudioScrollRef} contentContainerStyle={styles.addStudioContent} {...screenScrollProps}>
+        <ScrollView ref={addStudioScrollRef} style={styles.flex} contentContainerStyle={[styles.addStudioContent, layout.isTablet && styles.addStudioContentTablet]} {...screenScrollProps}>
           <WardrobeTopBar user={user} onNavigate={onNavigate} />
 
-          <View style={[styles.wardrobeHeroHead, compactWardrobePreview && styles.wardrobeHeroHeadCompact]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Back to previous page" disabled={busy === 'add'} style={[styles.addStudioBackButton, layout.isTablet && styles.addStudioBackButtonTablet, busy === 'add' && styles.disabledButton]} onPress={discardAddDraft}>
+            <Ionicons name="chevron-back" size={20} color="#211f1d" />
+            <Text style={styles.addStudioBackText}>Back</Text>
+          </Pressable>
+
+          <View style={[styles.wardrobeHeroHead, styles.addStudioHeroHead, compactWardrobePreview && styles.wardrobeHeroHeadCompact, layout.isTablet && styles.addStudioHeaderTablet]}>
             <View style={styles.wardrobeHeroCopy}>
-              <Text style={[styles.wardrobeTitle, compactWardrobePreview && styles.wardrobeTitleCompact]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.88} maxFontSizeMultiplier={1.1}>My Wardrobe</Text>
+              <Text style={[styles.wardrobeTitle, compactWardrobePreview && styles.wardrobeTitleCompact]} numberOfLines={1} adjustsFontSizeToFit={Platform.OS === 'ios'} minimumFontScale={0.88} maxFontSizeMultiplier={1.1}>My Wardrobe</Text>
               <Text style={[styles.wardrobeSubtitle, compactWardrobePreview && styles.wardrobeSubtitleCompact]} numberOfLines={2} maxFontSizeMultiplier={1.15}>Your personal style collection</Text>
             </View>
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add wardrobe item" style={[styles.wardrobeAddButton, compactWardrobePreview && styles.wardrobeAddButtonCompact]} activeOpacity={0.85} onPress={pickClosetItemPhoto}>
+            {!layout.isTablet ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add wardrobe item" style={[styles.wardrobeAddButton, compactWardrobePreview && styles.wardrobeAddButtonCompact]} activeOpacity={0.85} onPress={pickClosetItemPhoto}>
               <Ionicons name="add" size={compactWardrobePreview ? 20 : 22} color="#ffffff" />
               <Text style={[styles.wardrobeAddText, compactWardrobePreview && styles.wardrobeAddTextCompact]} numberOfLines={1} maxFontSizeMultiplier={1.15}>Add Item</Text>
-            </TouchableOpacity>
+            </TouchableOpacity> : null}
           </View>
 
-          <TouchableOpacity ref={wardrobeUploadTourTarget.ref} onLayout={wardrobeUploadTourTarget.onLayout} style={styles.addStudioUploadBox} activeOpacity={0.84} onPress={pickClosetItemPhoto}>
+
+          <View style={[styles.addStudioMain, layout.isTablet && styles.addStudioMainTablet]}>
+          <View style={[styles.addStudioMediaColumn, layout.isTablet && styles.addStudioMediaColumnTablet]}>
+          <TouchableOpacity ref={wardrobeUploadTourTarget.ref} onLayout={wardrobeUploadTourTarget.onLayout} style={[styles.addStudioUploadBox, layout.isTablet && styles.addStudioUploadBoxTablet]} activeOpacity={0.84} onPress={pickClosetItemPhoto}>
             {itemPhoto?.uri ? (
               <>
-                <ResilientImage source={{ uri: itemPhoto.uri }} style={styles.addStudioUploadImage} resizeMode="cover" fallbackIcon="shirt-outline" />
+                <ResilientImage source={{ uri: itemPhoto.uri }} style={styles.addStudioUploadImage} resizeMode={layout.isTablet ? 'contain' : 'cover'} fallbackIcon="shirt-outline" />
                 {busy === 'analyze-item' ? (
                   <View style={styles.addStudioAnalyzeOverlay}>
                     <ActivityIndicator size="small" color="#ffffff" />
@@ -6521,30 +7012,16 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
             )}
           </TouchableOpacity>
 
-          <View style={styles.addStudioThumbRow}>
-            <TouchableOpacity style={styles.addStudioAddThumb} onPress={pickClosetItemPhoto}>
-              <Ionicons name="add" size={24} color="#171412" />
-            </TouchableOpacity>
-            {itemPhoto?.uri ? [({ uri: itemPhoto.uri })].map((source, index) => (
-              <View key={index} style={styles.addStudioThumbWrap}>
-                <ResilientImage source={source} style={styles.addStudioThumbImage} resizeMode="cover" fallbackIcon="shirt-outline" />
-                <TouchableOpacity style={styles.addStudioThumbClose} onPress={clearItemPhoto}>
-                  <Ionicons name="close" size={12} color="#6c625e" />
-                </TouchableOpacity>
-              </View>
-            )) : null}
-          </View>
-
           <ClosetDetectionCard detection={itemDetection} fields={detectionSummaryFields} />
 
-          <View style={styles.addStudioArchiveHead}>
-            <Text style={styles.addStudioArchiveTitle}>Archive Entry: {closetCategoryEntryLabel(itemCategory || 'dresses')}</Text>
+          {!layout.isTablet ? <View style={styles.addStudioArchiveHead}>
+            <Text style={styles.addStudioArchiveTitle}>Archive Entry: {addItemTypeLabel}</Text>
             <View style={styles.addStudioArchiveLine} />
-          </View>
+          </View> : null}
 
-          <View style={styles.addStudioSavedSection}>
+          <View style={[styles.addStudioSavedSection, layout.isTablet && styles.addStudioSavedSectionTablet]}>
             <View style={styles.addStudioSavedHead}>
-              <Text style={styles.addStudioSavedTitle}>Saved {titleCase(itemCategory || 'items')}</Text>
+              <Text style={styles.addStudioSavedTitle}>Saved {activeAddTab?.label || 'Items'}</Text>
               <Text style={styles.addStudioSavedCount}>{activeAddSectionItems.length}</Text>
             </View>
             {closet.loading && !activeAddSectionItems.length ? (
@@ -6557,28 +7034,44 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
                   <TouchableOpacity key={item.id} style={styles.addStudioSavedCard} activeOpacity={0.86} onPress={() => openSavedAddSectionItem(item)}>
                     <ResilientImage source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : null} style={styles.addStudioSavedImage} resizeMode="cover" fallbackIcon="shirt-outline" />
                     <Text style={styles.addStudioSavedName} numberOfLines={1}>{item.name}</Text>
-                    <Text style={styles.addStudioSavedMeta} numberOfLines={1}>{[item.color, item.category].filter(Boolean).map(titleCase).join(' | ')}</Text>
+                    <Text style={styles.addStudioSavedMeta} numberOfLines={1}>{[item.color, wardrobeCategoryTabs.find((tab) => tab.key === wardrobeTabKeyForItem(item))?.label].filter(Boolean).map(titleCase).join(' | ')}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
             ) : (
               <View style={styles.addStudioSavedEmpty}>
                 <Ionicons name="shirt-outline" size={22} color="#9b5658" />
-                <Text style={styles.addStudioSavedEmptyText}>No saved {titleCase(itemCategory || 'items')} yet</Text>
+                <Text style={styles.addStudioSavedEmptyText}>{activeAddTab ? `No saved ${activeAddTab.label.toLowerCase()} yet` : 'Choose a clothing type to see saved items'}</Text>
               </View>
             )}
           </View>
+          </View>
 
-          <Text style={styles.addStudioSectionLabel}>ITEM SPECIFICATIONS</Text>
-          <View style={styles.addStudioForm}>
+          <View style={[styles.addStudioDetailsColumn, layout.isTablet && styles.addStudioDetailsColumnTablet]}>
+          {layout.isTablet ? <View style={[styles.addStudioArchiveHead, styles.addStudioArchiveHeadTablet]}>
+            <Text style={styles.addStudioArchiveTitle}>Archive Entry: {addItemTypeLabel}</Text>
+            <View style={styles.addStudioArchiveLine} />
+          </View> : null}
+
+          <Text style={[styles.addStudioSectionLabel, layout.isTablet && styles.addStudioSectionLabelTablet]}>ITEM SPECIFICATIONS</Text>
+          <View style={[styles.addStudioForm, layout.isTablet && styles.addStudioFormTablet]}>
             <Text style={styles.addStudioFieldLabel}>Item Name</Text>
-            <TextInput style={styles.addStudioInput} value={itemName} onChangeText={setItemName} placeholder="Black ribbed dress" placeholderTextColor="#2b2a29" />
+            <TextInput style={styles.addStudioInput} value={itemName} onChangeText={(name) => {
+              setItemName(name);
+              if (!itemTypeChosenManuallyRef.current) {
+                const detectedType = wardrobeTypeFromItemDetails({ name });
+                if (detectedType) {
+                  setItemCategory(wardrobeStoredCategoryForTab(detectedType));
+                  setItemWardrobeType(detectedType);
+                }
+              }
+            }} placeholder="e.g. Black ribbed dress" placeholderTextColor="#8a817b" />
 
             <View style={styles.addStudioTwoCol}>
               <View style={styles.addStudioFieldHalf}>
                 <Text style={styles.addStudioFieldLabel}>Type</Text>
-                <TouchableOpacity style={styles.addStudioSelectInput} onPress={cycleItemCategory}>
-                  <Text style={styles.addStudioInputText}>{titleCase(itemCategory || 'dresses')}</Text>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Choose clothing type" accessibilityHint="Shows every wardrobe category" style={styles.addStudioSelectInput} onPress={() => setItemCategoryPickerOpen(true)}>
+                  <Text style={styles.addStudioInputText}>{activeAddTab?.label || 'Choose type'}</Text>
                   <Ionicons name="chevron-down" size={18} color="#6f7680" />
                 </TouchableOpacity>
               </View>
@@ -6591,73 +7084,47 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
               </View>
             </View>
 
-            <View style={styles.addStudioTwoCol}>
-              <View style={styles.addStudioFieldHalf}>
-                <Text style={styles.addStudioFieldLabel}>Fabric</Text>
-                <TextInput style={styles.addStudioInput} value={itemFabric} onChangeText={setItemFabric} placeholder="Heavy Crepe Silk" placeholderTextColor="#2b2a29" />
-              </View>
-              <View style={styles.addStudioFieldHalf}>
-                <Text style={styles.addStudioFieldLabel}>Pattern</Text>
-                <TextInput style={styles.addStudioInput} value={itemPattern} onChangeText={setItemPattern} placeholder="Solid" placeholderTextColor="#2b2a29" />
-              </View>
-            </View>
-
-            <Text style={styles.addStudioFieldLabel}>Season</Text>
-            <View style={styles.addStudioSegmented}>
-              {[
-                ['summer', 'S/S'],
-                ['winter', 'A/W'],
-                ['resort', 'Resort'],
-                ['all-season', 'All']
-              ].map(([value, label]) => {
-                const active = itemSeason === value;
-                return (
-                  <TouchableOpacity key={value} style={[styles.addStudioSegment, active && styles.addStudioSegmentActive]} onPress={() => setItemSeason(value)}>
-                    <Text style={[styles.addStudioSegmentText, active && styles.addStudioSegmentTextActive]}>{label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <View style={styles.addStudioTwoCol}>
-              <View style={styles.addStudioFieldHalf}>
-                <Text style={styles.addStudioFieldLabel}>Vibe</Text>
-                <TextInput style={styles.addStudioInput} value={itemFormality === 'any' ? '' : itemFormality} onChangeText={setItemFormality} placeholder="E.g. Brutalist" placeholderTextColor="#9ca3af" />
-              </View>
-              <View style={styles.addStudioFieldHalf}>
-                <Text style={styles.addStudioFieldLabel}>Occasion</Text>
-                <TextInput style={styles.addStudioInput} value={itemOccasions} onChangeText={setItemOccasions} placeholder="Gala" placeholderTextColor="#2b2a29" />
-              </View>
-            </View>
-
-            <Text style={styles.addStudioFieldLabel}>Metadata Tags</Text>
-            <View style={styles.addStudioTagInput}>
-              <TextInput style={styles.addStudioTagTextInput} value={itemTags} onChangeText={setItemTags} placeholder="Add tags..." placeholderTextColor="#8d939f" />
-              <TouchableOpacity style={styles.addStudioTagAdd}>
-                <Ionicons name="add" size={17} color="#4f4a48" />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.addStudioTagRow}>
-              {['#minimalism', '#architectural'].map((tag) => (
-                <View key={tag} style={styles.addStudioTagPill}>
-                  <Text style={styles.addStudioTagPillText}>{tag}</Text>
-                  <Ionicons name="close" size={12} color="#6f6864" />
-                </View>
-              ))}
-            </View>
           </View>
 
-          {message ? <Text style={[styles.formMessage, styles.addStudioMessage, /failed|missing|error|upload/i.test(message) ? styles.errorText : null]}>{message}</Text> : null}
+          {message ? <Text style={[styles.formMessage, styles.addStudioMessage, layout.isTablet && styles.addStudioMessageTablet, /failed|missing|error|upload/i.test(message) ? styles.errorText : null]}>{message}</Text> : null}
+          {layout.isTablet ? addStudioFooter : null}
+          </View>
+          </View>
         </ScrollView>
 
-        <View style={styles.addStudioFooter}>
-          <TouchableOpacity style={styles.addStudioDiscardButton} onPress={discardAddDraft}>
-            <Text style={styles.addStudioDiscardText}>DISCARD DRAFT</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.addStudioSaveButton, (busy === 'add' || busy === 'analyze-item') && styles.disabledButton]} disabled={busy === 'add' || busy === 'analyze-item'} onPress={addItem}>
-            <Text style={styles.addStudioSaveText}>{busy === 'analyze-item' ? 'ANALYZING...' : busy === 'add' ? 'SAVING...' : 'SAVE CLOTHING\nITEM'}</Text>
-          </TouchableOpacity>
-        </View>
+        {!layout.isTablet ? addStudioFooter : null}
+        <Modal visible={itemCategoryPickerOpen} transparent animationType="slide" onRequestClose={() => setItemCategoryPickerOpen(false)}>
+          <View style={styles.wardrobePickerOverlay}>
+            <Pressable accessibilityLabel="Close category picker" style={styles.wardrobePickerBackdrop} onPress={() => setItemCategoryPickerOpen(false)} />
+            <SafeAreaView style={[styles.wardrobePickerSheet, layout.isTablet && styles.wardrobePickerSheetTablet]}>
+              <View style={styles.wardrobePickerHeader}>
+                <View style={styles.wardrobePickerHeaderCopy}>
+                  <Text style={styles.wardrobePickerEyebrow}>ARCHIVE ENTRY</Text>
+                  <Text style={styles.wardrobePickerTitle}>Clothing type</Text>
+                </View>
+                <Pressable accessibilityRole="button" accessibilityLabel="Close category picker" hitSlop={12} style={styles.wardrobePickerClose} onPress={() => setItemCategoryPickerOpen(false)}>
+                  <DecorativeCloseIcon size={20} color="#211f1d" />
+                </Pressable>
+              </View>
+              <ScrollView contentContainerStyle={styles.wardrobePickerContent}>
+                <View style={styles.addStudioCategoryGrid}>
+                  {wardrobeCategoryTabs.map((tab) => {
+                    const selected = itemWardrobeType === tab.key;
+                    return <Pressable key={tab.key} accessibilityRole="button" accessibilityLabel={`Choose ${tab.label}`} accessibilityState={{ selected }} style={[styles.addStudioCategoryChoice, selected && styles.addStudioCategoryChoiceSelected]} onPress={() => { itemTypeChosenManuallyRef.current = true; setItemCategory(wardrobeStoredCategoryForTab(tab.key)); setItemWardrobeType(tab.key); setItemCategoryPickerOpen(false); }}>
+                      <View style={styles.addStudioCategoryChoiceIcon}>
+                        {tab.icon === 'pants' ? <Image source={wardrobeBottomsIcon} style={styles.addStudioCategoryChoiceAsset} resizeMode="contain" />
+                          : tab.icon === 'shoe' ? <Image source={wardrobeFootwearIcon} style={styles.addStudioCategoryChoiceAsset} resizeMode="contain" />
+                            : <Ionicons name={tab.icon} size={18} color="#211f1d" />}
+                      </View>
+                      <Text style={[styles.addStudioCategoryChoiceText, selected && styles.addStudioCategoryChoiceTextSelected]} numberOfLines={2} maxFontSizeMultiplier={1.2}>{tab.label}</Text>
+                      {selected ? <Ionicons name="checkmark-circle" size={17} color="#fff" style={styles.addStudioCategoryChoiceCheck} /> : null}
+                    </Pressable>;
+                  })}
+                </View>
+              </ScrollView>
+            </SafeAreaView>
+          </View>
+        </Modal>
       </KeyboardAvoidingView>
     );
   }
@@ -6665,60 +7132,85 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.wardrobeScreen}>
       <WardrobeTopBar user={user} onNavigate={onNavigate} />
-      <ScrollView style={styles.flex} contentContainerStyle={styles.wardrobeContent} {...screenScrollProps}>
-        <PageBackRow onBack={onBack} />
-        <View style={[styles.wardrobeHeroHead, compactWardrobePreview && styles.wardrobeHeroHeadCompact]}>
+      <ScrollView ref={wardrobeScrollRef} style={styles.flex} onLayout={(event) => measureWardrobePart('viewport', event.nativeEvent.layout.height)} contentContainerStyle={[styles.wardrobeContent, !layout.isTablet && { paddingBottom: wardrobeBottomClearance }, layout.isTablet && styles.wardrobeContentTablet]} {...screenScrollProps}>
+        <View onLayout={(event) => measureWardrobePart('header', event.nativeEvent.layout.height)} style={[styles.wardrobeHeroHead, compactWardrobePreview && styles.wardrobeHeroHeadCompact, layout.isTablet && styles.wardrobeHeroHeadTablet]}>
           <View style={styles.wardrobeHeroCopy}>
-            <Text style={[styles.wardrobeTitle, compactWardrobePreview && styles.wardrobeTitleCompact]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.88} maxFontSizeMultiplier={1.1}>My Wardrobe</Text>
-            <Text style={[styles.wardrobeSubtitle, compactWardrobePreview && styles.wardrobeSubtitleCompact]} numberOfLines={2} maxFontSizeMultiplier={1.15}>Your personal style collection</Text>
+            <Text style={[styles.wardrobeTitle, compactWardrobePreview && styles.wardrobeTitleCompact, layout.isTablet && styles.wardrobeTitleTablet]} numberOfLines={1} adjustsFontSizeToFit={Platform.OS === 'ios'} minimumFontScale={0.88} maxFontSizeMultiplier={1.1}>My Wardrobe</Text>
+            <Text style={[styles.wardrobeSubtitle, compactWardrobePreview && styles.wardrobeSubtitleCompact, layout.isTablet && styles.wardrobeSubtitleTablet]} numberOfLines={2} maxFontSizeMultiplier={1.15}>Your personal style collection</Text>
           </View>
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add wardrobe item" style={[styles.wardrobeAddButton, compactWardrobePreview && styles.wardrobeAddButtonCompact]} activeOpacity={0.85} onPress={() => onNavigate('closet', { view: 'add' })}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Add wardrobe item" style={[styles.wardrobeAddButton, compactWardrobePreview && styles.wardrobeAddButtonCompact, layout.isTablet && styles.wardrobeAddButtonTablet]} activeOpacity={0.85} onPress={() => onNavigate('closet', { view: 'add' })}>
             <Ionicons name="add" size={compactWardrobePreview ? 20 : 22} color="#ffffff" />
             <Text style={[styles.wardrobeAddText, compactWardrobePreview && styles.wardrobeAddTextCompact]} numberOfLines={1} maxFontSizeMultiplier={1.15}>Add Item</Text>
           </TouchableOpacity>
         </View>
 
+
         {closetView === 'stylist' ? (
           <>
-            <View style={styles.wardrobePreviewWrap}>
-              <View style={[styles.wardrobePreviewStage, compactWardrobePreview && styles.wardrobePreviewStageCompact]}>
-                <Pressable accessibilityRole={mainPreview ? 'button' : undefined} accessibilityLabel={mainPreview ? 'View wardrobe model full screen' : undefined} style={[styles.wardrobePreviewCard, compactWardrobePreview && styles.wardrobePreviewCardCompact, { height: wardrobePreviewHeight }]} onPress={() => mainPreview && setLightbox(imageUrl(mainPreview))}>
+            <View style={[styles.wardrobePreviewWrap, layout.isTablet && styles.wardrobePreviewWrapTablet]}>
+              <View style={[styles.wardrobePreviewStage, compactWardrobePreview && styles.wardrobePreviewStageCompact, !layout.isTablet && styles.wardrobePreviewStagePhone, layout.isTablet && styles.wardrobePreviewStageTablet, layout.isTablet && { width: wardrobeTabletPhotoWidth + wardrobeTabletSideWidth * 2 }]}>
+                <Pressable accessibilityRole={mainPreview ? 'button' : undefined} accessibilityLabel={mainPreview ? 'View wardrobe model full screen' : undefined} style={[styles.wardrobePreviewCard, compactWardrobePreview && styles.wardrobePreviewCardCompact, !layout.isTablet && styles.wardrobePreviewCardPhone, layout.isTablet && styles.wardrobePreviewCardTablet, { height: wardrobePreviewHeight }, { width: layout.isTablet ? wardrobeTabletPhotoWidth : wardrobePhonePhotoWidth }]} onPress={() => mainPreview && setLightbox(imageUrl(mainPreview))}>
                   {wardrobePreviewSource ? (
-                    <ResilientImage source={wardrobePreviewSource} style={styles.wardrobePreviewImage} resizeMode="contain" fallbackIcon="shirt-outline" />
-                  ) : null}
+                    <ResilientImage source={wardrobePreviewSource} style={styles.wardrobePreviewImage} resizeMode={layout.isTablet ? 'contain' : 'cover'} fallbackIcon="shirt-outline" fallbackText="Look unavailable. Try again." />
+                  ) : <View style={styles.wardrobePortraitEmpty}>
+                    <View style={styles.wardrobePortraitEmptyIcon}><Ionicons name="person-outline" size={28} color="#9b5658" /></View>
+                    <Text style={styles.wardrobePortraitEmptyTitle}>Add your photo</Text>
+                    <Text style={styles.wardrobePortraitEmptyCopy}>Upload a clear full-body portrait to preview your wardrobe looks.</Text>
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel="Upload full-body portrait" style={styles.wardrobePortraitEmptyAction} onPress={() => onNavigate('profile')}>
+                      <Text style={styles.wardrobePortraitEmptyActionText}>Upload portrait</Text>
+                      <Ionicons name="arrow-forward" size={15} color="#fff" />
+                    </TouchableOpacity>
+                  </View>}
                   {busy === 'generate' ? <View style={styles.previewGenerating}><ActivityIndicator color="#fff" /><Text style={styles.previewGeneratingText}>Generating look</Text></View> : null}
                 </Pressable>
-                <View style={[styles.wardrobeCategoryRail, compactWardrobePreview && styles.wardrobeCategoryRailCompact, styles.wardrobeCategoryRailLeft]}>
+                <View style={[styles.wardrobeCategoryRail, compactWardrobePreview && styles.wardrobeCategoryRailCompact, layout.isTablet && styles.wardrobeCategoryRailTablet, styles.wardrobeCategoryRailLeft, !layout.isTablet && styles.wardrobeCategoryRailLeftPhone]}>
                   {wardrobeLeftCategoryTabs.map(renderWardrobeCategoryButton)}
                 </View>
-                <View style={[styles.wardrobeCategoryRail, compactWardrobePreview && styles.wardrobeCategoryRailCompact, styles.wardrobeCategoryRailRight]}>
+                <View style={[styles.wardrobeCategoryRail, compactWardrobePreview && styles.wardrobeCategoryRailCompact, layout.isTablet && styles.wardrobeCategoryRailTablet, styles.wardrobeCategoryRailRight, !layout.isTablet && styles.wardrobeCategoryRailRightPhone]}>
                   {wardrobeRightCategoryTabs.map(renderWardrobeCategoryButton)}
                 </View>
               </View>
-              <View style={[styles.wardrobeTryButtonDock, compactWardrobePreview && styles.wardrobeTryButtonDockCompact]}>
+              <View onLayout={(event) => measureWardrobePart('controls', event.nativeEvent.layout.height)} style={[styles.wardrobeTryButtonDock, compactWardrobePreview && styles.wardrobeTryButtonDockCompact, layout.isTablet && styles.wardrobeTryButtonDockTablet]}>
                 <TouchableOpacity
                   accessibilityRole="button"
                   accessibilityLabel={tryThisLookIds.length ? 'Try this wardrobe look on' : 'Add clothing to enable try-on'}
                   accessibilityState={{ disabled: !tryThisLookIds.length || busy === 'generate' }}
-                  style={[styles.wardrobeTryButton, compactWardrobePreview && styles.wardrobeTryButtonCompact, (!tryThisLookIds.length || busy === 'generate') && styles.wardrobeTryButtonDisabled]}
+                  style={[styles.wardrobeTryButton, compactWardrobePreview && styles.wardrobeTryButtonCompact, layout.isTablet && styles.wardrobeTryButtonTablet, (!tryThisLookIds.length || busy === 'generate') && styles.wardrobeTryButtonDisabled]}
                   disabled={!tryThisLookIds.length || busy === 'generate'}
-                  onPress={() => tryThisLookIds.length === 1 ? openWardrobeTryOn(tryThisLookIds) : generateOutfit(tryThisLookIds, { title: 'My wardrobe look', itemSlots: tryThisItemSlots })}
+                  onPress={() => generateOutfit(tryThisLookIds, { title: 'My wardrobe look', itemSlots: tryThisItemSlots, showInWardrobe: true })}
                 >
                   <Text style={[styles.wardrobeTryText, !tryThisLookIds.length && styles.wardrobeTryTextDisabled]} maxFontSizeMultiplier={1.2}>{busy === 'generate' ? 'Generating…' : 'Try On'}</Text>
                   {busy !== 'generate' ? <Ionicons name="arrow-forward" size={16} color={tryThisLookIds.length ? '#ffffff' : '#8a837e'} /> : null}
                 </TouchableOpacity>
-                {!tryThisLookIds.length ? <Text style={styles.wardrobeTryHint} maxFontSizeMultiplier={1.2}>Add clothing to start styling</Text> : null}
+                {!tryThisLookIds.length ? <Text style={[styles.wardrobeTryHint, layout.isTablet && styles.wardrobeTryHintTablet]} maxFontSizeMultiplier={1.2}>Choose a category, then select a saved item</Text> : null}
               </View>
+              {generatedWardrobeOutfit?.imageUrl ? <Text style={styles.wardrobeResultCaption}>Your look is ready in the wardrobe preview above.</Text> : null}
             </View>
           </>
         ) : (
-          <View style={styles.wardrobeModeTabs}>
-            <FilterChips
-              selected={closetView}
-              options={[['stylist', 'Preview'], ['combo', 'Combo'], ['add', 'Add'], ['wardrobe', 'Wardrobe'], ['looks', 'Looks']]}
-              onSelect={switchClosetView}
-              compact
-            />
+          <View style={[styles.wardrobeModeTabs, layout.isTablet && styles.wardrobeModeTabsTablet]}>
+            {layout.isTablet ? (
+              <View style={styles.wardrobeTabletTabs}>
+                {[['stylist', 'Preview'], ['combo', 'Combo'], ['add', 'Add'], ['looks', 'Looks']].map(([value, label]) => (
+                  <TouchableOpacity
+                    key={value}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: closetView === value }}
+                    style={[styles.wardrobeTabletTab, closetView === value && styles.wardrobeTabletTabActive]}
+                    onPress={() => switchClosetView(value)}
+                  >
+                    <Text style={[styles.wardrobeTabletTabText, closetView === value && styles.wardrobeTabletTabTextActive]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <FilterChips
+                selected={closetView}
+                options={[['stylist', 'Preview'], ['combo', 'Combo'], ['add', 'Add'], ['looks', 'Looks']]}
+                onSelect={switchClosetView}
+                compact
+              />
+            )}
           </View>
         )}
 
@@ -6733,7 +7225,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
           </TouchableOpacity>
           <ClosetDetectionCard detection={itemDetection} fields={detectionSummaryFields} compact />
           <TextInput style={styles.input} value={itemName} onChangeText={setItemName} placeholder="Item name" placeholderTextColor="#94a3b8" />
-          <FilterChips selected={itemCategory} options={closetCategories.map((item) => [item, titleCase(item)])} onSelect={setItemCategory} compact />
+          <FilterChips selected={itemCategory} options={closetCategories.map((item) => [item, closetCategoryLabel(item)])} onSelect={setItemCategory} compact />
           <View style={styles.twoColumnInputs}>
             <TextInput style={[styles.input, styles.halfInput]} value={itemColor} onChangeText={setItemColor} placeholder="Color" placeholderTextColor="#94a3b8" />
             <TextInput style={[styles.input, styles.halfInput]} value={itemFabric} onChangeText={setItemFabric} placeholder="Fabric" placeholderTextColor="#94a3b8" />
@@ -6881,7 +7373,20 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
         </View> : null}
 
         {closetView !== 'stylist' && !closet.loading && closet.error ? <StatusPanel error={closet.error} /> : null}
-        {closetView !== 'stylist' && !closet.loading && !closet.error && !items.length ? (
+        {tabletWardrobeEmpty ? (
+          <View style={styles.wardrobeTabletEmpty}>
+            <Image source={images.homeStarterWardrobe} style={styles.wardrobeTabletEmptyImage} resizeMode="cover" />
+            <View style={styles.wardrobeTabletEmptyBody}>
+              <Text style={styles.wardrobeTabletEmptyTitle}>Start your wardrobe</Text>
+              <Text style={styles.wardrobeTabletEmptyCopy}>Add a clothing photo to start building your collection. Lookmefy will organise its details for you.</Text>
+              <TouchableOpacity accessibilityRole="button" style={styles.wardrobeTabletEmptyButton} onPress={() => switchClosetView('add')}>
+                <Ionicons name="add" size={20} color="#ffffff" />
+                <Text style={styles.wardrobeTabletEmptyButtonText}>Add first item</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+        {closetView !== 'stylist' && !closet.loading && !closet.error && !items.length && !tabletWardrobeEmpty ? (
           <View style={styles.closetEmptyWrap}>
             <EmptyStateCard
               icon="shirt-outline"
@@ -6893,7 +7398,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
             />
           </View>
         ) : null}
-        {closetView === 'wardrobe' ? <View style={styles.closetPanel}>
+        {closetView === 'wardrobe' && !tabletWardrobeEmpty ? <View style={styles.closetPanel}>
           <View style={styles.panelHeaderRow}>
             <View style={styles.wardrobeHeaderCopy}>
               <Text style={styles.sectionTitle}>{wardrobeFilterTitle}</Text>
@@ -6905,7 +7410,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
           </View>
           <FilterChips
             selected={filter}
-            options={[['all', 'All'], ...closetCategories.map((item) => [item, titleCase(item)])]}
+            options={[['all', 'All'], ...closetCategories.map((item) => [item, closetCategoryLabel(item)])]}
             onSelect={(nextFilter) => {
               setFilter(nextFilter);
               setActiveWardrobeTabKey('');
@@ -6945,15 +7450,27 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
           <View style={styles.wardrobeGenerateFooter}>
             {selectedWardrobeGenerateHint ? <Text style={styles.wardrobeGenerateHint}>{selectedWardrobeGenerateHint}</Text> : null}
             <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Try on selected wardrobe items"
               style={[styles.wardrobeGenerateLookButton, (!selectedIds.length || !selectedWardrobeCanGenerate || busy === 'generate') && styles.disabledButton]}
               activeOpacity={0.88}
-              disabled={!selectedIds.length || busy === 'generate'}
-              onPress={() => selectedIds.length === 1 ? openWardrobeTryOn(selectedIds) : generateSelectedWardrobeLook()}
+              disabled={!selectedWardrobeCanGenerate || busy === 'generate'}
+              onPress={generateSelectedWardrobeLook}
             >
               <Ionicons name="sparkles-outline" size={20} color="#ffffff" />
-              <Text style={styles.wardrobeGenerateLookText}>{busy === 'generate' ? 'GENERATING...' : selectedIds.length === 1 ? 'TRY ON' : 'GENERATE LOOK'}</Text>
+              <Text style={styles.wardrobeGenerateLookText}>{busy === 'generate' ? 'CREATING LOOK...' : 'TRY ON'}</Text>
               {selectedIds.length ? <Text style={styles.wardrobeGenerateLookCount}>{selectedIds.length}</Text> : null}
             </TouchableOpacity>
+          </View>
+        ) : null}
+        {closetView === 'wardrobe' && generatedWardrobeOutfit?.imageUrl ? (
+          <View style={styles.wardrobeGeneratedResult} onLayout={(event) => wardrobeScrollRef.current?.scrollTo({ y: Math.max(0, event.nativeEvent.layout.y - 12), animated: true })}>
+            <Text style={styles.wardrobeGeneratedTitle}>Your wardrobe look</Text>
+            <Text style={styles.wardrobeGeneratedCopy}>Saved to Looks. Tap the image to view it full screen.</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="View generated wardrobe look full screen" onPress={() => setLightbox(imageUrl(generatedWardrobeOutfit.imageUrl))}>
+              <ResilientImage source={{ uri: imageUrl(generatedWardrobeOutfit.imageUrl) }} style={styles.wardrobeGeneratedImage} resizeMode="contain" fallbackIcon="shirt-outline" />
+            </Pressable>
+            <ReportContentAction content={reportContentReference(generatedWardrobeOutfit, 'wardrobe_outfit')} />
           </View>
         ) : null}
         {closetView === 'looks' ? (
@@ -6973,13 +7490,60 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
         ) : null}
         {message ? <Text style={[styles.formMessage, styles.closetMessage, /failed|missing|error|not enough|upload|select/i.test(message) ? styles.errorText : null]}>{message}</Text> : null}
       </ScrollView>
+      <Modal visible={Boolean(wardrobePickerTab)} transparent animationType="slide" onRequestClose={() => setWardrobePickerTab(null)}>
+        <View style={styles.wardrobePickerOverlay}>
+          <Pressable accessibilityLabel="Close clothing picker" style={styles.wardrobePickerBackdrop} onPress={() => setWardrobePickerTab(null)} />
+          <SafeAreaView style={[styles.wardrobePickerSheet, layout.isTablet && styles.wardrobePickerSheetTablet]}>
+            <View style={styles.wardrobePickerHeader}>
+              <View style={styles.wardrobePickerHeaderCopy}>
+                <Text style={styles.wardrobePickerEyebrow}>MY WARDROBE</Text>
+                <Text style={styles.wardrobePickerTitle}>Choose {wardrobePickerTab?.label}</Text>
+              </View>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close clothing picker" hitSlop={12} style={styles.wardrobePickerClose} onPress={() => setWardrobePickerTab(null)}>
+                <DecorativeCloseIcon size={20} color="#211f1d" />
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={styles.wardrobePickerContent}>
+              {wardrobePickerItems.length ? <View style={styles.wardrobePickerGrid}>
+                {wardrobePickerItems.map((item) => {
+                  const selected = wardrobePreviewSelections[wardrobePickerTab?.key] === item.id;
+                  return <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`${selected ? 'Remove' : 'Select'} ${item.name || wardrobePickerTab?.label}`} accessibilityState={{ selected }} style={[styles.wardrobePickerItem, layout.isTablet && styles.wardrobePickerItemTablet, selected && styles.wardrobePickerItemSelected]} onPress={() => chooseWardrobePreviewItem(item)}>
+                    <ResilientImage source={item.imageUrl ? { uri: imageUrl(item.imageUrl) } : null} style={styles.wardrobePickerItemImage} resizeMode="contain" fallbackIcon="shirt-outline" />
+                    <Text style={styles.wardrobePickerItemName} numberOfLines={2}>{item.name || wardrobePickerTab?.label}</Text>
+                    {selected ? <Text style={styles.wardrobePickerItemStatus}>Tap to remove</Text> : null}
+                  </Pressable>;
+                })}
+              </View> : <View style={styles.wardrobePickerEmpty}>
+                <Ionicons name="shirt-outline" size={30} color="#8a7365" />
+                <Text style={styles.wardrobePickerEmptyTitle}>No {wardrobePickerTab?.label?.toLowerCase()} saved yet</Text>
+                <Text style={styles.wardrobePickerEmptyCopy}>Add a clothing photo to choose it for this look.</Text>
+                <Pressable accessibilityRole="button" style={styles.wardrobePickerAddButton} onPress={() => { const type = wardrobePickerTab?.key; setWardrobePickerTab(null); onNavigate('closet', { view: 'add', type }); }}>
+                  <Text style={styles.wardrobePickerAddText}>Add Item</Text>
+                </Pressable>
+              </View>}
+            </ScrollView>
+          </SafeAreaView>
+        </View>
+      </Modal>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </KeyboardAvoidingView>
   );
 }
 
+function fittedTryOnPhotoCardWidth(imageSize, cardHeight, rowWidth, gap) {
+  const imageWidth = Number(imageSize?.width);
+  const imageHeight = Number(imageSize?.height);
+  const maxCardWidth = Math.floor((rowWidth - gap) / 2);
+  if (!(imageWidth > 0 && imageHeight > 0 && cardHeight > 0 && maxCardWidth >= 140)) return null;
+  const imageWidthAtCardHeight = Math.round(cardHeight * imageWidth / imageHeight);
+  return imageWidthAtCardHeight < maxCardWidth - 8
+    ? Math.max(140, imageWidthAtCardHeight)
+    : null;
+}
+
 function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack, refreshUser, initial = {} }) {
   const layout = useResponsiveLayout();
+  const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const [garment, setGarment] = useState(null);
   const [result, setResult] = useState(null);
@@ -6987,6 +7551,9 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
   const [loading, setLoading] = useState(false);
   const customRequestRef = useRef(false);
   const [lightbox, setLightbox] = useState(null);
+  const [garmentImageSize, setGarmentImageSize] = useState(null);
+  const [uploadRowWidth, setUploadRowWidth] = useState(0);
+  const [actionDockHeight, setActionDockHeight] = useState(0);
   const latestCustom = useApiState('/tryons/custom/latest', token, Boolean(user), { tryOn: null });
   const wardrobe = useApiState('/closet', token, Boolean(user && initial.wardrobeItemId), { items: [] });
   const paymentPlans = useApiState('/payments/plans', token, Boolean(user), { costs: { imageTokens: defaultTryOnCreditCost } });
@@ -7007,12 +7574,14 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
   const bodyProfileUri = user.bodyPhotoUrl ? imageUrl(user.bodyPhotoUrl) : '';
   const avatarProfileUri = avatarUri ? imageUrl(avatarUri) : '';
   const profilePreviewUri = bodyProfileUri || avatarProfileUri;
-  const profilePreviewIsFullBody = Boolean(bodyProfileUri && user.bodyPhotoSource === 'fal-full-body');
+  const profilePreviewIsFullBody = Boolean(bodyProfileUri && isGeneratedFullBodySource(user.bodyPhotoSource));
   const profilePreviewResizeMode = profilePreviewIsFullBody ? 'contain' : userAvatarResizeMode(user);
   const profilePreviewImageStyle = profilePreviewIsFullBody ? null : avatarImageStyleForUser(user, 116);
   const profilePreviewBaseStyle = profilePreviewIsFullBody ? null : avatarImageBaseStyleForUser(user);
   const generatedUri = result?.imageUrl ? imageUrl(result.imageUrl) : '';
   const hasGenerated = Boolean(generatedUri);
+  const hasGarment = Boolean(garment?.uri);
+  const actionDockBottom = Math.max(insets.bottom - 10, 10) + 78;
   const latestCustomTryOn = latestCustom.data?.tryOn;
   const configuredTryOnCost = Number(paymentPlans.data?.costs?.imageTokens ?? paymentPlans.data?.creditCosts?.customTryOn);
   const customTryOnCreditCost = user.devMode
@@ -7026,12 +7595,21 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
   const customTextProps = { maxFontSizeMultiplier: 1.2 };
   const compactCustomTryOn = height < 640 && !layout.isTablet;
   const narrowCustomTryOn = layout.windowWidth < 340 && !layout.isTablet;
-  const customInputHeight = layout.isTablet ? 352 : Math.round(Math.min(236, Math.max(184, (layout.contentWidth - (narrowCustomTryOn ? 42 : 44)) * 0.67)));
+  const customInputHeight = layout.isTablet
+    ? clamp(Math.round(height * 0.39), 400, 540)
+    : Math.round(Math.min(236, Math.max(184, (layout.contentWidth - (narrowCustomTryOn ? 42 : 44)) * 0.67)));
+  const currentGarmentImageSize = Number(garment?.width) > 0 && Number(garment?.height) > 0
+    ? garment
+    : garmentImageSize?.uri === garment?.uri ? garmentImageSize : null;
+  const fittedPhotoCardWidth = garment?.uri
+    ? fittedTryOnPhotoCardWidth(currentGarmentImageSize, customInputHeight, uploadRowWidth, layout.isTablet ? 18 : 10)
+    : null;
+  const fittedPhotoCardStyle = fittedPhotoCardWidth ? { flex: 0, width: fittedPhotoCardWidth } : null;
   const customResultHeight = hasGenerated
     ? layout.isTablet
-      ? Math.min(520, Math.max(390, Math.round(layout.contentWidth * 0.42)))
+      ? clamp(Math.round(height * 0.45), 440, 600)
       : compactCustomTryOn ? 300 : 388
-    : compactCustomTryOn ? 108 : 120;
+    : layout.isTablet ? clamp(Math.round(height * 0.22), 250, 310) : compactCustomTryOn ? 108 : 120;
 
   useEffect(() => {
     if (initial.wardrobeItemId || garment || result || loading || !latestCustomTryOn?.imageUrl) return;
@@ -7048,7 +7626,7 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
 
   const submit = async () => {
     if (customRequestRef.current) return;
-    if (!garment) {
+    if (!garment?.uri) {
       setMessage('Upload a clothing photo first.');
       return;
     }
@@ -7080,11 +7658,39 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
     }
   };
 
+  const generateButton = (
+    <>
+      {message || !hasGarment ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          accessibilityRole={message ? 'alert' : undefined}
+          style={[styles.customActionMessage, message && !/ready|generating|regenerating/i.test(message) ? styles.errorText : null]}
+          {...customTextProps}
+        >
+          {message || (hasGenerated ? 'Upload a garment photo to create another look.' : 'Choose a garment photo to get started.')}
+        </Text>
+      ) : null}
+      <AppButton
+        label={loading ? (hasGenerated ? 'Regenerating…' : 'Creating your look…') : !hasGarment ? 'Upload garment photo' : hasGenerated ? `Regenerate My Look · ${customTryOnCostLabel}` : `Generate My Look · ${customTryOnCostLabel}`}
+        icon={hasGarment ? 'sparkles-outline' : 'cloud-upload-outline'}
+        disabled={loading}
+        onPress={hasGarment ? submit : chooseGarment}
+        style={[styles.customGenerateButton, layout.isTablet && styles.customGenerateButtonTablet]}
+        labelProps={{
+          adjustsFontSizeToFit: Platform.OS === 'ios',
+          maxFontSizeMultiplier: 1.2,
+          minimumFontScale: 0.85,
+          numberOfLines: 1
+        }}
+      />
+    </>
+  );
+
   return (
     <View style={styles.customTryOnScreen}>
-      <ScrollView style={styles.customTryOnScroll} contentContainerStyle={[styles.customTryOnContent, compactCustomTryOn && styles.customTryOnContentCompact]} {...screenScrollProps}>
+      <ScrollView style={styles.customTryOnScroll} contentContainerStyle={[styles.customTryOnContent, compactCustomTryOn && styles.customTryOnContentCompact, layout.isTablet ? styles.customTryOnContentTablet : { paddingBottom: actionDockBottom + actionDockHeight + 16 }]} {...screenScrollProps}>
         <PageBackRow onBack={onBack} />
-        <View style={[styles.customHeroPanel, compactCustomTryOn && styles.customHeroPanelCompact]}>
+        <View style={[styles.customHeroPanel, compactCustomTryOn && styles.customHeroPanelCompact, layout.isTablet && styles.customHeroPanelTablet]}>
           <View style={styles.customHeroMetaRow}>
             <Text style={styles.customHeroEyebrow} {...customTextProps}>AI FITTING STUDIO</Text>
             <View style={styles.customTokenPill}>
@@ -7092,20 +7698,24 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
               <Text style={styles.customTokenText} {...customTextProps}>{customTryOnCostLabel}</Text>
             </View>
           </View>
-          <Text style={[styles.customHeroTitle, compactCustomTryOn && styles.customHeroTitleCompact]} {...customTextProps}>Your look, reimagined.</Text>
-          <Text style={[styles.customHeroDescription, compactCustomTryOn && styles.customHeroDescriptionCompact]} {...customTextProps}>Upload a garment and see how it looks on you.</Text>
+          <Text style={[styles.customHeroTitle, compactCustomTryOn && styles.customHeroTitleCompact, layout.isTablet && styles.customHeroTitleTablet]} {...customTextProps}>Your look, reimagined.</Text>
+          <Text style={[styles.customHeroDescription, compactCustomTryOn && styles.customHeroDescriptionCompact, layout.isTablet && styles.customHeroDescriptionTablet]} {...customTextProps}>Upload a garment and see how it looks on you.</Text>
         </View>
 
-        <View style={[styles.customUploadRow, compactCustomTryOn && styles.customUploadRowCompact, layout.isTablet && styles.customUploadRowTablet]}>
+
+        <View style={[styles.customUploadRow, compactCustomTryOn && styles.customUploadRowCompact, layout.isTablet && styles.customUploadRowTablet]} onLayout={(event) => {
+          const width = event.nativeEvent.layout.width;
+          setUploadRowWidth((current) => current === width ? current : width);
+        }}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="View saved profile photo"
             disabled={!profilePreviewUri}
-            style={[styles.customProfileCard, { height: customInputHeight }]}
+            style={[styles.customProfileCard, { height: customInputHeight }, fittedPhotoCardStyle]}
             onPress={() => profilePreviewUri && setLightbox(profilePreviewUri)}
           >
             {profilePreviewUri ? (
-              <ResilientImage source={{ uri: profilePreviewUri }} style={styles.customProfileImage} imageStyle={profilePreviewImageStyle} imageBaseStyle={profilePreviewBaseStyle} resizeMode={profilePreviewResizeMode} fallbackIcon="person-outline" />
+              <ResilientImage source={{ uri: profilePreviewUri }} style={styles.customProfileImage} imageStyle={profilePreviewImageStyle} imageBaseStyle={profilePreviewBaseStyle} resizeMode={profilePreviewResizeMode} backdropBlurRadius={profilePreviewIsFullBody ? 28 : 0} fallbackIcon="person-outline" />
             ) : (
               <View style={styles.customProfileEmpty}>
                 <Ionicons name="person-outline" size={24} color="#8d8682" />
@@ -7115,15 +7725,15 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
             <View style={styles.customCardBadge}>
               <Text style={styles.customCardBadgeText} {...customTextProps}>YOUR PROFILE</Text>
             </View>
-            <View style={styles.customProfileCaption}>
+            {!profilePreviewIsFullBody ? <View style={styles.customProfileCaption}>
               <Text style={styles.customProfileLabel} {...customTextProps}>{profilePreviewUri ? (profilePreviewIsFullBody ? 'Full-body profile' : 'Profile photo') : 'Profile required'}</Text>
               <Text style={styles.customProfileSub} numberOfLines={1} {...customTextProps}>{profilePreviewUri ? (user.bodyPhotoStatus === 'generating' ? 'Preparing' : 'Saved') : 'Add in Profile'}</Text>
-            </View>
+            </View> : null}
           </Pressable>
           <TouchableOpacity
             accessibilityRole="button"
             accessibilityLabel={garment?.uri ? 'Change garment photo' : 'Upload garment photo'}
-            style={[styles.customGarmentDrop, { height: customInputHeight }, garment?.uri && styles.customGarmentDropReady]}
+            style={[styles.customGarmentDrop, { height: customInputHeight }, garment?.uri && styles.customGarmentDropReady, fittedPhotoCardStyle]}
             activeOpacity={0.86}
             accessibilityState={{ disabled: loading }}
             disabled={loading}
@@ -7131,13 +7741,14 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
           >
             {garment?.uri ? (
               <>
-                <ResilientImage source={{ uri: garment.uri }} style={styles.customGarmentImage} resizeMode="contain" />
+                <ResilientImage source={{ uri: garment.uri }} style={styles.customGarmentImage} resizeMode="contain" backdropBlurRadius={fittedPhotoCardWidth ? 0 : 28} onImageLoad={(source) => {
+                  if (!source?.width || !source?.height) return;
+                  setGarmentImageSize((current) => current?.uri === garment.uri && current?.width === source.width && current?.height === source.height
+                    ? current
+                    : { uri: garment.uri, width: source.width, height: source.height });
+                }} />
                 <View style={styles.customCardBadge}>
-                  <Text style={styles.customCardBadgeText} {...customTextProps}>GARMENT</Text>
-                </View>
-                <View style={styles.customGarmentOverlay}>
-                  <Ionicons name="camera-outline" size={16} color="#ffffff" />
-                  <Text style={styles.customGarmentOverlayText} {...customTextProps}>Change garment</Text>
+                  <Text style={styles.customCardBadgeText} {...customTextProps}>CHANGE GARMENT</Text>
                 </View>
               </>
             ) : (
@@ -7189,24 +7800,10 @@ function CustomTryOnScreen({ user, setUser, setToken, token, onNavigate, onBack,
           </Pressable>
         </View>
 
-        {message ? <Text style={[styles.formMessage, styles.customTryOnMessage, /ready|generating|regenerating/i.test(message) ? null : styles.errorText]} {...customTextProps}>{message}</Text> : null}
         {hasGenerated ? <AiPreviewNote style={styles.customAiPreviewNote} content={reportContentReference(result, 'custom_tryon')} /> : null}
+        {layout.isTablet ? <View style={styles.customActionInlineTablet}>{generateButton}</View> : null}
       </ScrollView>
-      <View style={styles.customActionDock}>
-        <AppButton
-          label={loading ? (hasGenerated ? 'Regenerating…' : 'Creating your look…') : hasGenerated ? `Regenerate My Look · ${customTryOnCostLabel}` : `Generate My Look · ${customTryOnCostLabel}`}
-          icon="sparkles-outline"
-          disabled={loading}
-          onPress={submit}
-          style={styles.customGenerateButton}
-          labelProps={{
-            adjustsFontSizeToFit: true,
-            maxFontSizeMultiplier: 1.2,
-            minimumFontScale: 0.85,
-            numberOfLines: 1
-          }}
-        />
-      </View>
+      {!layout.isTablet ? <View onLayout={(event) => setActionDockHeight(event.nativeEvent.layout.height)} style={[styles.customActionDock, { bottom: actionDockBottom }]}>{generateButton}</View> : null}
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </View>
   );
@@ -7235,15 +7832,20 @@ function StyleBotScreen({
   setAiStudioTryOnErrors = () => {}
 }) {
   const { width } = useWindowDimensions();
+  const isTabletLayout = width >= 700;
+  const conversationInset = isTabletLayout ? Math.max(32, (width - 920) / 2) : 16;
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const [composerHeight, setComposerHeight] = useState(66);
   const [chatTryOnLoading, setChatTryOnLoading] = useState({});
   const [lightbox, setLightbox] = useState(null);
   const scrollRef = useRef(null);
   const requestInFlightRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
+  const userScrollingRef = useRef(false);
   const composerBottom = useRef(new Animated.Value(Platform.OS === 'ios' ? 10 : 14)).current;
   const composerTourTarget = useTourTarget('ai-studio-composer', registerTourTarget, { request: tourFocusRequest, scrollOffset: 84 });
   const messages = aiStudioMessages?.length ? aiStudioMessages : initialAiStudioMessages(user);
@@ -7312,15 +7914,25 @@ function StyleBotScreen({
     const keyboardGap = 8;
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const showSub = Keyboard.addListener(showEvent, (event) => {
+    let scrollTimer;
+    const updateForKeyboard = (event) => {
       const keyboardHeight = Math.max(0, event?.endCoordinates?.height || 0);
+      if (Platform.OS === 'ios') setKeyboardInset(keyboardHeight);
       Animated.timing(composerBottom, {
-        toValue: keyboardHeight + keyboardGap,
+        // Android adjustResize has already moved the screen above the keyboard.
+        toValue: Platform.OS === 'android' ? baseBottom : keyboardHeight + keyboardGap,
         duration: event?.duration || 220,
         useNativeDriver: false
       }).start();
-    });
+      if (shouldAutoScrollRef.current) {
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(() => scrollRef.current?.scrollToEnd?.({ animated: true }), (event?.duration || 220) + 40);
+      }
+    };
+    const showSub = Keyboard.addListener(showEvent, updateForKeyboard);
+    const frameSub = Platform.OS === 'ios' ? Keyboard.addListener('keyboardWillChangeFrame', updateForKeyboard) : null;
     const hideSub = Keyboard.addListener(hideEvent, (event) => {
+      if (Platform.OS === 'ios') setKeyboardInset(0);
       Animated.timing(composerBottom, {
         toValue: baseBottom,
         duration: event?.duration || 180,
@@ -7328,7 +7940,9 @@ function StyleBotScreen({
       }).start();
     });
     return () => {
+      clearTimeout(scrollTimer);
       showSub.remove();
+      frameSub?.remove();
       hideSub.remove();
     };
   }, [composerBottom]);
@@ -7357,8 +7971,10 @@ function StyleBotScreen({
     };
 
     setQuery('');
+    Keyboard.dismiss();
     requestInFlightRef.current = true;
     shouldAutoScrollRef.current = true;
+    userScrollingRef.current = false;
     setBusy(true);
     setMessages((current) => retrying
       ? current.map((message) => message.id === requestId ? { ...message, ...loadingMessage } : message)
@@ -7375,6 +7991,7 @@ function StyleBotScreen({
         timeoutMs: 70000,
         body: JSON.stringify({
           message: prompt,
+          catalogOnly: true,
           conversationId: aiStudioConversationId || '',
           history: requestHistory
         })
@@ -7390,7 +8007,7 @@ function StyleBotScreen({
         message.id === requestId
           ? {
             ...message,
-            text: data.reply || 'I found a few directions for you.',
+            text: stylistResponseText(data.reply || 'I found a few directions for you.'),
             products,
             outfits,
             actions,
@@ -7460,9 +8077,14 @@ function StyleBotScreen({
   }, [lastMessageScrollKey]);
 
   const handleConversationScroll = useCallback((event) => {
+    if (!userScrollingRef.current) return;
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
     shouldAutoScrollRef.current = distanceFromBottom < 120;
+  }, []);
+
+  const scrollToLatest = useCallback(() => {
+    if (shouldAutoScrollRef.current) scrollRef.current?.scrollToEnd?.({ animated: true });
   }, []);
 
   useEffect(() => {
@@ -7471,21 +8093,46 @@ function StyleBotScreen({
 
   if (!user) return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={onNavigate} />;
 
+  const tabletChatToolbar = isTabletLayout ? (
+    <View style={[styles.aiStudioToolbarTablet, hasUserMessages && styles.aiStudioToolbarActiveTablet]}>
+      <View style={styles.aiStudioToolbarLeading}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to previous page" style={styles.aiStudioBackButton} activeOpacity={0.82} onPress={() => onBack ? onBack() : onNavigate('home')}>
+          <Ionicons name="chevron-back" size={19} color="#3b3531" />
+          <Text style={styles.aiStudioBackButtonText}>Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.aiStudioToolbarLabel}>AI STYLIST</Text>
+      </View>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open chat history" style={styles.aiStudioHistoryButtonTablet} activeOpacity={0.82} onPress={() => setHistoryOpen(true)}>
+        <Ionicons name="chatbubbles-outline" size={18} color="#3b3531" />
+        <Text style={styles.aiStudioHistoryButtonText}>Chats</Text>
+      </TouchableOpacity>
+    </View>
+  ) : null;
+
   return (
     <View style={styles.aiStudioScreen}>
-      <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack} preserveWordmarkOnNarrow>
-        <TouchableOpacity style={styles.aiStudioMenuButton} activeOpacity={0.84} accessibilityLabel="Open chat history" onPress={() => setHistoryOpen(true)}>
-          <Ionicons name="menu-outline" size={22} color="#252221" />
-        </TouchableOpacity>
+      <ProductTopBar onNavigate={onNavigate} user={user} preserveWordmarkOnNarrow>
+        {!isTabletLayout ? (
+          <View style={styles.aiStudioMobileToolbar}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to previous page" style={styles.aiStudioBackButton} activeOpacity={0.82} onPress={() => onBack ? onBack() : onNavigate('home')}>
+              <Ionicons name="chevron-back" size={19} color="#3b3531" />
+              <Text style={styles.aiStudioBackButtonText}>Back</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.aiStudioMenuButton} activeOpacity={0.84} accessibilityLabel="Open chat history" onPress={() => setHistoryOpen(true)}>
+              <Ionicons name="menu-outline" size={22} color="#252221" />
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </ProductTopBar>
+      {isTabletLayout && hasUserMessages ? <View style={[styles.aiStudioToolbarDockTablet, { width: width - 64 }]}>{tabletChatToolbar}</View> : null}
       <Modal visible={historyOpen} transparent animationType="fade" onRequestClose={() => setHistoryOpen(false)}>
         <View style={styles.aiHistoryModal}>
-          <Pressable style={styles.aiHistoryBackdrop} onPress={() => setHistoryOpen(false)} />
+          <Pressable accessible={false} importantForAccessibility="no" style={styles.aiHistoryBackdrop} onPress={() => setHistoryOpen(false)} />
           <View style={[styles.aiHistoryDrawer, { width: drawerWidth }]}>
             <View style={styles.aiHistoryHeader}>
               <Text style={styles.aiHistoryTitle}>Chats</Text>
-              <TouchableOpacity style={styles.aiHistoryCloseButton} activeOpacity={0.82} onPress={() => setHistoryOpen(false)}>
-                <Ionicons name="close" size={19} color="#625b57" />
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close chat history" style={styles.aiHistoryCloseButton} activeOpacity={0.82} onPress={() => setHistoryOpen(false)}>
+                <DecorativeCloseIcon size={19} color="#625b57" />
               </TouchableOpacity>
             </View>
             <TouchableOpacity style={styles.aiHistoryNewButton} activeOpacity={0.86} onPress={startNewChat}>
@@ -7509,13 +8156,28 @@ function StyleBotScreen({
           </View>
         </View>
       </Modal>
-      <ScrollView ref={scrollRef} contentContainerStyle={styles.aiStudioContent} {...screenScrollProps} onScroll={handleConversationScroll}>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.aiStudioScroll}
+        contentContainerStyle={[styles.aiStudioContent, isTabletLayout && styles.aiStudioContentTablet, !hasUserMessages && isTabletLayout && styles.aiStudioContentWelcome, Platform.OS === 'ios' && keyboardInset > 0 && { paddingBottom: keyboardInset + composerHeight + 20 }]}
+        {...screenScrollProps}
+        showsVerticalScrollIndicator={hasUserMessages}
+        onScroll={handleConversationScroll}
+        onScrollBeginDrag={() => { userScrollingRef.current = true; }}
+        onScrollEndDrag={(event) => { handleConversationScroll(event); userScrollingRef.current = false; }}
+        onMomentumScrollBegin={() => { userScrollingRef.current = true; }}
+        onMomentumScrollEnd={(event) => { handleConversationScroll(event); userScrollingRef.current = false; }}
+        onContentSizeChange={scrollToLatest}
+        onLayout={scrollToLatest}
+      >
+        <View style={[styles.aiStudioConversation, !hasUserMessages && isTabletLayout && styles.aiStudioWelcomePanel]}>
+        {!hasUserMessages ? tabletChatToolbar : null}
         {!hasUserMessages ? (
           <View style={styles.aiStudioHero}>
             <View style={styles.aiStudioHeroCopy}>
               <Text style={styles.aiStudioHeroLabel}>YOUR PERSONAL AI STYLIST</Text>
-              <Text style={styles.aiStudioHeroTitle}>What are we styling today?</Text>
-              <Text style={styles.aiStudioHeroText}>Discover pieces, explore styles, and find what feels like you.</Text>
+              <Text style={[styles.aiStudioHeroTitle, isTabletLayout && !hasUserMessages && styles.aiStudioHeroTitleTablet]}>What are we styling today?</Text>
+              <Text style={[styles.aiStudioHeroText, isTabletLayout && !hasUserMessages && styles.aiStudioHeroTextTablet]}>Discover pieces, explore styles, and find what feels like you.</Text>
             </View>
           </View>
         ) : null}
@@ -7529,9 +8191,9 @@ function StyleBotScreen({
                 <View style={[styles.aiMessageBubble, userBubble ? styles.aiMessageBubbleUser : styles.aiMessageBubbleAssistant, introBubble && styles.aiMessageBubbleIntro, message.error && styles.aiMessageBubbleError]}>
                   {message.loading ? <ActivityIndicator size="small" color="#9b5658" /> : null}
                   {message.error ? <Ionicons name="alert-circle-outline" size={18} color="#7b6258" style={styles.aiMessageErrorIcon} /> : null}
-                  <Text style={[styles.aiMessageText, introBubble && styles.aiMessageTextIntro, userBubble && styles.aiMessageTextUser, message.error && styles.aiMessageTextError]}>{introBubble ? aiStudioWelcomeText(user) : message.text}</Text>
+                  <Text style={[styles.aiMessageText, introBubble && styles.aiMessageTextIntro, introBubble && isTabletLayout && styles.aiMessageTextIntroTablet, userBubble && styles.aiMessageTextUser, message.error && styles.aiMessageTextError]}>{introBubble ? aiStudioWelcomeText(user) : userBubble ? message.text : stylistResponseText(message.text)}</Text>
                 </View>
-                {!userBubble && !introBubble && !message.loading && !message.error ? <ReportContentAction content={message.reportableContent} /> : null}
+                {!userBubble && !introBubble && !message.loading && !message.error && message.reportableContent ? <ReportContentAction content={message.reportableContent} /> : null}
                 {message.error && message.retryPrompt ? (
                   <TouchableOpacity
                     accessibilityRole="button"
@@ -7551,35 +8213,38 @@ function StyleBotScreen({
                     <Text style={styles.aiRetryButtonText}>Retry</Text>
                   </TouchableOpacity>
                 ) : null}
-                {message.products?.length ? (
-                  <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.aiSuggestionProductsTrack}>
-                    {message.products.map((product) => {
+                {message.products?.some((product) => !isOnlineAiStudioProduct(product)) ? (
+                  <View>
+                    <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.aiSuggestionProductsTrack}>
+                      {message.products.filter((product) => !isOnlineAiStudioProduct(product)).map((product) => {
+                        const key = chatTryOnStateKey(message.id, product);
+                        const tryOnEnabled = !product.searchLink
+                          && product.tryOnAvailable !== false
+                          && product.aiTryOnAvailable !== false
+                          && Boolean(product.imageUrl || product.remoteImageUrl || product.thumbnail);
+                        const tryOn = tryOnEnabled ? chatTryOns[key] : null;
+                        const previewUri = productImageSource(product, tryOn)?.uri;
+                        return (
+                          <ConciergeSuggestionCard
+                            key={key}
+                            product={product}
+                            actionLabel={tryOnEnabled ? (tryOn?.imageUrl ? 'Generate Again' : 'Generate Try-On') : 'View product'}
+                            tryOn={tryOn}
+                            tryOnLoading={tryOnEnabled && Boolean(chatTryOnLoading[key])}
+                            tryOnError={tryOnEnabled ? chatTryOnErrors[key] : ''}
+                            onPreview={previewUri ? () => setLightbox(previewUri) : null}
+                            onOpenProduct={() => onNavigate('product', { id: product.id })}
+                            onShop={() => onNavigate('product', { id: product.id })}
+                            onTryOn={tryOnEnabled ? () => generateChatTryOn(product, key) : undefined}
+                          />
+                        );
+                      })}
+                    </ScrollView>
+                    {message.products.some((product) => {
                       const key = chatTryOnStateKey(message.id, product);
-                      const onlineProduct = isOnlineAiStudioProduct(product);
-                      const tryOnEnabled = !product.searchLink
-                        && product.tryOnAvailable !== false
-                        && product.aiTryOnAvailable !== false
-                        && Boolean(product.imageUrl || product.remoteImageUrl || product.thumbnail);
-                      const tryOn = tryOnEnabled ? chatTryOns[key] : null;
-                      const previewUri = productImageSource(product, tryOn)?.uri;
-                      return (
-                        <ConciergeSuggestionCard
-                          key={key}
-                          product={product}
-                          actionLabel={tryOnEnabled ? (tryOn?.imageUrl ? 'Generate Again' : 'Generate Try-On') : onlineProduct ? (product.searchLink ? 'Search Amazon' : 'View on Amazon') : 'View product'}
-                          tryOn={tryOn}
-                          tryOnLoading={tryOnEnabled && Boolean(chatTryOnLoading[key])}
-                          tryOnError={tryOnEnabled ? chatTryOnErrors[key] : ''}
-                          onPreview={previewUri ? () => setLightbox(previewUri) : null}
-                          onOpenProduct={() => onlineProduct
-                            ? openExternalWebUrl(product.affiliateLink || product.sourceUrl)
-                            : onNavigate('product', { id: product.id })}
-                          onShop={() => product.affiliateLink || product.sourceUrl ? openExternalWebUrl(product.affiliateLink || product.sourceUrl) : onNavigate('product', { id: product.id })}
-                          onTryOn={tryOnEnabled ? () => generateChatTryOn(product, key) : undefined}
-                        />
-                      );
-                    })}
-                  </ScrollView>
+                      return !isOnlineAiStudioProduct(product) && Boolean(chatTryOns[key]?.imageUrl);
+                    }) ? <AiPreviewNote style={styles.aiStudioPreviewNote} /> : null}
+                  </View>
                 ) : null}
                 {message.outfits?.length ? (
                   <View style={styles.aiOutfitList}>
@@ -7588,7 +8253,7 @@ function StyleBotScreen({
                 ) : null}
                 {message.actions?.length ? (
                   <View style={styles.aiFollowUpRow}>
-                    {message.actions.map((action) => (
+                    {message.actions.filter((action) => !/amazon|online|web/i.test(`${action.type || ''} ${action.label || ''} ${action.prompt || ''}`)).map((action) => (
                       <TouchableOpacity
                         key={`${message.id}-${action.type}-${action.label}`}
                         style={[styles.aiFollowUpChip, (action.disabled || busy) && styles.disabledButton]}
@@ -7618,21 +8283,35 @@ function StyleBotScreen({
         {!hasUserMessages ? (
           <View style={styles.aiStarterPanel}>
             <Text style={styles.aiStarterTitle}>Explore a style</Text>
-            <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.aiStarterGrid}>
-              {aiStudioStarterPrompts.map((starter) => (
-                <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Ask your stylist about ${starter.title}`} key={starter.prompt} style={styles.aiStarterCard} activeOpacity={0.76} onPress={() => submit(starter.prompt)}>
-                  <Text style={styles.aiStarterCardTitle} numberOfLines={1}>{starter.title}</Text>
-                  <Ionicons name="arrow-up-outline" size={14} color="#625b57" style={styles.aiStarterArrow} />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            {isTabletLayout ? (
+              <View style={styles.aiStarterGridTablet}>
+                {aiStudioStarterPrompts.map((starter) => (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Ask your stylist about ${starter.title}`} key={starter.prompt} style={styles.aiStarterCardTablet} activeOpacity={0.76} disabled={busy} onPress={() => submit(starter.prompt)}>
+                    <View style={styles.aiStarterIconTablet}><Ionicons name={starter.icon} size={23} color="#9b5658" /></View>
+                    <Text style={styles.aiStarterCardTitleTablet}>{starter.title}</Text>
+                    <Text style={styles.aiStarterCardTextTablet}>{starter.text}</Text>
+                    <Ionicons name="arrow-forward-outline" size={18} color="#625b57" style={styles.aiStarterArrowTablet} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.aiStarterGrid}>
+                {aiStudioStarterPrompts.map((starter) => (
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Ask your stylist about ${starter.title}`} key={starter.prompt} style={styles.aiStarterCard} activeOpacity={0.76} disabled={busy} onPress={() => submit(starter.prompt)}>
+                    <Text style={styles.aiStarterCardTitle} numberOfLines={1}>{starter.title}</Text>
+                    <Ionicons name="arrow-up-outline" size={14} color="#625b57" style={styles.aiStarterArrow} />
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
           </View>
         ) : null}
+        </View>
       </ScrollView>
 
-      <Animated.View ref={composerTourTarget.ref} onLayout={composerTourTarget.onLayout} style={[styles.aiComposer, composerFocused && styles.aiComposerFocused, { bottom: composerBottom }]}>
-        <TextInput accessibilityLabel="Message your AI stylist" style={styles.aiComposerInput} value={query} onChangeText={setQuery} onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)} placeholder="Ask your stylist anything..." placeholderTextColor="#77716c" returnKeyType="send" onSubmitEditing={() => submit()} />
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Send message" style={[styles.aiSendButton, !busy && !query.trim() && styles.aiSendButtonDisabled]} disabled={!query.trim() || busy} onPress={() => submit()}>
+      <Animated.View ref={composerTourTarget.ref} onLayout={(event) => { composerTourTarget.onLayout(event); setComposerHeight(event.nativeEvent.layout.height); }} style={[styles.aiComposer, isTabletLayout && styles.aiComposerTablet, { left: conversationInset, right: conversationInset, bottom: composerBottom }, composerFocused && styles.aiComposerFocused]}>
+        <TextInput accessibilityLabel="Message your AI stylist" style={[styles.aiComposerInput, isTabletLayout && styles.aiComposerInputTablet]} value={query} onChangeText={setQuery} onFocus={() => { setComposerFocused(true); shouldAutoScrollRef.current = true; }} onBlur={() => setComposerFocused(false)} placeholder="Ask your stylist anything..." placeholderTextColor="#77716c" returnKeyType="send" onSubmitEditing={() => submit()} />
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Send message" style={[styles.aiSendButton, isTabletLayout && styles.aiSendButtonTablet, !busy && !query.trim() && styles.aiSendButtonDisabled]} disabled={!query.trim() || busy} onPress={() => submit()}>
           <Ionicons name={busy ? 'hourglass-outline' : 'send'} size={22} color={!busy && !query.trim() ? '#625c56' : '#ffffff'} />
         </TouchableOpacity>
       </Animated.View>
@@ -7733,8 +8412,8 @@ function AddMoreCard({ selected, onPress, style, plans = [] }) {
 
 function TopUpCreditCard({ plan, selected, onPress, style, displayPrice, hideRate = false }) {
   return (
-    <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${plan.credits} credits, ${displayPrice || creditPackageDisplayPrice('web', plan)}, ${selected ? 'selected' : 'select package'}`} accessibilityState={{ selected }} activeOpacity={0.88} style={[styles.topUpCreditCard, Platform.OS === 'ios' && styles.iosGlassCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
-      <IosGlassBackdrop />
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={`${plan.credits} credits, ${displayPrice || creditPackageDisplayPrice('web', plan)}, ${selected ? 'selected' : 'select package'}`} accessibilityState={{ selected }} activeOpacity={0.88} style={[styles.topUpCreditCard, styles.surfaceCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      <SurfaceBackdrop />
       <View style={styles.creditPackageHeader}><Text style={styles.creditPackageQuantity}>{plan.credits} Credits</Text>{selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}</View>
       <Text style={styles.topUpPrice}>{displayPrice || creditPackageDisplayPrice('web', plan)}</Text>
       {!hideRate && <Text style={styles.creditMutedText}>{formatCreditRate(plan)}</Text>}
@@ -8021,7 +8700,6 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
       const subscriptionProduct = findStoreKitProduct(subscriptionProducts, STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID);
       const creditProductsById = storeKitProductsById(consumableProducts);
       const creditProducts = STOREKIT_CONSUMABLE_PRODUCT_IDS.map((productId) => creditProductsById[productId]).filter(Boolean);
-      const missingCreditProducts = STOREKIT_CONSUMABLE_PRODUCT_IDS.filter((productId) => !creditProductsById[productId]);
       updateState({
         loading: false,
         connected: true,
@@ -8029,7 +8707,7 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
         creditProducts,
         creditProductsById,
         activeSubscriptions: Array.isArray(activeSubscriptions) ? activeSubscriptions : [],
-        unavailableReason: !subscriptionProduct || missingCreditProducts.length ? 'Some App Store products are not available for this Apple ID/build yet.' : ''
+        unavailableReason: !subscriptionProduct && !creditProducts.length ? 'App Store products are not available for this Apple ID/build yet.' : ''
       });
     } catch (error) {
       updateState({
@@ -8295,8 +8973,8 @@ function useAppleStoreKitPayments({ enabled, user, setUser, onRequireAuth }) {
 function AppleStoreKitCreditCard({ selected, active, product, title, kicker, headline, subhead, description, onPress, style }) {
   const price = storeKitProductPrice(product);
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, Platform.OS === 'ios' && styles.iosGlassCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
-      <IosGlassBackdrop />
+    <TouchableOpacity activeOpacity={0.88} style={[styles.creditMandateCard, styles.surfaceCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      <SurfaceBackdrop />
       <View style={styles.creditSelectedRow}>
         {selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}
         {active ? <Text style={styles.creditActivePill}>ACTIVE</Text> : null}
@@ -8314,8 +8992,8 @@ function AppleStoreKitCreditCard({ selected, active, product, title, kicker, hea
 function AppleStoreKitTopUpCard({ plan, product, selected, onPress, style }) {
   const price = storeKitProductPrice(product);
   return (
-    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, Platform.OS === 'ios' && styles.iosGlassCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
-      <IosGlassBackdrop />
+    <TouchableOpacity activeOpacity={0.88} style={[styles.topUpCreditCard, styles.surfaceCard, style, selected && styles.creditMandateCardSelected]} onPress={onPress}>
+      <SurfaceBackdrop />
       <View style={styles.creditPackageHeader}><Text style={styles.creditPackageQuantity}>{plan.credits} Credits</Text>{selected ? <Text style={styles.creditSelectedPill}>SELECTED</Text> : null}</View>
       <Text style={styles.topUpPrice}>{price || 'Unavailable'}</Text>
       <Text style={styles.creditCardDescription}>{creditPackageDescription(plan)}</Text>
@@ -8323,12 +9001,12 @@ function AppleStoreKitTopUpCard({ plan, product, selected, onPress, style }) {
   );
 }
 
-function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly, selectedTopUp, plansError = false, plansLoading = false }) {
+function AppleStoreKitActions({ mode, appleStoreKit, activeMonthly, selectedTopUp, advertisedProductIds, subscriptionProduct, plansError = false, plansLoading = false }) {
   const buyingSubscription = appleStoreKit.purchasingProductId === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID;
   const buyingCredits = isStoreKitConsumableProductId(appleStoreKit.purchasingProductId);
   const busy = appleStoreKit.loading || appleStoreKit.verifying || appleStoreKit.purchasePending || appleStoreKit.syncing || appleStoreKit.restoring;
-  const selectedTopUpProductId = storeKitProductIdForTopUpPlan(selectedTopUp);
-  const selectedProduct = mode === 'top_up' ? appleStoreKit.creditProductsById[selectedTopUpProductId] : appleStoreKit.subscriptionProduct;
+  const selectedTopUpProductId = advertisedStoreKitProductIdForTopUpPlan(selectedTopUp, advertisedProductIds);
+  const selectedProduct = mode === 'top_up' ? appleStoreKit.creditProductsById[selectedTopUpProductId] : subscriptionProduct;
   const disabled = plansError || plansLoading || busy || !appleStoreKit.connected || !storeKitProductPrice(selectedProduct) || (mode === 'subscription' && activeMonthly);
   let label = mode === 'top_up' ? `BUY ${Number(selectedTopUp?.credits) || ''} CREDITS`.trim() : 'SUBSCRIBE WITH APPLE';
   if (plansLoading) label = 'LOADING PLANS';
@@ -8413,14 +9091,21 @@ function TokensScreen({ user, setUser, token, onNavigate, onBack, onRequireAuth 
   const terms = subscriptionTerms(subscriptionPlan);
   const activeAppleMonthly = isAppleCheckout && subscription?.provider === 'apple' && activeMonthly;
   const appleStoreKit = useAppleStoreKitPayments({ enabled: isAppleCheckout, user, setUser, onRequireAuth });
-  const appleSelectedTopUpProductId = storeKitProductIdForTopUpPlan(selectedTopUp);
-  const appleSelectedProduct = mode === 'top_up' ? appleStoreKit.creditProductsById[appleSelectedTopUpProductId] : appleStoreKit.subscriptionProduct;
+  const advertisedAppleTopUpProductIds = catalog.appStoreProductIds?.creditTopUps || {};
+  const appleSubscriptionProduct = catalog.appStoreProductIds?.monthlySubscription === STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID
+    ? appleStoreKit.subscriptionProduct
+    : null;
+  const appleSelectedTopUpProductId = advertisedStoreKitProductIdForTopUpPlan(selectedTopUp, advertisedAppleTopUpProductIds);
+  const appleSelectedProduct = mode === 'top_up' ? appleStoreKit.creditProductsById[appleSelectedTopUpProductId] : appleSubscriptionProduct;
   const appleSelectedPrice = storeKitProductPrice(appleSelectedProduct) || 'Unavailable';
-  const appleSelectedProductId = mode === 'top_up' ? appleSelectedTopUpProductId : STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID;
+  const appleSelectedProductId = mode === 'top_up' ? appleSelectedTopUpProductId : appleSubscriptionProduct ? STOREKIT_MONTHLY_SUBSCRIPTION_PRODUCT_ID : '';
   const selectedStoreProduct = isAppleCheckout ? appleSelectedProduct : googlePlay.products[selectedTopUp?.id];
   const purchaseAvailability = creditPurchaseAvailability({ platform: Platform.OS, enabled: googlePlayEnabled, connected: appleStoreKit.connected, product: selectedStoreProduct, busy: isAppleCheckout ? appleStoreKit.purchasePending || appleStoreKit.verifying : googlePlay.busy });
+  const appleCatalogMessage = !plansLoading && !plansError && !appleStoreKit.loading && appleStoreKit.connected && !appleSelectedProduct
+    ? 'This credit product is unavailable until the App Store and Lookmefy catalog agree.'
+    : '';
   const visibleMessage = isAppleCheckout
-    ? appleStoreKit.error || appleStoreKit.statusMessage || appleStoreKit.unavailableReason
+    ? appleStoreKit.error || appleStoreKit.unavailableReason || appleCatalogMessage || appleStoreKit.statusMessage
     : isAndroidCheckout ? mode !== 'top_up' ? 'Monthly billing is unavailable on Android.' : googlePlay.error || googlePlay.message || (!purchaseAvailability.available ? purchaseAvailability.label : '') : message;
   const creditBalance = knownCreditBalance(user);
   const creditBalanceLabel = creditBalance === null ? 'Unavailable' : typeof creditBalance === 'number' ? creditBalance.toLocaleString('en-IN') : String(creditBalance);
@@ -8429,7 +9114,7 @@ function TokensScreen({ user, setUser, token, onNavigate, onBack, onRequireAuth 
   const creditChoiceCardStyle = layout.isTablet ? styles.creditGridCardHalf : null;
   const topUpCreditCardStyle = layout.isTablet ? (layout.isLargeTablet ? styles.creditGridCardThird : styles.creditGridCardHalf) : null;
   const messageIsError = isAppleCheckout
-    ? Boolean(appleStoreKit.error || appleStoreKit.unavailableReason)
+    ? Boolean(appleStoreKit.error || appleStoreKit.unavailableReason || appleCatalogMessage)
     : isAndroidCheckout ? mode !== 'top_up' || Boolean(googlePlay.error || !googlePlayEnabled) : /failed|missing|not|error|could not|unavailable/i.test(message);
 
   const refreshBalance = useCallback(async () => {
@@ -8471,7 +9156,7 @@ function TokensScreen({ user, setUser, token, onNavigate, onBack, onRequireAuth 
           subscription: subscriptionFromPlans || fallbackSubscriptionPlan,
           topUps: topUps.length ? topUps : fallbackTopUpPlans,
           androidGooglePlay: data?.androidGooglePlay || { enabled: false, products: [] },
-          appStoreProductIds: data?.appStoreProductIds || fallbackPaymentCatalog.appStoreProductIds,
+          appStoreProductIds: data?.appStoreProductIds || {},
           creditCosts: data?.creditCosts || fallbackPaymentCatalog.creditCosts
         });
         if (topUps[0]?.id) setSelectedTopUpId(topUps[0].id);
@@ -8646,11 +9331,11 @@ function TokensScreen({ user, setUser, token, onNavigate, onBack, onRequireAuth 
         </Text>
       </View>
 
-      <View style={[styles.creditsBalanceCard, Platform.OS === 'ios' && styles.iosGlassCard]}>
-        <IosGlassBackdrop />
+      <View style={[styles.creditsBalanceCard, styles.surfaceCard]}>
+        <SurfaceBackdrop />
         <View style={styles.creditsBalanceCopy}>
           <Text style={styles.creditsBalanceLabel}>AVAILABLE CREDITS</Text>
-          <Text style={styles.creditsBalanceNumber} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7} accessibilityLabel={creditBalance === null ? 'Credit balance unavailable' : `${creditBalanceLabel} available credits`}>{creditBalanceLabel}</Text>
+          <Text style={styles.creditsBalanceNumber} numberOfLines={1} adjustsFontSizeToFit={Platform.OS === 'ios'} minimumFontScale={0.7} accessibilityLabel={creditBalance === null ? 'Credit balance unavailable' : `${creditBalanceLabel} available credits`}>{creditBalanceLabel}</Text>
           <Text style={styles.creditsBalanceHelp}>{balanceRefreshing ? 'Checking your balance...' : balanceError ? 'Could not refresh balance. Last known value shown, if available.' : creditBalance === null ? 'Refresh your account to see your balance.' : `Image try-ons use ${creditCosts.image} credit${creditCosts.image === 1 ? '' : 's'}; videos use ${creditCosts.video} credits.`}</Text>
           {balanceError || creditBalance === null ? <TouchableOpacity accessibilityRole="button" disabled={balanceRefreshing} onPress={refreshBalance}><Text style={styles.creditsRetryText}>Retry balance</Text></TouchableOpacity> : null}
         </View>
@@ -8668,7 +9353,7 @@ function TokensScreen({ user, setUser, token, onNavigate, onBack, onRequireAuth 
         isAppleCheckout ? (
           <View style={[styles.topUpGrid, layout.isTablet && styles.creditResponsiveGrid]}>
             {topUpPlans.map((planItem) => {
-              const productId = storeKitProductIdForTopUpPlan(planItem);
+              const productId = advertisedStoreKitProductIdForTopUpPlan(planItem, advertisedAppleTopUpProductIds);
               return (
                 <AppleStoreKitTopUpCard
                   key={planItem.id}
@@ -8700,7 +9385,7 @@ function TokensScreen({ user, setUser, token, onNavigate, onBack, onRequireAuth 
         <View style={[styles.creditChoiceGrid, layout.isTablet && styles.creditResponsiveGrid]}>
           {isAppleCheckout ? (
             <AppleStoreKitCreditCard
-              product={appleStoreKit.subscriptionProduct}
+              product={appleSubscriptionProduct}
               selected={mode === 'subscription'}
               active={activeAppleMonthly}
               title="Lookmefy Premium Monthly"
@@ -8789,7 +9474,7 @@ function TokensScreen({ user, setUser, token, onNavigate, onBack, onRequireAuth 
       {visibleMessage ? <Text accessibilityLiveRegion="polite" style={[styles.creditsMessage, messageIsError ? styles.errorText : null]}>{visibleMessage}</Text> : null}
 
       {isAppleCheckout ? (
-        <AppleStoreKitActions mode={mode} appleStoreKit={appleStoreKit} activeMonthly={activeAppleMonthly} selectedTopUp={selectedTopUp} plansError={plansError} plansLoading={plansLoading} />
+        <AppleStoreKitActions mode={mode} appleStoreKit={appleStoreKit} activeMonthly={activeAppleMonthly} selectedTopUp={selectedTopUp} advertisedProductIds={advertisedAppleTopUpProductIds} subscriptionProduct={appleSubscriptionProduct} plansError={plansError} plansLoading={plansLoading} />
       ) : isAndroidCheckout ? (
         <TouchableOpacity accessibilityRole="button" accessibilityLabel={googlePlay.busy ? 'Verifying purchase' : mode !== 'top_up' ? 'Monthly billing unavailable' : plansLoading ? 'Loading credit plans' : plansError || !purchaseAvailability.available ? 'Credit purchases unavailable' : 'Buy with Google Play'} accessibilityState={{ disabled: plansLoading || plansError || !purchaseAvailability.available || mode !== 'top_up', busy: googlePlay.busy }} style={[styles.secureCheckoutButton, (plansLoading || plansError || !purchaseAvailability.available || mode !== 'top_up') && styles.disabledButton]} activeOpacity={0.88} disabled={plansLoading || plansError || !purchaseAvailability.available || mode !== 'top_up'} onPress={() => googlePlay.purchase(selectedTopUp.id)}>
           <Text style={styles.secureCheckoutText}>{googlePlay.busy ? 'VERIFYING PURCHASE' : mode !== 'top_up' ? 'MONTHLY BILLING UNAVAILABLE' : plansLoading ? 'LOADING PLANS' : plansError || !purchaseAvailability.available ? 'PURCHASES UNAVAILABLE' : 'BUY WITH GOOGLE PLAY'}</Text>
@@ -8870,6 +9555,7 @@ const wishlistSortOptions = [
 ];
 
 function wishlistProductGroup(product = {}) {
+  const category = [product.category, product.subcategory, product.type].join(' ').toLowerCase();
   const text = [
     product.category,
     product.subcategory,
@@ -8878,11 +9564,13 @@ function wishlistProductGroup(product = {}) {
     product.title,
     product.name
   ].join(' ').toLowerCase();
+  if (/(?:footwear|shoe|sneaker|sandal|heel|loafer|boot|slipper|mule)/.test(category)) return 'footwear';
+  if (/(?:accessor(?:y|ies)|jewel(?:ry|lery)|watch|eyewear|glass|bag|purse|belt|wallet|scarf|hat|cap)/.test(category)) return 'accessories';
   if (/(?:\bbottomwear\b|\bbottoms?\b|\bjeans?\b|\bdenim\b|\bpants?\b|\btrousers?\b|\bshorts?\b|\bskirts?\b|\bleggings?\b|\bpalazzos?\b)/.test(text)) return 'clothing';
   if (/(?:\btops?\b|\bshirts?\b|\bt-?shirts?\b|\bkurtas?\b|\bdresses?\b|\bsarees?\b|\bsuits?\b|\bjackets?\b|\bouterwear\b|\bactivewear\b|\bethnic\b|\bclothing\b)/.test(text)) return 'clothing';
   if (/(?:footwear|shoe|sneaker|sandal|heel|loafer|boot|slipper|toe|pump|flat|mule)/.test(text)) return 'footwear';
   if (/(?:\baccessor(?:y|ies)\b|\bjewel(?:ry|lery)?\b|\bearrings?\b|\bpiercings?\b|\bchains?\b|\bnecklaces?\b|\bbracelets?\b|\bwatches?\b|\beyewear\b|\bsunglasses?\b|\bglasses?\b|\bbags?\b|\bpurses?\b|\bbelts?\b|\bwallets?\b|\bscarves?\b|\bhats?\b|\bcaps?\b)/.test(text)) return 'accessories';
-  return 'clothing';
+  return 'other';
 }
 
 function wishlistSavedTime(product = {}, index = 0, total = 0) {
@@ -8891,7 +9579,7 @@ function wishlistSavedTime(product = {}, index = 0, total = 0) {
   return Number.isFinite(time) ? time : total - index;
 }
 
-function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], wishlistReady, wishlistLoadError, wishlistMutatingId, onRetryWishlist, user, onRemoveFromWishlist, onCreateCollection }) {
+function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], wishlistReady, wishlistLoadError, wishlistMutatingId, onRetryWishlist, user, onRemoveFromWishlist }) {
   const layout = useResponsiveLayout();
   const { fontScale = 1 } = useWindowDimensions();
   const [activeFilter, setActiveFilter] = useState('all');
@@ -8899,16 +9587,19 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], wish
   const [requestedGridColumns, setRequestedGridColumns] = useState(2);
   const [wishlistSortKey, setWishlistSortKey] = useState('recent');
   const [wishlistSortOpen, setWishlistSortOpen] = useState(false);
-  const [collectionSheetVisible, setCollectionSheetVisible] = useState(false);
-  const [collectionName, setCollectionName] = useState('');
-  const [collectionProductIds, setCollectionProductIds] = useState([]);
   const wishlistGridColumns = wishlistGridColumnsForWidth(layout.windowWidth, requestedGridColumns);
   const forceReadableList = layout.windowWidth <= 340 && fontScale >= 1.2;
   const displayedViewMode = forceReadableList ? 'list' : wishlistViewMode;
   const recommended = useProducts({ sort: 'newest', limit: 6 }, token);
-  const activeFilterLabel = wishlistFilterTabs.find((tab) => tab.key === activeFilter)?.label || 'All Items';
+  const availableFilterTabs = useMemo(() => {
+    const savedGroups = new Set(wishlistProducts.map(wishlistProductGroup));
+    return wishlistFilterTabs.filter((tab) => tab.key === 'all' || savedGroups.has(tab.key));
+  }, [wishlistProducts]);
+  const visibleFilter = availableFilterTabs.some((tab) => tab.key === activeFilter) ? activeFilter : 'all';
+  useEffect(() => { if (activeFilter !== visibleFilter) setActiveFilter(visibleFilter); }, [activeFilter, visibleFilter]);
+  const activeFilterLabel = availableFilterTabs.find((tab) => tab.key === visibleFilter)?.label || 'All Items';
   const activeSortLabel = wishlistSortOptions.find((option) => option.key === wishlistSortKey)?.label || 'Recently Added';
-  const wishlistSortHeading = activeFilter === 'all' ? activeSortLabel : `${activeFilterLabel} • ${activeSortLabel}`;
+  const wishlistSortHeading = visibleFilter === 'all' ? activeSortLabel : `${activeFilterLabel} • ${activeSortLabel}`;
   const displayedWishlistProducts = useMemo(() => {
     const decorated = wishlistProducts.map((product, index) => ({
       product,
@@ -8917,7 +9608,7 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], wish
       savedTime: wishlistSavedTime(product, index, wishlistProducts.length)
     }));
     return decorated
-      .filter((item) => activeFilter === 'all' || item.group === activeFilter)
+      .filter((item) => visibleFilter === 'all' || item.group === visibleFilter)
       .sort((a, b) => {
         if (wishlistSortKey === 'oldest') return a.savedTime - b.savedTime || a.index - b.index;
         if (wishlistSortKey === 'price-low' || wishlistSortKey === 'price-high') {
@@ -8931,30 +9622,8 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], wish
         return b.savedTime - a.savedTime || a.index - b.index;
       })
       .map((item) => item.product);
-  }, [activeFilter, wishlistProducts, wishlistSortKey]);
+  }, [visibleFilter, wishlistProducts, wishlistSortKey]);
   const filteredEmpty = Boolean(wishlistProducts.length) && !displayedWishlistProducts.length;
-  const selectedCollectionCount = collectionProductIds.length;
-  const canCreateCollection = collectionName.trim().length > 0 && selectedCollectionCount > 0;
-  const openCollectionSheet = () => {
-    setCollectionName('');
-    setCollectionProductIds([]);
-    setCollectionSheetVisible(true);
-  };
-  const toggleCollectionProduct = (productId) => {
-    const id = String(productId || '');
-    if (!id) return;
-    setCollectionProductIds((current) => current.includes(id) ? current.filter((itemId) => itemId !== id) : [...current, id]);
-  };
-  const saveCollection = () => {
-    if (!canCreateCollection) return;
-    onCreateCollection?.({
-      name: collectionName.trim(),
-      productIds: collectionProductIds
-    });
-    setCollectionSheetVisible(false);
-    setCollectionName('');
-    setCollectionProductIds([]);
-  };
   return (
     <>
       <View style={styles.wishlistScreen}>
@@ -8967,24 +9636,17 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], wish
           <Text style={styles.wishlistTitle}>My Wishlist</Text>
           <Text style={styles.wishlistSubtitle}>Pieces you've saved, all in one place.</Text>
           {wishlistReady && !wishlistLoadError ? <Text style={styles.wishlistCount}>{wishlistProducts.length} saved {wishlistProducts.length === 1 ? 'piece' : 'pieces'}</Text> : null}
-          {wishlistReady && !wishlistLoadError && wishlistProducts.length ? <View style={styles.wishlistActionRow}>
-            <TouchableOpacity style={styles.wishlistCreateButton} activeOpacity={0.86} onPress={openCollectionSheet}>
-              <Ionicons name="add" size={18} color="#ffffff" />
-              <Text style={styles.wishlistCreateText}>Create Collection</Text>
-            </TouchableOpacity>
-          </View> : null}
-
         {wishlistReady && !wishlistLoadError && wishlistProducts.length ? <><ScrollView {...horizontalScrollProps} contentContainerStyle={styles.wishlistTabs}>
-          {wishlistFilterTabs.map((tab) => (
+          {availableFilterTabs.map((tab) => (
             <TouchableOpacity
               key={tab.key}
               accessibilityRole="button"
-              accessibilityState={{ selected: activeFilter === tab.key }}
+              accessibilityState={{ selected: visibleFilter === tab.key }}
               activeOpacity={0.78}
               style={[styles.wishlistTab, { minWidth: wishlistFilterTabMinWidth(tab.label, fontScale) }]}
               onPress={() => setActiveFilter(tab.key)}
             >
-              <Text style={[styles.wishlistTabText, activeFilter === tab.key && styles.wishlistTabTextActive]}>{tab.label}</Text>
+              <Text style={[styles.wishlistTabText, visibleFilter === tab.key && styles.wishlistTabTextActive]}>{tab.label}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -9103,57 +9765,6 @@ function WishlistScreen({ onNavigate, onBack, token, wishlistProducts = [], wish
       </ScrollView>
       </View>
 
-      <Modal visible={collectionSheetVisible} transparent animationType="slide" onRequestClose={() => setCollectionSheetVisible(false)}>
-        <Pressable style={styles.collectionSheetBackdrop} onPress={() => setCollectionSheetVisible(false)}>
-          <Pressable style={styles.collectionSheet} onPress={(event) => event.stopPropagation()}>
-            <View style={styles.collectionSheetHandle} />
-            <View style={styles.collectionSheetHead}>
-              <View>
-                <Text style={styles.collectionSheetTitle}>Create Collection</Text>
-                <Text style={styles.collectionSheetSub}>Name it and choose saved items.</Text>
-              </View>
-              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close collection form" style={styles.collectionSheetClose} onPress={() => setCollectionSheetVisible(false)}>
-                <Ionicons name="close" size={18} color="#5d5754" />
-              </TouchableOpacity>
-            </View>
-            <TextInput
-              value={collectionName}
-              onChangeText={setCollectionName}
-              placeholder="Collection name"
-              placeholderTextColor="#8d8682"
-              style={styles.collectionNameInput}
-              autoCapitalize="words"
-              returnKeyType="done"
-            />
-            <View style={styles.collectionPickerHead}>
-              <Text style={styles.collectionPickerTitle}>Add from wishlist</Text>
-              <Text style={styles.collectionPickerCount}>{selectedCollectionCount} selected</Text>
-            </View>
-            <ScrollView style={styles.collectionPickerList} contentContainerStyle={styles.collectionPickerContent} showsVerticalScrollIndicator={false}>
-              {wishlistProducts.length ? wishlistProducts.map((product) => {
-                const selected = collectionProductIds.includes(String(product.id));
-                return (
-                  <TouchableOpacity key={product.id} style={[styles.collectionPickerItem, selected && styles.collectionPickerItemSelected]} activeOpacity={0.82} onPress={() => toggleCollectionProduct(product.id)}>
-                    <ProductImage product={product} style={styles.collectionPickerImage} resizeMode="cover" alt={product.title || product.name} />
-                    <View style={styles.collectionPickerCopy}>
-                      <Text style={styles.collectionPickerBrand} numberOfLines={1}>{product.displayLabel || titleCase(product.category || 'Catalog')}</Text>
-                      <Text style={styles.collectionPickerName} numberOfLines={2}>{product.title || product.name}</Text>
-                    </View>
-                    <View style={[styles.collectionPickerCheck, selected && styles.collectionPickerCheckSelected]}>
-                      {selected ? <Ionicons name="checkmark" size={15} color="#ffffff" /> : null}
-                    </View>
-                  </TouchableOpacity>
-                );
-              }) : (
-                <EmptyStateCard compact icon="heart-outline" title="No wishlist items" text="Save styles first, then add them to collections." />
-              )}
-            </ScrollView>
-            <TouchableOpacity style={[styles.collectionCreateSubmit, !canCreateCollection && styles.disabledButton]} activeOpacity={0.88} disabled={!canCreateCollection} onPress={saveCollection}>
-              <Text style={styles.collectionCreateSubmitText}>Create Collection</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </>
   );
 }
@@ -9188,7 +9799,7 @@ function CollectionsScreen({ onNavigate, onBack, user, collections = [], wishlis
       <View style={styles.collectionsHero}>
         <Text style={styles.collectionsEyebrow}>Saved groups</Text>
         <Text style={styles.collectionsTitle}>My Collections</Text>
-        <Text style={styles.collectionsText}>Collections you create from Wishlist live here, like playlists for saved styles.</Text>
+        <Text style={styles.collectionsText}>Your previously saved groups are here.</Text>
       </View>
 
       {collections.length ? (
@@ -9219,7 +9830,7 @@ function CollectionsScreen({ onNavigate, onBack, user, collections = [], wishlis
           <EmptyStateCard
             icon="albums-outline"
             title="No collections yet"
-            text="Create a collection from Wishlist and selected saved styles will appear here."
+            text="Your saved pieces are available in My Wishlist."
             actionLabel="Open Wishlist"
             onAction={() => onNavigate('wishlist')}
           />
@@ -9233,17 +9844,13 @@ function CollectionsScreen({ onNavigate, onBack, user, collections = [], wishlis
               <Text style={styles.collectionDetailTitle}>{selectedCollection.name}</Text>
               <Text style={styles.collectionDetailMeta}>{selectedProducts.length} saved style{selectedProducts.length === 1 ? '' : 's'}</Text>
             </View>
-            <TouchableOpacity style={styles.collectionAddMoreButton} activeOpacity={0.84} onPress={() => onNavigate('wishlist')}>
-              <Ionicons name="add" size={16} color="#111111" />
-              <Text style={styles.collectionAddMoreText}>Add More</Text>
-            </TouchableOpacity>
           </View>
 
           <View style={styles.collectionProductGrid}>
             {selectedProducts.length ? selectedProducts.map((product) => (
               <WishlistProductCard key={product.id} product={product} onPress={() => onNavigate('product', { id: product.id })} />
             )) : (
-              <EmptyStateCard compact icon="heart-outline" title="No items in this collection" text="Open Wishlist to create a fuller collection." />
+              <EmptyStateCard compact icon="heart-outline" title="No saved items in this group" text="Items removed from your wishlist no longer appear here." />
             )}
           </View>
         </View>
@@ -9281,9 +9888,152 @@ function WishlistProductCard({ product, onPress, onRemove, removing = false, vie
   );
 }
 
+const checkoutStates = [
+  'Andaman and Nicobar Islands', 'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chandigarh',
+  'Chhattisgarh', 'Dadra and Nagar Haveli and Daman and Diu', 'Delhi', 'Goa', 'Gujarat', 'Haryana',
+  'Himachal Pradesh', 'Jammu and Kashmir', 'Jharkhand', 'Karnataka', 'Kerala', 'Ladakh', 'Lakshadweep',
+  'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Puducherry',
+  'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal'
+];
+
+function CheckoutField({ label, value, onChangeText, placeholder = '', keyboardType = 'default', maxLength, wide = false }) {
+  return <View style={[styles.checkoutField, wide && styles.checkoutFieldWide]}>
+    <Text style={styles.checkoutFieldLabel}>{label}</Text>
+    <TextInput accessibilityLabel={label} style={styles.checkoutInput} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor="#9b938f" keyboardType={keyboardType} maxLength={maxLength} autoCorrect={false} />
+  </View>;
+}
+
+function CheckoutScreen({ productId, user, onNavigate, onBack }) {
+  const layout = useResponsiveLayout();
+  const [productState, setProductState] = useState({ loading: true, product: null, error: '' });
+  const [config, setConfig] = useState({ loading: true, enabled: false, error: '' });
+  const [form, setForm] = useState({ fullName: user?.name || '', mobile: user?.phone || user?.mobile || '', houseStreet: '', area: '', landmark: '', city: '', state: '', pincode: '' });
+  const [statesOpen, setStatesOpen] = useState(false);
+  const [pinStatus, setPinStatus] = useState('');
+  const [pinServiceable, setPinServiceable] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState('');
+  const [error, setError] = useState('');
+  const [completedOrder, setCompletedOrder] = useState(null);
+  const update = (field) => (value) => setForm((current) => ({ ...current, [field]: value }));
+
+  useEffect(() => {
+    let active = true;
+    Promise.allSettled([api(`/products/${encodeURIComponent(productId)}`), api('/storefront/config', { noCache: true })]).then(([productResult, configResult]) => {
+      if (!active) return;
+      setProductState(productResult.status === 'fulfilled'
+        ? { loading: false, product: productResult.value?.product && !isMarketplaceProduct(productResult.value.product) ? normalizeProduct(productResult.value.product) : null, error: '' }
+        : { loading: false, product: null, error: productResult.reason?.message || 'Could not load product.' });
+      setConfig(configResult.status === 'fulfilled'
+        ? { loading: false, enabled: configResult.value?.demoEcommerceMode === true, error: '' }
+        : { loading: false, enabled: false, error: configResult.reason?.message || 'Could not check checkout availability.' });
+    });
+    return () => { active = false; };
+  }, [productId]);
+
+  useEffect(() => {
+    const pincode = form.pincode;
+    if (!/^\d{6}$/.test(pincode)) { setPinStatus(''); setPinServiceable(false); return undefined; }
+    let active = true;
+    setPinStatus('Checking delivery area…');
+    setPinServiceable(false);
+    api(`/orders/pincode/${pincode}`, { noCache: true }).then((pin) => {
+      if (!active) return;
+      setPinServiceable(Boolean(pin?.serviceable));
+      setPinStatus(pin?.serviceable ? `Delivering to ${pin.city || pin.district || pin.state}.` : 'This pincode is not serviceable yet.');
+      if (pin?.serviceable) setForm((current) => ({ ...current, city: current.city || pin.city || '', state: current.state || pin.state || '' }));
+    }).catch((requestError) => { if (active) setPinStatus(requestError.message || 'Could not check pincode.'); });
+    return () => { active = false; };
+  }, [form.pincode]);
+
+  const product = productState.product;
+  const price = Number(product?.price);
+  const canOrder = Boolean(config.enabled && product?.id && Number.isFinite(price) && price > 0);
+  const confirmOrder = async () => {
+    if (submitting || !canOrder) return;
+    const required = ['fullName', 'mobile', 'houseStreet', 'city', 'state', 'pincode'];
+    if (required.some((field) => !String(form[field] || '').trim())) { setError('Complete all required contact and address fields.'); return; }
+    if (!/^\d{6}$/.test(form.pincode) || !pinServiceable) { setError('Enter a serviceable 6-digit pincode.'); return; }
+    setSubmitting(true); setError('');
+    try {
+      let orderId = pendingOrderId;
+      if (!orderId) {
+        const created = await api('/orders', { method: 'POST', body: JSON.stringify({
+          items: [{ productId: product.id, quantity: 1, variant: 'Standard' }],
+          contact: { fullName: form.fullName.trim(), mobile: form.mobile.trim() },
+          address: { houseStreet: form.houseStreet.trim(), area: form.area.trim(), landmark: form.landmark.trim(), city: form.city.trim(), state: form.state, pincode: form.pincode }
+        }) });
+        if (!created?.order?.id) throw new Error('The order could not be created. Please try again.');
+        orderId = created.order.id;
+        setPendingOrderId(orderId);
+      }
+      const payment = await api(`/orders/${encodeURIComponent(orderId)}/demo-success`, { method: 'POST' });
+      const order = payment?.order;
+      if (order?.paymentStatus !== 'paid') throw new Error('Order confirmation is pending. Check My Orders before trying again.');
+      setCompletedOrder(order);
+    } catch (requestError) { setError(requestError.message || 'Could not confirm order.'); }
+    finally { setSubmitting(false); }
+  };
+
+  return <View style={styles.checkoutScreen}>
+    <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack} showSearch={false} />
+    <ScrollView style={styles.flex} contentContainerStyle={[styles.checkoutContent, { maxWidth: layout.isTablet ? 1120 : 560 }]} {...screenScrollProps} keyboardShouldPersistTaps="handled">
+      <Text style={styles.checkoutKicker}>SECURE CHECKOUT</Text>
+      <Text style={styles.checkoutTitle}>Checkout</Text>
+      <Text style={styles.checkoutSubtext}>For order and delivery updates</Text>
+      {productState.loading || config.loading ? <ActivityIndicator style={styles.checkoutLoader} color="#a75d5c" /> : null}
+      {productState.error || config.error ? <Text style={styles.errorText}>{productState.error || config.error}</Text> : null}
+      {product && !config.enabled && !config.loading ? <View style={styles.checkoutNotice}><Text style={styles.checkoutNoticeText}>Product checkout is not enabled right now. You can save this item and return when ordering is available.</Text></View> : null}
+      <View style={[styles.checkoutColumns, layout.isTablet && styles.checkoutColumnsTablet]}>
+      {product || completedOrder ? <View style={styles.checkoutFormColumn}>
+      {product && !completedOrder ? <>
+        <View style={styles.checkoutFieldGrid}>
+          <CheckoutField label="Full name" value={form.fullName} onChangeText={update('fullName')} />
+          <CheckoutField label="Mobile number" value={form.mobile} onChangeText={update('mobile')} keyboardType="phone-pad" />
+        </View>
+        <View style={styles.checkoutDivider} /><Text style={styles.checkoutSectionTitle}>Delivery address</Text><Text style={styles.checkoutSubtext}>Currently delivering within India</Text>
+        <View style={styles.checkoutFieldGrid}>
+          <CheckoutField label="House / flat and street" value={form.houseStreet} onChangeText={update('houseStreet')} wide />
+          <CheckoutField label="Area / locality (optional)" value={form.area} onChangeText={update('area')} />
+          <CheckoutField label="Landmark (optional)" value={form.landmark} onChangeText={update('landmark')} />
+          <CheckoutField label="City" value={form.city} onChangeText={update('city')} />
+          <View style={styles.checkoutField}><Text style={styles.checkoutFieldLabel}>State</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Choose state" style={styles.checkoutInput} onPress={() => setStatesOpen((current) => !current)}><Text style={styles.checkoutStateText}>{form.state || 'Choose state'}</Text><Ionicons name="chevron-down" size={16} color="#625955" /></TouchableOpacity></View>
+          {statesOpen ? <ScrollView nestedScrollEnabled style={styles.checkoutStateList}>{checkoutStates.map((state) => <TouchableOpacity key={state} style={styles.checkoutStateOption} onPress={() => { update('state')(state); setStatesOpen(false); }}><Text>{state}</Text></TouchableOpacity>)}</ScrollView> : null}
+          <CheckoutField label="Pincode" value={form.pincode} onChangeText={(value) => update('pincode')(value.replace(/\D/g, '').slice(0, 6))} placeholder="Enter a 6-digit pincode" keyboardType="number-pad" maxLength={6} />
+        </View>
+        {pinStatus ? <Text style={[styles.checkoutPinStatus, !pinServiceable && styles.errorText]}>{pinStatus}</Text> : null}
+        <View style={styles.checkoutDivider} /><Text style={styles.checkoutSectionTitle}>Payment</Text><Text style={styles.checkoutSubtext}>Demo checkout</Text>
+        <View style={styles.checkoutPaymentOption}><Ionicons name="radio-button-on" size={19} color="#a75d5c" /><View><Text style={styles.checkoutPaymentTitle}>Confirm demo order</Text><Text style={styles.checkoutPaymentDescription}>No payment will be collected.</Text></View></View>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled: submitting || !canOrder }} style={[styles.checkoutConfirmButton, (submitting || !canOrder) && styles.disabledButton]} disabled={submitting || !canOrder} onPress={confirmOrder}><Text style={styles.checkoutConfirmText}>{submitting ? 'Confirming order…' : canOrder ? 'Confirm demo order' : 'Checkout unavailable'}</Text></TouchableOpacity>
+      </> : null}
+      {completedOrder ? <View style={styles.checkoutSuccess}><Ionicons name="checkmark-circle" size={32} color="#29855b" /><Text style={styles.checkoutSectionTitle}>Order confirmed</Text><Text style={styles.checkoutSubtext}>Demo order #{String(completedOrder.id).slice(-8)} has been saved.</Text><TouchableOpacity onPress={() => onNavigate('orders')}><Text style={styles.checkoutOrdersLink}>View My Orders →</Text></TouchableOpacity></View> : null}
+      </View> : null}
+      {product ? <View style={[styles.checkoutSummary, layout.isTablet && styles.checkoutSummaryTablet]}>
+        <Text style={styles.checkoutSectionTitle}>Order summary</Text>
+        <View style={styles.checkoutItemRow}><ProductImage product={product} style={styles.checkoutProductImage} resizeMode="contain" alt={product.title || product.name} /><View style={styles.checkoutItemCopy}><Text style={styles.checkoutItemName} numberOfLines={2}>{product.title || product.name}</Text><Text style={styles.checkoutItemMeta}>{verifiedProductBrand(product) || 'Lookmefy'} · Qty 1</Text></View><Text style={styles.checkoutItemPrice}>{formatMoney(price, product.currency)}</Text></View>
+        <View style={styles.checkoutTotalRow}><Text>Subtotal</Text><Text>{formatMoney(price, product.currency)}</Text></View>
+        <View style={styles.checkoutTotalRow}><Text>Shipping</Text><Text>Free</Text></View>
+        <View style={[styles.checkoutTotalRow, styles.checkoutGrandTotal]}><Text>Total</Text><Text>{formatMoney(price, product.currency)}</Text></View>
+      </View> : null}
+      </View>
+    </ScrollView>
+  </View>;
+}
+
 function OrdersScreen({ onNavigate, onBack, token, user }) {
   const popular = useProducts({ limit: 4, sort: 'newest' }, token);
   const popularProducts = popular.products.slice(0, 4);
+  const [orderState, setOrderState] = useState({ loading: true, orders: [], error: '' });
+  useEffect(() => {
+    let active = true;
+    api('/orders', { noCache: true }).then((data) => {
+      if (active) setOrderState({ loading: false, orders: data.orders || [], error: '' });
+    }).catch((error) => {
+      if (active) setOrderState({ loading: false, orders: [], error: error.message || 'Could not load orders.' });
+    });
+    return () => { active = false; };
+  }, [token]);
 
   return (
     <View style={styles.ordersScreen}>
@@ -9292,13 +10042,13 @@ function OrdersScreen({ onNavigate, onBack, token, user }) {
       <PageBackRow onBack={onBack} />
       <View style={styles.ordersBody}>
         <Text style={styles.wishlistTitle}>My Orders</Text>
-        <EmptyStateCard
+        {orderState.loading ? <ActivityIndicator color="#9b5658" /> : orderState.error ? <Text style={styles.errorText}>{orderState.error}</Text> : orderState.orders.length ? <View style={styles.checkoutOrderList}>{orderState.orders.map((order) => <View key={order.id} style={styles.checkoutOrderCard}><Text style={styles.checkoutItemName}>Order #{String(order.id).slice(-8)}</Text><Text style={styles.checkoutItemMeta}>{order.items?.map((item) => item.name).join(', ')}</Text><Text style={styles.checkoutItemMeta}>{order.paymentMode === 'demo' ? 'Demo order' : 'Product order'} · {order.fulfillmentStatus || order.paymentStatus}</Text><Text style={styles.checkoutItemPrice}>{formatMoney(order.total, order.currency)}</Text></View>)}</View> : <EmptyStateCard
           icon="receipt-outline"
           title="No orders yet"
-          text="Your future favourites will show up here."
+          text="Your confirmed orders will show up here."
           actionLabel="Start Shopping"
           onAction={() => onNavigate('shop')}
-        />
+        />}
 
         <View style={styles.ordersPopularSection}>
           <Text style={styles.ordersPopularTitle}>Popular right now</Text>
@@ -9336,12 +10086,12 @@ function OrdersScreen({ onNavigate, onBack, token, user }) {
   );
 }
 
-function GenerationHistoryPreview({ items = [], total = 0, loading, error, onNavigate }) {
+function GenerationHistoryPreview({ items = [], total = 0, loading, error, onNavigate, style }) {
   const previewItems = items.slice(0, 4);
   const savedCount = Math.max(Number(total) || 0, previewItems.length);
 
   return (
-    <View style={styles.generationPreviewCard}>
+    <View style={[styles.generationPreviewCard, style]}>
       <View style={styles.generationPreviewHead}>
         <View style={styles.generationPreviewTitleBlock}>
           <Text style={styles.generationPreviewTitle}>Generation History</Text>
@@ -9398,13 +10148,13 @@ function GenerationHistoryScreen({ user, setUser, setToken, token, onNavigate, o
 
   const renderHistoryItem = ({ item }) => {
     const imageSource = item.imageUrl ? { uri: imageUrl(item.imageUrl) } : null;
-    const fallbackSource = item.sourceImageUrl ? { uri: imageUrl(item.sourceImageUrl) } : null;
     return (
       <View style={styles.generationGridCard}>
         <Pressable style={styles.generationGridImageWrap} onPress={() => item.imageUrl && setLightbox(imageUrl(item.imageUrl))}>
           <ResilientImage
             source={imageSource}
-            fallbackSource={fallbackSource}
+            retryOnFailure
+            fallbackText="Saved try-on image could not load"
             style={styles.generationGridImage}
             resizeMode="cover"
             alt={item.title || 'Generated try-on'}
@@ -9483,9 +10233,12 @@ function GenerationHistoryScreen({ user, setUser, setToken, token, onNavigate, o
   );
 }
 
-function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onLogout, registerTourTarget, tourFocusRequest }) {
+function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onLogout, registerTourTarget, tourFocusRequest, collections = [] }) {
+  const { width } = useWindowDimensions();
+  const isTabletLayout = width >= 700;
   const [photo, setPhoto] = useState(null);
-  const [profilePhotoMode, setProfilePhotoMode] = useState('ai-full-body');
+  const profilePhotoPickerRef = useRef(false);
+  const profilePhotoUploadRef = useRef(false);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [lightbox, setLightbox] = useState(null);
@@ -9526,9 +10279,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
   const profilePhotoResizeMode = photo?.uri ? 'cover' : userAvatarResizeMode(user);
   const profilePhotoImageStyle = photo?.uri ? styles.profileFaceImage : avatarImageStyleForUser(user, 88);
   const profilePhotoImageBaseStyle = photo?.uri ? null : avatarImageBaseStyleForUser(user);
-  const username = user.username || (user.email ? user.email.split('@')[0] : '');
+  const username = user.username || '';
   const displayName = user.name || username || 'Lookmefy member';
-  const displayEmail = /@phone\.(?:fitlook|lookmefy)\.local$/i.test(user.email || '') ? '' : user.email;
   const accountPhone = authPhoneValue(user.phone || '');
   const accountPhoneLabel = accountPhone.length === 10 ? `mobile ending ${accountPhone.slice(-4)}` : 'your saved mobile number';
   const remainingCredits = knownCreditBalance(user);
@@ -9546,8 +10298,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
     photo?.uri ? { uri: photo.uri, label: 'New photo', resizeMode: 'cover' } : null,
     bodyPortraitUri ? {
       uri: bodyPortraitUri,
-      label: user.bodyPhotoSource === 'fal-full-body' ? 'Full-body' : user.bodyPhotoStatus === 'generating' ? 'Preparing' : 'Saved',
-      resizeMode: user.bodyPhotoSource === 'fal-full-body' ? 'contain' : 'cover'
+      label: isGeneratedFullBodySource(user.bodyPhotoSource) ? 'Full-body' : user.bodyPhotoStatus === 'generating' ? 'Preparing' : 'Saved',
+      resizeMode: isGeneratedFullBodySource(user.bodyPhotoSource) ? 'contain' : 'cover'
     } : null,
     avatarPortraitUri ? { uri: avatarPortraitUri, label: 'Profile', resizeMode: 'cover' } : null
   ].filter((item) => {
@@ -9558,31 +10310,48 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
   const featuredPortrait = portraitCards[0] || null;
   const portraitPhotoCount = portraitCards.length;
 
+  const profilePhotoBusy = loading || user.bodyPhotoStatus === 'generating';
+  const photoFeedback = profilePhotoFeedback(user, message);
   const chooseProfilePhoto = async () => {
-    const selected = await pickImage();
-    if (!selected) return;
-    setPhoto(selected);
-    setMessage('');
+    if (profilePhotoPickerRef.current || profilePhotoUploadRef.current || profilePhotoBusy) return;
+    profilePhotoPickerRef.current = true;
+    try {
+      const selected = await pickImage();
+      if (!selected) return;
+      setPhoto(selected);
+      setMessage('');
+      await updatePhoto(selected);
+    } finally {
+      profilePhotoPickerRef.current = false;
+    }
   };
 
-  const updatePhoto = async () => {
-    if (!photo) {
+  const updatePhoto = async (selectedPhoto = photo) => {
+    if (profilePhotoUploadRef.current || profilePhotoBusy) return;
+    if (!selectedPhoto) {
       setMessage('Choose a new profile photo first.');
       return;
     }
+    profilePhotoUploadRef.current = true;
     setLoading(true);
-    setMessage('Uploading profile photo...');
+    setMessage('Uploading photo and preparing your AI try-on portrait...');
     try {
       const form = new FormData();
-      form.append('bodyPhoto', filePart(photo, 'body-photo.jpg'));
-      form.append('profilePhotoMode', profilePhotoMode);
-      const data = await api('/auth/body-photo', { method: 'POST', body: form });
+      form.append('bodyPhoto', filePart(selectedPhoto, 'body-photo.jpg'));
+      form.append('profilePhotoMode', 'ai-full-body');
+      const data = await api('/auth/body-photo', { method: 'POST', body: form, timeoutMs: 60000 });
+      clearPrivateImageCache();
       if (data.user) setUser(data.user);
       setPhoto(null);
-      setMessage(data.user?.bodyPhotoStatus === 'generating' ? 'Photo saved. Full-body try-on profile is preparing in the background.' : 'Profile photo updated.');
+      setMessage(data.user?.bodyPhotoStatus === 'generating'
+        ? 'Photo saved. Your AI try-on portrait is being generated.'
+        : isGeneratedFullBodySource(data.user?.bodyPhotoSource)
+          ? 'Profile photo updated. Your AI try-on portrait is ready.'
+          : 'Photo saved. AI portrait generation has not started. Please try again later.');
     } catch (error) {
       setMessage(error.message);
     } finally {
+      profilePhotoUploadRef.current = false;
       setLoading(false);
     }
   };
@@ -9842,17 +10611,19 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
   return (
     <View style={styles.profileScreen}>
       <AppHeader onNavigate={onNavigate} user={user} compact />
-      <ScrollView ref={profileScrollRef} style={styles.flex} contentContainerStyle={styles.profileContent} {...screenScrollProps}>
+      <ScrollView ref={profileScrollRef} style={styles.flex} contentContainerStyle={[styles.profileContent, isTabletLayout && styles.profileContentTablet]} {...screenScrollProps}>
       <PageBackRow onBack={onBack} />
+      <View style={[styles.profileLayout, isTabletLayout && styles.profileLayoutTablet]}>
 
-      <View style={styles.profileIntro}>
+      <View style={[styles.profileIntro, isTabletLayout && styles.profileIntroTablet]}>
         <Text style={styles.profilePageTitle}>Your Profile</Text>
         <Text style={styles.profilePageSubtitle}>Your personal style space.</Text>
       </View>
-      <View style={[styles.profileHero, Platform.OS === 'ios' && styles.iosGlassCard]}>
-        <IosGlassBackdrop />
-        <TouchableOpacity ref={profileAvatarTourTarget.ref} onLayout={profileAvatarTourTarget.onLayout} style={styles.profilePhotoWrap} onPress={chooseProfilePhoto} accessibilityRole="button" accessibilityLabel="Choose profile photo">
-          <View style={styles.profilePhotoFrame}>
+      <View style={[isTabletLayout && styles.profileTopGridTablet]}>
+      <View style={[styles.profileHero, isTabletLayout && styles.profileHeroTablet, styles.surfaceCard]}>
+        <SurfaceBackdrop />
+        <TouchableOpacity ref={profileAvatarTourTarget.ref} onLayout={profileAvatarTourTarget.onLayout} style={[styles.profilePhotoWrap, isTabletLayout && styles.profilePhotoWrapTablet]} onPress={chooseProfilePhoto} disabled={profilePhotoBusy} accessibilityRole="button" accessibilityLabel="Choose profile photo" accessibilityHint="Selecting a photo automatically creates your AI try-on portrait" accessibilityState={{ disabled: profilePhotoBusy, busy: profilePhotoBusy }}>
+          <View style={[styles.profilePhotoFrame, isTabletLayout && styles.profilePhotoFrameTablet]}>
             {photoSource ? <ResilientImage source={photoSource} style={styles.profilePhoto} imageStyle={profilePhotoImageStyle} imageBaseStyle={profilePhotoImageBaseStyle} resizeMode={profilePhotoResizeMode} fallbackIcon="person-outline" /> : (
               <InitialsAvatar user={user} style={[styles.profilePhoto, styles.profileAvatarFallback]} textStyle={styles.profileAvatarInitials} />
             )}
@@ -9862,8 +10633,9 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
           </View>
         </TouchableOpacity>
         <View style={styles.profileIdentityCopy}>
-          <Text style={styles.profileName}>{displayName}</Text>
+          <Text style={[styles.profileName, isTabletLayout && styles.profileNameTablet]}>{displayName}</Text>
           {user.joinedAt ? <Text style={styles.profileBio}>Member since {formatDate(user.joinedAt)}</Text> : null}
+          {profilePhotoBusy ? <Text accessibilityLiveRegion="polite" style={styles.profileBio}>{loading ? 'Uploading photo...' : 'Generating AI try-on portrait...'}</Text> : null}
           <TouchableOpacity style={styles.profileEditButton} onPress={openProfileEditor} accessibilityRole="button">
             <Text style={styles.profileEditText}>Edit Profile</Text>
             <Ionicons name="arrow-forward" size={14} color="#211F1D" />
@@ -9871,8 +10643,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
         </View>
       </View>
 
-      <View style={[styles.profileCreditsCard, Platform.OS === 'ios' && styles.iosGlassCard]}>
-        <IosGlassBackdrop />
+      <View style={[styles.profileCreditsCard, isTabletLayout && styles.profileCreditsCardTablet, styles.surfaceCard]}>
+        <SurfaceBackdrop />
         <View style={styles.profileCreditsHead}>
           <Text style={styles.profileCreditsLabel}>Remaining Credits</Text>
           <Ionicons name="sparkles" size={23} color="#9b5658" />
@@ -9916,22 +10688,25 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
           {!creditHistory.loading && !creditHistory.error && !creditEvents.length ? <Text style={styles.profileCreditEmptyText}>No credit activity yet.</Text> : null}
         </View>
       </View>
+      </View>
 
+      <View style={[isTabletLayout && styles.profileMediaGridTablet]}>
       <GenerationHistoryPreview
         items={generationHistory.data?.items || []}
         total={generationHistory.data?.total || 0}
         loading={generationHistory.loading}
         error={generationHistory.error}
         onNavigate={onNavigate}
+        style={isTabletLayout && styles.generationPreviewCardTablet}
       />
 
-      <View style={styles.profileSection}>
+      <View style={[styles.profileSection, isTabletLayout && styles.profilePortraitSectionTablet]}>
         <View style={styles.profileSectionHead}>
           <Text style={styles.profileSectionTitle}>Try-On Portraits</Text>
           <Text style={styles.profilePhotoCount}>{portraitPhotoCount} Photo{portraitPhotoCount === 1 ? '' : 's'}</Text>
         </View>
         <View style={styles.profilePortraitPanel}>
-          <Pressable style={styles.profilePortraitFeatured} onPress={() => featuredPortrait?.uri && setLightbox(featuredPortrait.uri)}>
+          <Pressable style={[styles.profilePortraitFeatured, isTabletLayout && styles.profilePortraitFeaturedTablet]} onPress={() => featuredPortrait?.uri && setLightbox(featuredPortrait.uri)}>
             {featuredPortrait?.uri ? (
               <>
                 <ResilientImage source={{ uri: featuredPortrait.uri }} style={styles.profilePortraitFeaturedImage} resizeMode={featuredPortrait.resizeMode} fallbackIcon="person-outline" />
@@ -9946,28 +10721,29 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
               </View>
             )}
           </Pressable>
-          <TouchableOpacity style={styles.profileUploadPortraitLarge} onPress={chooseProfilePhoto}>
+          <TouchableOpacity style={[styles.profileUploadPortraitLarge, isTabletLayout && styles.profileUploadPortraitTablet]} onPress={chooseProfilePhoto} disabled={profilePhotoBusy} accessibilityRole="button" accessibilityState={{ disabled: profilePhotoBusy, busy: profilePhotoBusy }}>
             <View style={styles.profileUploadPortraitIcon}>
               <Ionicons name="camera-outline" size={24} color="#7d7a79" />
             </View>
-            <Text style={styles.profileUploadPortraitText}>Upload New Photo</Text>
-            <Text style={styles.profileUploadPortraitHelp}>Use a clear full-body or portrait photo.</Text>
+            <Text style={styles.profileUploadPortraitText}>{loading ? 'Uploading Photo...' : user.bodyPhotoStatus === 'generating' ? 'Generating AI Portrait...' : 'Upload New Photo'}</Text>
+            <Text style={styles.profileUploadPortraitHelp}>Choose a clear photo to automatically create your AI try-on portrait.</Text>
           </TouchableOpacity>
         </View>
         {!portraitPhotoCount ? <Text style={styles.profileInlineMessage}>Upload a portrait to start trying on outfits.</Text> : null}
-        {photo ? (
-          <TouchableOpacity style={[styles.profileSavePhotoButton, loading && styles.disabledButton]} disabled={loading} onPress={updatePhoto}>
-            <Text style={styles.profileSavePhotoText}>{loading ? 'Saving Photo...' : 'Save New Portrait'}</Text>
+        {photo && !loading ? (
+          <TouchableOpacity style={[styles.profileSavePhotoButton, profilePhotoBusy && styles.disabledButton]} disabled={profilePhotoBusy} onPress={() => updatePhoto()}>
+            <Text style={styles.profileSavePhotoText}>Retry Photo Upload</Text>
           </TouchableOpacity>
         ) : null}
         {user.bodyPhotoStatus === 'generating' ? <Text style={styles.profileInlineMessage}>Full-body try-on profile is preparing in the background.</Text> : null}
         {user.bodyPhotoStatus === 'failed' ? <Text style={[styles.profileInlineMessage, styles.errorText]}>Full-body profile generation failed. Upload a clearer profile photo.</Text> : null}
-        {message ? <Text style={[styles.profileInlineMessage, /updated|saved|saving|uploading/i.test(message) ? null : styles.errorText]}>{message}</Text> : null}
+        {photoFeedback ? <Text accessibilityLiveRegion="polite" style={[styles.profileInlineMessage, /updated|saved|saving|uploading/i.test(photoFeedback) ? null : styles.errorText]}>{photoFeedback}</Text> : null}
+      </View>
       </View>
 
-      <View style={styles.profileQuickOptions}>
-        <TouchableOpacity style={[styles.profileQuickCard, Platform.OS === 'ios' && styles.iosGlassCard]} activeOpacity={0.86} onPress={() => onNavigate('orders')}>
-          <IosGlassBackdrop />
+      <View style={[styles.profileQuickOptions, isTabletLayout && styles.profileQuickOptionsTablet]}>
+        <TouchableOpacity style={[styles.profileQuickCard, isTabletLayout && styles.profileQuickCardTablet, styles.surfaceCard]} activeOpacity={0.86} onPress={() => onNavigate('orders')}>
+          <SurfaceBackdrop />
           <View style={styles.profileQuickIcon}>
             <Ionicons name="receipt-outline" size={23} color="#9b5658" />
           </View>
@@ -9977,8 +10753,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
           </View>
           <Ionicons name="chevron-forward" size={20} color="#77716f" />
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.profileQuickCard, Platform.OS === 'ios' && styles.iosGlassCard]} activeOpacity={0.86} onPress={() => onNavigate('wishlist')}>
-          <IosGlassBackdrop />
+        <TouchableOpacity style={[styles.profileQuickCard, isTabletLayout && styles.profileQuickCardTablet, styles.surfaceCard]} activeOpacity={0.86} onPress={() => onNavigate('wishlist')}>
+          <SurfaceBackdrop />
           <View style={styles.profileQuickIcon}>
             <Ionicons name="heart-outline" size={23} color="#9b5658" />
           </View>
@@ -9988,8 +10764,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
           </View>
           <Ionicons name="chevron-forward" size={20} color="#77716f" />
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.profileQuickCard, Platform.OS === 'ios' && styles.iosGlassCard]} activeOpacity={0.86} onPress={() => onNavigate('collections')}>
-          <IosGlassBackdrop />
+        {collections.length ? <TouchableOpacity style={[styles.profileQuickCard, isTabletLayout && styles.profileQuickCardTablet, styles.surfaceCard]} activeOpacity={0.86} onPress={() => onNavigate('collections')}>
+          <SurfaceBackdrop />
           <View style={styles.profileQuickIcon}>
             <Ionicons name="albums-outline" size={23} color="#9b5658" />
           </View>
@@ -9998,13 +10774,13 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
             <Text style={styles.profileQuickSub}>Saved style groups</Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color="#77716f" />
-        </TouchableOpacity>
+        </TouchableOpacity> : null}
       </View>
 
       <View style={styles.profileSection}>
         <Text style={styles.profileSectionTitle}>Credits & Subscription</Text>
-        <TouchableOpacity style={[styles.profilePaymentCard, Platform.OS === 'ios' && styles.iosGlassCard]} onPress={() => onNavigate('tokens')}>
-          <IosGlassBackdrop />
+        <TouchableOpacity style={[styles.profilePaymentCard, styles.surfaceCard]} onPress={() => onNavigate('tokens')}>
+          <SurfaceBackdrop />
           <View style={styles.profilePaymentIcon}>
             <Ionicons name="diamond-outline" size={21} color="#211F1D" />
           </View>
@@ -10016,40 +10792,48 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
         </TouchableOpacity>
       </View>
 
+      <View style={[isTabletLayout && styles.profileSettingsGridTablet]}>
       <ProfileSettingsSection
         title="Account Settings"
+        style={isTabletLayout && styles.profileSettingsSectionTablet}
         rows={[
           { label: 'Username', icon: 'at-outline', value: username ? `@${username}` : 'Not added' },
           { label: 'Gender Preference', icon: 'person-outline', value: user.genderPreference ? titleCase(user.genderPreference) : 'Not added' },
           { label: 'Mobile Number', icon: 'call-outline', value: user.phone || 'Not added' },
-          { label: 'Email Address', icon: 'mail-outline', value: displayEmail || 'Not added' },
           { label: 'Change Password', icon: 'lock-closed-outline', value: 'OTP verification', onPress: openPasswordSheet }
         ]}
       />
 
       <ProfileSettingsSection
         title="Security & Legal"
+        style={isTabletLayout && styles.profileSettingsSectionTablet}
         rows={[
           { label: 'Support Center', icon: 'help-circle-outline', onPress: () => onNavigate('info', { page: 'support' }) },
           { label: 'Return and Refund Policy', icon: 'return-down-back-outline', onPress: () => onNavigate('info', { page: 'returns' }) },
           { label: 'Cancellation Policy', icon: 'close-circle-outline', onPress: () => onNavigate('info', { page: 'cancellation' }) },
           { label: 'Account & Data Deletion', icon: 'document-text-outline', onPress: () => onNavigate('info', { page: 'deletion' }) },
           { label: 'Data & Privacy', icon: 'shield-checkmark-outline', onPress: () => onNavigate('info', { page: 'privacy' }) },
+          { label: 'Reset AI photo permission', icon: 'refresh-circle-outline', onPress: async () => {
+            await requireAiPhotoConsent.revoke();
+            Alert.alert('AI photo permission reset', 'Lookmefy will ask again before the next AI photo request.');
+          } },
           { label: 'Terms of Service', icon: 'reader-outline', onPress: () => onNavigate('info', { page: 'terms' }) },
           { label: 'Privacy Policy', icon: 'eye-outline', onPress: () => onNavigate('info', { page: 'privacy' }) }
         ]}
       />
+      </View>
 
-      <TouchableOpacity style={styles.profileLogoutButton} onPress={onLogout}>
+      <TouchableOpacity style={[styles.profileLogoutButton, isTabletLayout && styles.profileAccountActionTablet]} onPress={onLogout}>
         <Text style={styles.profileLogoutText}>Logout</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={[styles.profileDeleteButton, accountDeleting && styles.disabledButton]} disabled={accountDeleting} onPress={confirmDeleteAccount}>
+      <TouchableOpacity style={[styles.profileDeleteButton, isTabletLayout && styles.profileAccountActionTablet, accountDeleting && styles.disabledButton]} disabled={accountDeleting} onPress={confirmDeleteAccount}>
         {accountDeleting ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.profileDeleteText}>Delete Account</Text>}
       </TouchableOpacity>
+      </View>
       <Modal visible={deleteSheetVisible} transparent animationType="fade" onRequestClose={closeDeleteSheet}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
-          <Pressable style={styles.profileEditBackdrop} onPress={closeDeleteSheet} />
-          <View style={[styles.profileEditSheet, styles.profileDeleteSheet]}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[styles.profileEditOverlay, isTabletLayout && styles.profileEditOverlayTablet]}>
+          <Pressable accessible={false} importantForAccessibility="no" style={styles.profileEditBackdrop} onPress={closeDeleteSheet} />
+          <View style={[styles.profileEditSheet, isTabletLayout && styles.profileEditSheetTablet, styles.profileDeleteSheet]}>
             <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled">
             <View style={styles.profileEditHandle} />
             <View style={styles.profileEditHead}>
@@ -10059,7 +10843,7 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
                 <Text style={styles.profileEditSheetSub}>Request deletion of your account and associated data. We will only show completion after the server confirms it. Some records may be retained as explained in the deletion policy.</Text>
               </View>
               <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close account deletion" style={[styles.profileEditClose, { minWidth: 44, minHeight: 44 }]} disabled={accountDeleting} onPress={closeDeleteSheet}>
-                <Ionicons name="close" size={21} color="#2b2321" />
+                <DecorativeCloseIcon size={21} color="#2b2321" />
               </TouchableOpacity>
             </View>
 
@@ -10121,17 +10905,17 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
         </KeyboardAvoidingView>
       </Modal>
       <Modal visible={editVisible} transparent animationType="fade" onRequestClose={() => setEditVisible(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
-          <Pressable style={styles.profileEditBackdrop} onPress={() => setEditVisible(false)} />
-          <View style={styles.profileEditSheet}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[styles.profileEditOverlay, isTabletLayout && styles.profileEditOverlayTablet]}>
+          <Pressable accessible={false} importantForAccessibility="no" style={styles.profileEditBackdrop} onPress={() => setEditVisible(false)} />
+          <View style={[styles.profileEditSheet, isTabletLayout && styles.profileEditSheetTablet]}>
             <View style={styles.profileEditHandle} />
             <View style={styles.profileEditHead}>
-              <View>
+              <View style={styles.profileEditHeadingCopy}>
                 <Text style={styles.profileEditSheetTitle}>Edit Profile</Text>
                 <Text style={styles.profileEditSheetSub}>Update the name and shopping preference shown in your account.</Text>
               </View>
-              <TouchableOpacity style={styles.profileEditClose} onPress={() => setEditVisible(false)}>
-                <Ionicons name="close" size={21} color="#2b2321" />
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close Edit Profile" style={[styles.profileEditClose, styles.profileEditDismissButton]} onPress={() => setEditVisible(false)}>
+                <DecorativeCloseIcon size={21} color="#2b2321" />
               </TouchableOpacity>
             </View>
 
@@ -10172,9 +10956,9 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
         </KeyboardAvoidingView>
       </Modal>
       <Modal visible={passwordSheetVisible} transparent animationType="fade" onRequestClose={closePasswordSheet}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.profileEditOverlay}>
-          <Pressable style={styles.profileEditBackdrop} onPress={closePasswordSheet} />
-          <View style={styles.profileEditSheet}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={[styles.profileEditOverlay, isTabletLayout && styles.profileEditOverlayTablet]}>
+          <Pressable accessible={false} importantForAccessibility="no" style={styles.profileEditBackdrop} onPress={closePasswordSheet} />
+          <View style={[styles.profileEditSheet, isTabletLayout && styles.profileEditSheetTablet]}>
             <View style={styles.profileEditHandle} />
             <View style={styles.profileEditHead}>
               <View>
@@ -10187,8 +10971,8 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
                       : `Send a reset OTP to ${accountPhoneLabel}.`}
                 </Text>
               </View>
-              <TouchableOpacity style={styles.profileEditClose} disabled={passwordLoading} onPress={closePasswordSheet}>
-                <Ionicons name="close" size={21} color="#2b2321" />
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close Change Password" style={styles.profileEditClose} disabled={passwordLoading} onPress={closePasswordSheet}>
+                <DecorativeCloseIcon size={21} color="#2b2321" />
               </TouchableOpacity>
             </View>
 
@@ -10274,9 +11058,9 @@ function ProfileScreen({ user, setUser, setToken, token, onNavigate, onBack, onL
   );
 }
 
-function ProfileSettingsSection({ title, rows }) {
+function ProfileSettingsSection({ title, rows, style }) {
   return (
-    <View style={styles.profileSection}>
+    <View style={[styles.profileSection, style]}>
       <Text style={styles.profileSectionTitle}>{title}</Text>
       <View style={styles.profileSettingsList}>
         {rows.map((row) => {
@@ -10585,7 +11369,7 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
         ) : <View style={styles.tourBackdrop} />}
         <View key={active.key} style={[styles.tourCard, intro && styles.tourIntroCard, anchoredCardStyle]} onLayout={handleTourCardLayout}>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Skip onboarding tour" style={styles.tourCloseButton} activeOpacity={0.78} onPress={onSkip}>
-            <Ionicons name="close" size={17} color="#5d5754" />
+            <DecorativeCloseIcon size={17} color="#5d5754" />
           </TouchableOpacity>
           <View style={styles.tourIcon}>
             <Ionicons name={active.icon} size={23} color="#9b5658" />
@@ -10667,14 +11451,32 @@ function AuthPromptModal({ visible, message, onContinue, onClose }) {
 function ImageLightbox({ uri, onClose }) {
   return (
     <Modal visible={Boolean(uri)} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.lightbox} onPress={onClose}>
-        <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-          <Ionicons name="close" size={24} color="#fff" />
+      <Pressable accessible={false} style={styles.lightbox} onPress={onClose}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close full-screen image" style={styles.closeButton} onPress={onClose}>
+          <DecorativeCloseIcon size={24} color="#fff" />
         </TouchableOpacity>
-        {uri ? <ResilientImage source={{ uri }} style={styles.lightboxImage} resizeMode="contain" /> : null}
+        {uri ? <ResilientImage source={{ uri }} style={styles.lightboxImage} resizeMode="contain" fallbackText="Image unavailable. Close and try again." /> : null}
       </Pressable>
     </Modal>
   );
+}
+
+function RouteTransition({ direction, width, reduceMotion, children }) {
+  const motion = routeTransitionSpec(direction, width, reduceMotion);
+  const translateX = useRef(new Animated.Value(motion.offset)).current;
+  const opacity = useRef(new Animated.Value(motion.opacity)).current;
+
+  useEffect(() => {
+    if (!motion.duration) return undefined;
+    const animation = Animated.parallel([
+      Animated.timing(translateX, { toValue: 0, duration: motion.duration, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: motion.duration, useNativeDriver: true })
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [motion.duration, opacity, translateX]);
+
+  return <Animated.View style={{ flex: 1, opacity, transform: [{ translateX }] }}>{children}</Animated.View>;
 }
 
 function LookmefyApp() {
@@ -10683,13 +11485,31 @@ function LookmefyApp() {
   const responsiveLayout = useMemo(() => responsiveLayoutForWindow(width), [width]);
   const [fontsLoaded, fontLoadError] = useFonts(fontAssets);
   const [routeStack, setRouteStack] = useState([{ name: 'home', params: {} }]);
+  const routeDirection = useRef('replace');
+  const authBackHandlerRef = useRef(null);
+  const [reduceMotion, setReduceMotion] = useState(true);
+  useEffect(() => {
+    let active = true;
+    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (active) setReduceMotion(Boolean(enabled));
+    }).catch(() => {});
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => { active = false; subscription.remove(); };
+  }, []);
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
-  const [photoConsentNotice, setPhotoConsentNotice] = useState(null);
+  const previousGeneratedPhoto = useRef(null);
   useEffect(() => {
-    photoConsentGate.setPresenter(setPhotoConsentNotice);
-    return () => photoConsentGate.setPresenter(null);
-  }, [token, user?.id, user?._id]);
+    if (!token) {
+      clearPrivateImageCache();
+      clearScreenSnapshots();
+    }
+  }, [token]);
+  useEffect(() => {
+    const stamp = user?.bodyPhotoGeneratedAt || '';
+    if (previousGeneratedPhoto.current && stamp !== previousGeneratedPhoto.current) clearPrivateImageCache();
+    previousGeneratedPhoto.current = stamp;
+  }, [user?.bodyPhotoGeneratedAt]);
   const [ready, setReady] = useState(false);
   const [wishlistProducts, setWishlistProducts] = useState([]);
   const [wishlistReady, setWishlistReady] = useState(false);
@@ -10760,6 +11580,7 @@ function LookmefyApp() {
   const navigate = useCallback((name, params = {}) => {
     Keyboard.dismiss();
     const next = normalizeRoute(name, params);
+    routeDirection.current = 'forward';
     setRouteStack((current) => {
       const active = normalizeRoute(current[current.length - 1]?.name, current[current.length - 1]?.params);
       if (active.name === next.name && JSON.stringify(active.params || {}) === JSON.stringify(next.params || {})) return current;
@@ -10776,8 +11597,11 @@ function LookmefyApp() {
     return () => subscription.remove();
   }, [navigate]);
   const replaceRoute = useCallback((name, params = {}) => {
+    routeDirection.current = 'replace';
     setRouteStack([normalizeRoute(name, params)]);
   }, []);
+  const exitAuthToHome = useCallback(() => replaceRoute('home'), [replaceRoute]);
+  const registerAuthBackHandler = useCallback((handler) => { authBackHandlerRef.current = handler; }, []);
   const requestAuth = useCallback((message = 'Log in with your mobile number to continue.') => {
     setAuthPrompt({ message });
   }, []);
@@ -10813,7 +11637,9 @@ function LookmefyApp() {
     navigate(name, params);
   }, [navigate, requestAuth, user]);
   const goBack = useCallback(() => {
+    Keyboard.dismiss();
     if (routeStack.length > 1) {
+      routeDirection.current = 'back';
       setRouteStack((current) => {
         if (current.length <= 1) return current;
         return current.slice(0, -1);
@@ -10822,20 +11648,19 @@ function LookmefyApp() {
     }
     const active = normalizeRoute(routeStack[0]?.name, routeStack[0]?.params);
     if (active.name !== 'home') {
+      routeDirection.current = 'back';
       setRouteStack([normalizeRoute('home')]);
       return true;
     }
     return false;
   }, [routeStack]);
-  const canGestureBack = Platform.OS === 'ios' && (routeStack.length > 1 || currentRoute.name !== 'home')
-    && !authPrompt && !onboardingVisible && !photoConsentNotice;
-  const backSwipeResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponderCapture: (_, gesture) => shouldStartBackSwipe(gesture, canGestureBack),
-    onPanResponderRelease: (_, gesture) => {
-      if (shouldFinishBackSwipe(gesture)) goBack();
-    },
-    onPanResponderTerminationRequest: () => true
-  }), [canGestureBack, goBack]);
+  const handleBack = useCallback(() => {
+    if (authBackHandlerRef.current) {
+      authBackHandlerRef.current();
+      return true;
+    }
+    return goBack();
+  }, [goBack]);
   useEffect(() => {
     let alive = true;
     if (!user) {
@@ -10947,24 +11772,6 @@ function LookmefyApp() {
   const addToWishlist = useCallback((product) => commitWishlistChange(product), [commitWishlistChange]);
   const removeFromWishlist = useCallback((product) => commitWishlistChange(product, true), [commitWishlistChange]);
 
-  const createCollection = useCallback(({ name, productIds }) => {
-    const cleanName = String(name || '').trim();
-    const ids = [...new Set((productIds || []).map(String).filter(Boolean))];
-    if (!cleanName || !ids.length) return;
-    if (!user) {
-      requestAuth('Log in with your mobile number to create collections.');
-      return;
-    }
-    const now = new Date().toISOString();
-    setCollections((current) => [{
-      id: `collection-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      name: cleanName,
-      productIds: ids,
-      createdAt: now,
-      updatedAt: now
-    }, ...current].slice(0, 60));
-  }, [requestAuth, user]);
-
   const refreshUser = useCallback(async (options = {}) => {
     const data = await api('/auth/me', { timeoutMs: options.timeoutMs || 5000, noCache: true });
     if (data?.user) {
@@ -11000,9 +11807,9 @@ function LookmefyApp() {
   }, []);
 
   useEffect(() => {
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => goBack());
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => handleBack());
     return () => subscription.remove();
-  }, [goBack]);
+  }, [handleBack]);
 
   useEffect(() => {
     if (user?.bodyPhotoStatus !== 'generating') return undefined;
@@ -11163,25 +11970,27 @@ function LookmefyApp() {
       case 'custom':
         return <CustomTryOnScreen initial={routeParams} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} refreshUser={refreshUser} />;
       case 'stylebot':
-        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioActiveChatId={aiStudioActiveChatId} setAiStudioActiveChatId={setAiStudioActiveChatId} aiStudioChatHistory={aiStudioChatHistory} setAiStudioChatHistory={setAiStudioChatHistory} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
+        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={goBack} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioActiveChatId={aiStudioActiveChatId} setAiStudioActiveChatId={setAiStudioActiveChatId} aiStudioChatHistory={aiStudioChatHistory} setAiStudioChatHistory={setAiStudioChatHistory} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
       case 'tokens':
         return <TokensScreen user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} />;
       case 'profile':
-        return <ProfileScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onLogout={logout} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} />;
+        return <ProfileScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onLogout={logout} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} collections={collections} />;
       case 'generation-history':
-        return user ? <GenerationHistoryScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <GenerationHistoryScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} onBack={goBack} onExit={exitAuthToHome} registerBackHandler={registerAuthBackHandler} />;
       case 'wishlist':
-        return user ? <WishlistScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} token={token} wishlistProducts={wishlistProducts} wishlistReady={wishlistReady} wishlistLoadError={wishlistLoadError} wishlistMutatingId={wishlistMutatingId} onRetryWishlist={() => setWishlistRefreshKey((current) => current + 1)} user={user} onRemoveFromWishlist={removeFromWishlist} onCreateCollection={createCollection} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <WishlistScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} token={token} wishlistProducts={wishlistProducts} wishlistReady={wishlistReady} wishlistLoadError={wishlistLoadError} wishlistMutatingId={wishlistMutatingId} onRetryWishlist={() => setWishlistRefreshKey((current) => current + 1)} user={user} onRemoveFromWishlist={removeFromWishlist} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} onBack={goBack} onExit={exitAuthToHome} registerBackHandler={registerAuthBackHandler} />;
       case 'collections':
-        return user ? <CollectionsScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} user={user} collections={collections} wishlistProducts={wishlistProducts} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <CollectionsScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} user={user} collections={collections} wishlistProducts={wishlistProducts} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} onBack={goBack} onExit={exitAuthToHome} registerBackHandler={registerAuthBackHandler} />;
       case 'orders':
-        return user ? <OrdersScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} token={token} user={user} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} />;
+        return user ? <OrdersScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} token={token} user={user} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} onBack={goBack} onExit={exitAuthToHome} registerBackHandler={registerAuthBackHandler} />;
       case 'product':
         return routeParams.id ? <ProductScreen id={routeParams.id} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={scrollPositionsRef.current[currentRouteKey] || 0} onScrollPositionChange={rememberCurrentScrollY} />;
+      case 'checkout':
+        return user && routeParams.productId ? <CheckoutScreen productId={routeParams.productId} user={user} onNavigate={guardedNavigate} onBack={goBack} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={goBack} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'signup':
-        return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} onAuthenticated={() => replaceRoute('home')} />;
+        return <AuthScreen mode="signup" setUser={setUser} setToken={setToken} onNavigate={navigate} onAuthenticated={() => replaceRoute('home')} onBack={goBack} onExit={exitAuthToHome} registerBackHandler={registerAuthBackHandler} />;
       case 'login':
-        return <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} onAuthenticated={() => replaceRoute('home')} />;
+        return <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} onAuthenticated={() => replaceRoute('home')} onBack={goBack} onExit={exitAuthToHome} registerBackHandler={registerAuthBackHandler} />;
       case 'how':
         return <HowItWorksScreen user={user} onNavigate={navigate} />;
       case 'info':
@@ -11189,7 +11998,7 @@ function LookmefyApp() {
       default:
         return <InfoScreen page="missing" user={user} onNavigate={navigate} onBack={routeStack.length > 1 ? goBack : null} />;
     }
-  }, [currentRoute.name, routeParamsKey, currentRouteKey, user, token, navigate, replaceRoute, guardedNavigate, requestAuth, requireFreshLogin, addToWishlist, removeFromWishlist, createCollection, collections, wishlistIds, wishlistProducts, wishlistReady, wishlistLoadError, wishlistMutatingId, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioActiveChatId, aiStudioChatHistory, aiStudioTryOns, aiStudioTryOnErrors, refreshUser, routeStack.length, goBack, rememberCurrentScrollY]);
+  }, [currentRoute.name, routeParamsKey, currentRouteKey, user, token, navigate, replaceRoute, guardedNavigate, requestAuth, requireFreshLogin, addToWishlist, removeFromWishlist, collections, wishlistIds, wishlistProducts, wishlistReady, wishlistLoadError, wishlistMutatingId, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioActiveChatId, aiStudioChatHistory, aiStudioTryOns, aiStudioTryOnErrors, refreshUser, routeStack.length, goBack, exitAuthToHome, registerAuthBackHandler, rememberCurrentScrollY]);
 
   if (!ready || (!fontsLoaded && !fontLoadError)) {
     return (
@@ -11213,6 +12022,7 @@ function LookmefyApp() {
   const closetRoute = currentRoute.name === 'closet';
   const closetAddRoute = closetRoute && currentRoute.params?.view === 'add';
   const productRoute = currentRoute.name === 'product';
+  const checkoutRoute = currentRoute.name === 'checkout';
   const aiStudioRoute = currentRoute.name === 'stylebot';
   const tokensRoute = currentRoute.name === 'tokens';
   const profileRoute = currentRoute.name === 'profile';
@@ -11221,36 +12031,38 @@ function LookmefyApp() {
   const collectionsRoute = currentRoute.name === 'collections';
   const ordersRoute = currentRoute.name === 'orders';
   const accountChildRoute = wishlistRoute || collectionsRoute || ordersRoute || generationHistoryRoute;
-  const showBottomNav = !(authOnlyRoute || searchRoute || closetAddRoute || aiStudioRoute || tokensRoute);
+  const showBottomNav = !(authOnlyRoute || searchRoute || closetAddRoute || aiStudioRoute || tokensRoute || checkoutRoute);
 
   return (
     <ResponsiveLayoutContext.Provider value={responsiveLayout}>
     <PrivateMediaSessionContext.Provider key={String(user?.id || user?._id || 'guest')} value={user ? token || '' : ''}>
     <ContentReportingContext.Provider value={String(user?.id || user?._id || '')}>
-    <InsetSafeAreaView edges={showBottomNav ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']} style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe, Platform.OS === 'ios' && !welcomeRoute && styles.iosGlassRoot]} {...backSwipeResponder.panHandlers} onAccessibilityEscape={goBack}>
-      {Platform.OS === 'ios' && !welcomeRoute ? <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
-        <View style={styles.iosGlassGlowTop} />
-        <View style={styles.iosGlassGlowBottom} />
+    <InsetSafeAreaView edges={showBottomNav ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']} style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, checkoutRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe, !welcomeRoute && styles.surfaceRoot]} onAccessibilityEscape={handleBack}>
+      {!welcomeRoute ? <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+        <View style={styles.surfaceGlowTop} />
+        <View style={styles.surfaceGlowBottom} />
       </View> : null}
       <StatusBar style={welcomeRoute ? 'light' : 'dark'} />
-      <PhotoConsentModal
-        notice={photoConsentNotice}
-        onAllow={() => photoConsentGate.respond(true)}
-        onCancel={() => photoConsentGate.respond(false)}
-        onPrivacy={() => { photoConsentGate.respond(false); openLegalPolicy('privacy'); }}
-      />
-      {authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={!tryOnRoute} />}
-      <View style={[styles.content, Platform.OS === 'ios' && styles.iosGlassTransparent, responsiveLayout.contentFrameStyle]}>
-        <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
-          {screen}
-        </ScreenErrorBoundary>
+      {authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || checkoutRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={!tryOnRoute} />}
+      <View style={[styles.content, styles.surfaceTransparent, responsiveLayout.contentFrameStyle]}>
+        <RouteTransition key={currentRouteKey} direction={routeDirection.current} width={width} reduceMotion={reduceMotion}>
+          <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
+            {screen}
+          </ScreenErrorBoundary>
+        </RouteTransition>
       </View>
-      {showBottomNav ? <View style={[styles.bottomNavFrame, { bottom: Platform.OS === 'ios' ? Math.max(insets.bottom - 10, 10) : Math.max(insets.bottom, 10) }]}>
+      {/* Preserve the tab labels across full-screen routes and keyboard transitions. */}
+      <View
+        pointerEvents={showBottomNav ? 'auto' : 'none'}
+        accessibilityElementsHidden={!showBottomNav}
+        importantForAccessibility={showBottomNav ? 'auto' : 'no-hide-descendants'}
+        style={[styles.bottomNavFrame, { display: showBottomNav ? 'flex' : 'none', bottom: Platform.OS === 'ios' ? Math.max(insets.bottom - 10, 10) : Math.max(insets.bottom, 10) }]}
+      >
         <View style={styles.bottomNavGlass}>
-          <BlurView pointerEvents="none" intensity={42} tint="systemUltraThinMaterialLight" style={StyleSheet.absoluteFillObject} />
+          <BlurView pointerEvents="none" intensity={38} tint="dark" blurReductionFactor={2.5} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : 'none'} style={StyleSheet.absoluteFillObject} />
           <BottomNav route={currentRoute} onNavigate={guardedNavigate} />
         </View>
-      </View> : null}
+      </View>
       <AuthPromptModal
         visible={Boolean(authPrompt)}
         message={authPrompt?.message}
@@ -11281,7 +12093,48 @@ export default function App() {
   return <SafeAreaProvider><LookmefyApp /></SafeAreaProvider>;
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(nativeAppearanceStyles({
+  checkoutScreen: { flex: 1, backgroundColor: '#f8f4ed' },
+  checkoutContent: { width: '100%', alignSelf: 'center', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 55, gap: 8 },
+  checkoutColumns: { gap: 18 },
+  checkoutColumnsTablet: { flexDirection: 'row', alignItems: 'flex-start', gap: 22 },
+  checkoutFormColumn: { flex: 1, backgroundColor: '#fffdfb', borderWidth: 1, borderColor: '#e9e2dc', borderRadius: 16, padding: 20 },
+  checkoutKicker: { color: '#9b5658', fontSize: 10, fontWeight: '800', letterSpacing: 2 },
+  checkoutTitle: { color: '#211d1b', fontSize: 36, fontWeight: '700' },
+  checkoutSubtext: { color: '#77706c', fontSize: 13, lineHeight: 19 },
+  checkoutLoader: { marginVertical: 28 },
+  checkoutNotice: { backgroundColor: '#fff9f5', borderWidth: 1, borderColor: '#e9d8ce', borderRadius: 13, padding: 16, marginTop: 10 },
+  checkoutNoticeText: { color: '#574c47', lineHeight: 21 },
+  checkoutSummary: { marginTop: 16, backgroundColor: '#fffdfb', borderColor: '#e9e2dc', borderWidth: 1, borderRadius: 16, padding: 17, gap: 13 },
+  checkoutSummaryTablet: { width: 330, marginTop: 0 },
+  checkoutSectionTitle: { color: '#241f1d', fontSize: 23, fontWeight: '700', marginTop: 8 },
+  checkoutItemRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
+  checkoutProductImage: { width: 66, height: 72, borderRadius: 10, backgroundColor: '#f7f2ed' },
+  checkoutItemCopy: { flex: 1, gap: 4 },
+  checkoutItemName: { color: '#2d2825', fontWeight: '700', fontSize: 13 },
+  checkoutItemMeta: { color: '#817974', fontSize: 11 },
+  checkoutItemPrice: { color: '#211d1b', fontWeight: '700', fontSize: 13 },
+  checkoutTotalRow: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#eee8e3', paddingTop: 10, color: '#4d4540' },
+  checkoutGrandTotal: { fontWeight: '700' },
+  checkoutFieldGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 14 },
+  checkoutField: { minWidth: 150, flexGrow: 1, flexBasis: '46%', gap: 6 },
+  checkoutFieldWide: { flexBasis: '100%' },
+  checkoutFieldLabel: { color: '#5c5551', fontSize: 11, fontWeight: '700' },
+  checkoutInput: { minHeight: 46, borderWidth: 1, borderColor: '#e3dcd5', borderRadius: 8, paddingHorizontal: 12, backgroundColor: '#fffdfb', color: '#26211e', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  checkoutStateText: { color: '#534b46' },
+  checkoutStateList: { maxHeight: 190, flexBasis: '100%', backgroundColor: '#fffdfb', borderRadius: 8, borderWidth: 1, borderColor: '#e3dcd5' },
+  checkoutStateOption: { padding: 13, borderBottomWidth: 1, borderBottomColor: '#f1ebe6' },
+  checkoutPinStatus: { marginTop: 5, color: '#517a5e', fontSize: 12 },
+  checkoutDivider: { height: 1, backgroundColor: '#eae1da', marginTop: 22, marginBottom: 10 },
+  checkoutPaymentOption: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: '#e3dcd5', borderRadius: 10, backgroundColor: '#fffdfb', padding: 16, marginTop: 12 },
+  checkoutPaymentTitle: { color: '#302a27', fontWeight: '700' },
+  checkoutPaymentDescription: { color: '#7f746e', fontSize: 11, marginTop: 3 },
+  checkoutConfirmButton: { backgroundColor: '#111111', borderRadius: 10, minHeight: 50, justifyContent: 'center', alignItems: 'center', marginTop: 14 },
+  checkoutConfirmText: { color: '#ffffff', fontWeight: '700' },
+  checkoutSuccess: { alignItems: 'center', gap: 8, borderRadius: 16, backgroundColor: '#eff8f0', padding: 20, marginTop: 14 },
+  checkoutOrdersLink: { color: '#257651', fontWeight: '700', marginTop: 5 },
+  checkoutOrderList: { gap: 10 },
+  checkoutOrderCard: { backgroundColor: '#fffdfb', borderColor: '#e9e2dc', borderWidth: 1, borderRadius: 12, padding: 15, gap: 5 },
   releaseConsentOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16, backgroundColor: 'rgba(20,16,14,0.48)' },
   releaseConsentCard: { width: '100%', maxWidth: 520, maxHeight: '90%', borderRadius: 12, backgroundColor: '#fffdfb', overflow: 'hidden' },
   releaseConsentBody: { padding: 20, gap: 12 },
@@ -11289,6 +12142,7 @@ const styles = StyleSheet.create({
   releaseConsentCopy: { ...typography.body, fontSize: 14, lineHeight: 21, color: '#5f5853' },
   releaseConsentActions: { paddingHorizontal: 20, paddingBottom: 20, gap: 10 },
   releaseConsentButton: { minHeight: 48, paddingVertical: 12 },
+  aiPhotoDisclosureLink: { color: '#9b5658', textDecorationLine: 'underline' },
   releaseReportAction: { minHeight: 44, paddingVertical: 10, paddingHorizontal: 4, flexDirection: 'row', alignItems: 'center', gap: 7 },
   releaseReportText: { ...typography.caption, color: '#8c4d50', fontSize: 13, lineHeight: 19, flexShrink: 1 },
   releaseLegalAction: { minHeight: 44, justifyContent: 'center' },
@@ -11296,13 +12150,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8fafc'
   },
-  iosGlassRoot: {
+  surfaceRoot: {
     backgroundColor: '#f7f3eb'
   },
-  iosGlassTransparent: {
+  surfaceTransparent: {
     backgroundColor: 'transparent'
   },
-  iosGlassGlowTop: {
+  surfaceGlowTop: {
     position: 'absolute',
     top: 110,
     right: -85,
@@ -11311,7 +12165,7 @@ const styles = StyleSheet.create({
     borderRadius: 135,
     backgroundColor: 'rgba(207, 187, 150, 0.18)'
   },
-  iosGlassGlowBottom: {
+  surfaceGlowBottom: {
     position: 'absolute',
     bottom: 115,
     left: -90,
@@ -11320,11 +12174,11 @@ const styles = StyleSheet.create({
     borderRadius: 145,
     backgroundColor: 'rgba(215, 195, 160, 0.2)'
   },
-  iosGlassBackdrop: {
+  surfaceBackdrop: {
     borderRadius: 18,
     overflow: 'hidden'
   },
-  iosGlassCard: {
+  surfaceCard: {
     borderColor: 'rgba(255, 255, 255, 0.78)',
     borderWidth: 1,
     backgroundColor: 'rgba(255, 255, 255, 0.28)',
@@ -11411,11 +12265,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 5,
     paddingBottom: 6,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.36)' : '#fbf7f6',
+    backgroundColor: 'rgba(255, 252, 250, 0.36)',
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'flex-start',
     gap: 10
+  },
+  pageBackButton: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e8e1da',
+    backgroundColor: '#fffdfb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3
+  },
+  pageBackButtonText: {
+    ...typography.label,
+    fontSize: 12,
+    color: '#211f1d'
   },
   categorySearchDock: {
     flex: 1,
@@ -11520,20 +12391,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16
   },
   appHeader: {
-    minHeight: Platform.OS === 'android' ? appTopInset + 58 : 60,
+    minHeight: 60,
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'android' ? appTopInset + 10 : 8,
+    paddingTop: 8,
     paddingBottom: 8,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.36)' : '#faf8f5',
+    backgroundColor: 'rgba(255, 252, 250, 0.36)',
     borderBottomWidth: 1,
-    borderBottomColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.78)' : '#ece5e1',
+    borderBottomColor: 'rgba(255, 255, 255, 0.78)',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between'
   },
   appHeaderCompact: {
-    minHeight: Platform.OS === 'android' ? (NativeStatusBar.currentHeight || 24) + 46 : 56,
-    paddingTop: Platform.OS === 'android' ? Math.max(8, (NativeStatusBar.currentHeight || 24) - 10) : 6,
+    minHeight: 56,
+    paddingTop: 6,
     paddingBottom: 6,
     zIndex: 10
   },
@@ -11541,17 +12412,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10
   },
   appHeaderAction: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    flexShrink: 0,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center'
   },
   appHeaderCreditAction: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    paddingHorizontal: 0,
+    width: 'auto',
+    minWidth: 48,
+    height: 'auto',
+    minHeight: 48,
+    flexShrink: 0,
+    borderRadius: 24,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     flexDirection: 'row',
     backgroundColor: '#fff3df',
     borderWidth: 1,
@@ -11564,11 +12440,12 @@ const styles = StyleSheet.create({
     lineHeight: 13,
     fontWeight: '800',
     letterSpacing: 0,
-    maxWidth: 27
+    flexShrink: 0
   },
   appHeaderSide: {
     width: 'auto',
-    minHeight: 40,
+    minHeight: 48,
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2
@@ -11583,7 +12460,8 @@ const styles = StyleSheet.create({
     gap: 0
   },
   appHeaderBrandWrap: {
-    minHeight: 44,
+    minWidth: 0,
+    minHeight: 48,
     justifyContent: 'center',
     alignItems: 'center',
     flex: 1
@@ -11593,7 +12471,7 @@ const styles = StyleSheet.create({
   },
   appHeaderBrandWrapNarrow: {
     flex: 0,
-    width: 38
+    width: 48
   },
   appHeaderNarrowLogo: {
     width: 30,
@@ -11675,7 +12553,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 18,
-    paddingTop: Platform.OS === 'android' ? 38 : 12,
+    paddingTop: 12,
     paddingBottom: 12,
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
@@ -11740,11 +12618,11 @@ const styles = StyleSheet.create({
     maxWidth: 560,
     borderRadius: 25,
     overflow: 'hidden',
-    shadowColor: '#1f1714',
-    shadowOpacity: 0.14,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 9
+    shadowColor: '#100e0d',
+    shadowOpacity: 0.23,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 11
   },
   bottomNav: {
     width: '100%',
@@ -11755,10 +12633,10 @@ const styles = StyleSheet.create({
     minHeight: 66,
     borderRadius: 25,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.7)',
+    borderColor: 'rgba(255, 255, 255, 0.28)',
     paddingVertical: 7,
     paddingHorizontal: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)'
+    backgroundColor: 'rgba(21, 20, 22, 0.28)'
   },
   bottomNavCompact: {
     paddingHorizontal: 4
@@ -11786,7 +12664,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 29,
     borderRadius: 12,
-    backgroundColor: 'transparent'
+    backgroundColor: 'rgba(255, 255, 255, 0.17)'
   },
   navText: {
     ...typography.nav,
@@ -11794,15 +12672,11 @@ const styles = StyleSheet.create({
     lineHeight: 13,
     width: '100%',
     textAlign: 'center',
-    color: '#66605c',
+    color: 'rgba(255, 255, 255, 0.78)',
     fontWeight: '600'
   },
-  navTextCompact: {
-    fontSize: 9,
-    lineHeight: 11
-  },
   navTextActive: {
-    color: '#050505',
+    color: '#ffffff',
     fontFamily: fontFamilies.bodyBold,
     fontWeight: '800'
   },
@@ -11814,23 +12688,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent'
   },
   navActiveUnderlineVisible: {
-    backgroundColor: '#050505'
+    backgroundColor: '#eadbc0'
   },
   homeScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    backgroundColor: 'transparent'
   },
   homeScroll: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    backgroundColor: 'transparent'
   },
   homeContent: {
     paddingTop: 0,
-    paddingBottom: bottomNavigationHeight + screenBottomInset + 52,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    paddingBottom: bottomNavigationHeight + 16,
+    backgroundColor: 'transparent'
   },
   homeContentTablet: {
-    paddingBottom: screenBottomInset + 12
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 12
   },
   homeStudioHero: {
     marginHorizontal: 20,
@@ -11945,6 +12819,7 @@ const styles = StyleSheet.create({
     minHeight: 54
   },
   homeStudioPrimaryText: {
+    flexShrink: 1,
     fontFamily: fontFamilies.bodyBold,
     color: '#15100d',
     fontSize: 12.5,
@@ -12025,12 +12900,17 @@ const styles = StyleSheet.create({
     paddingBottom: 12
   },
   homeStudioActionTileNarrow: {
+    flex: 0,
     minHeight: 72,
     width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 10
+  },
+  homeStudioActionTileLargeText: {
+    flexDirection: 'column',
+    alignItems: 'stretch'
   },
   homeStudioActionIcon: {
     width: 40,
@@ -12043,10 +12923,18 @@ const styles = StyleSheet.create({
   homeStudioActionIconNarrow: {
     flexShrink: 0
   },
+  homeStudioActionIconLargeText: {
+    alignSelf: 'flex-start',
+    marginBottom: 8
+  },
   homeStudioActionCopyNarrow: {
     flex: 1,
     minWidth: 0,
     marginLeft: 12
+  },
+  homeStudioActionCopyLargeText: {
+    flex: 0,
+    marginLeft: 0
   },
   homeStudioActionTitle: {
     fontFamily: fontFamilies.bodyBold,
@@ -12090,13 +12978,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#f1ebe4',
     flexDirection: 'row'
   },
+  homeStudioWardrobeBannerStacked: {
+    flexDirection: 'column'
+  },
   homeStudioWardrobeBannerCopy: {
-    flex: 0,
-    width: '62%',
+    flexBasis: '62%',
+    flexGrow: 0,
+    flexShrink: 1,
     minWidth: 0,
     paddingLeft: 16,
     paddingRight: 8,
     paddingVertical: 13
+  },
+  homeStudioWardrobeBannerCopyStacked: {
+    flexBasis: 'auto',
+    flexGrow: 0,
+    flexShrink: 0,
+    paddingRight: 16
   },
   homeStudioBannerTitle: {
     fontFamily: fontFamilies.bodyBold,
@@ -12117,6 +13015,7 @@ const styles = StyleSheet.create({
   },
   homeStudioBannerButton: {
     alignSelf: 'flex-start',
+    maxWidth: '100%',
     marginTop: 8,
     minHeight: 34,
     borderRadius: 9,
@@ -12124,9 +13023,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    paddingHorizontal: 15
+    paddingHorizontal: 15,
+    paddingVertical: 8
   },
   homeStudioBannerButtonText: {
+    flexShrink: 1,
     fontFamily: fontFamilies.bodyBold,
     color: '#ffffff',
     fontSize: 12,
@@ -12140,6 +13041,11 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     backgroundColor: '#eee5dc'
   },
+  homeStudioBannerImageStacked: {
+    flex: 0,
+    width: '100%',
+    height: 140
+  },
   homeStudioSavedPreview: {
     flex: 1,
     minHeight: 126,
@@ -12147,6 +13053,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end'
+  },
+  homeStudioSavedPreviewStacked: {
+    flex: 0,
+    minHeight: 0,
+    height: 104,
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    justifyContent: 'flex-start'
   },
   homeStudioSavedImage: {
     width: 66,
@@ -13507,8 +14421,8 @@ const styles = StyleSheet.create({
     marginTop: 34,
     paddingTop: 26,
     paddingHorizontal: 16,
-    paddingBottom: 28,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 251, 248, 0.33)' : '#f6efeb'
+    paddingBottom: 16,
+    backgroundColor: 'rgba(255, 251, 248, 0.33)'
   },
   homeJournalHead: {
     flexDirection: 'row',
@@ -13529,23 +14443,6 @@ const styles = StyleSheet.create({
     color: '#1f1b19',
     lineHeight: 30
   },
-  homeJournalLink: {
-    minHeight: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: '#dfd2cd',
-    backgroundColor: '#fffaf7',
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5
-  },
-  homeJournalLinkText: {
-    ...typography.caption,
-    color: '#9b5658',
-    fontSize: 11,
-    fontWeight: '700'
-  },
   homeJournalIntro: {
     ...typography.smallBody,
     marginTop: 10,
@@ -13565,6 +14462,27 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     rowGap: 16
   },
+  homeJournalGridRow: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 251, 248, 0.33)'
+  },
+  homeJournalGridRowTablet: {
+    paddingHorizontal: 18
+  },
+  homeJournalFooter: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: 'rgba(255, 251, 248, 0.33)'
+  },
+  homeJournalCount: {
+    ...typography.caption,
+    color: '#706762',
+    textAlign: 'center',
+    paddingVertical: 12
+  },
   homeJournalProductCard: {
     width: '47.6%',
     borderRadius: 16,
@@ -13578,6 +14496,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2
   },
+  homeJournalProductCardTablet: {
+    width: '31.5%'
+  },
   homeJournalImageFrame: {
     width: '100%',
     aspectRatio: productImageAspectRatio,
@@ -13589,25 +14510,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     backgroundColor: '#e7ded7'
-  },
-  homeJournalOverlay: {
-    position: 'absolute',
-    left: 8,
-    right: 8,
-    bottom: 8,
-    minHeight: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255, 253, 251, 0.92)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 8
-  },
-  homeJournalLookLabel: {
-    ...typography.caption,
-    color: '#5b514d',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0
   },
   homeJournalProductBody: {
     minHeight: 190,
@@ -13678,7 +14580,7 @@ const styles = StyleSheet.create({
   },
   shopScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
+    backgroundColor: 'transparent'
   },
   shopContent: {
     paddingBottom: screenBottomInset,
@@ -13686,15 +14588,15 @@ const styles = StyleSheet.create({
   },
   categoryScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
+    backgroundColor: 'transparent'
   },
   categoryTopBar: {
-    minHeight: Platform.OS === 'android' ? appTopInset + 64 : 66,
-    paddingTop: Platform.OS === 'android' ? appTopInset + 10 : 10,
+    minHeight: 66,
+    paddingTop: 10,
     paddingBottom: 10,
     paddingLeft: 22,
     paddingRight: 12,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.48)' : '#ffffff',
+    backgroundColor: 'rgba(255, 252, 250, 0.48)',
     borderBottomWidth: 1,
     borderBottomColor: '#dad9df',
     flexDirection: 'row',
@@ -13722,7 +14624,7 @@ const styles = StyleSheet.create({
   categoryBrowser: {
     flex: 1,
     flexDirection: 'row',
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    backgroundColor: 'transparent'
   },
   categoryRail: {
     width: 78,
@@ -13730,7 +14632,7 @@ const styles = StyleSheet.create({
     flexBasis: 78,
     flexGrow: 0,
     flexShrink: 0,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(246, 239, 234, 0.62)' : '#f3eee8',
+    backgroundColor: 'rgba(246, 239, 234, 0.62)',
     borderRightWidth: 1,
     borderRightColor: '#e8e1da'
   },
@@ -13738,13 +14640,13 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingBottom: bottomNavigationHeight + screenBottomInset + 132
   },
-  categoryRailContentTablet: {
-    paddingBottom: 28
-  },
   categoryRailTablet: {
-    width: 96,
-    maxWidth: 96,
-    flexBasis: 96
+    backgroundColor: 'transparent',
+    borderRightWidth: 0
+  },
+  categoryRailContentTablet: {
+    paddingTop: 8,
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 16
   },
   categoryRailItem: {
     minHeight: 88,
@@ -13756,8 +14658,23 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e1d9d2',
     position: 'relative'
   },
+  categoryRailItemTablet: {
+    minHeight: 94,
+    marginHorizontal: 8,
+    marginVertical: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderBottomWidth: 0,
+    borderRadius: 16,
+    backgroundColor: 'transparent'
+  },
   categoryRailItemActive: {
     backgroundColor: '#faf8f5'
+  },
+  categoryRailItemActiveTablet: {
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#e5dacf'
   },
   categoryRailAccent: {
     position: 'absolute',
@@ -13780,6 +14697,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#eee3df'
   },
+  categoryRailImageFrameTablet: {
+    width: 52,
+    height: 52,
+    borderRadius: 26
+  },
   categoryRailImageFrameActive: {
     backgroundColor: '#ffffff',
     borderColor: '#b9ada5'
@@ -13800,6 +14722,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 0
   },
+  categoryRailLabelTablet: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 16,
+    textAlign: 'center'
+  },
   categoryRailLabelActive: {
     color: '#211f1d',
     fontFamily: fontFamilies.bodySemiBold,
@@ -13807,7 +14735,7 @@ const styles = StyleSheet.create({
   },
   categoryMain: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    backgroundColor: 'transparent'
   },
   categoryMainContent: {
     paddingTop: 12,
@@ -13815,8 +14743,12 @@ const styles = StyleSheet.create({
     paddingBottom: bottomNavigationHeight + screenBottomInset + 164
   },
   categoryMainContentTablet: {
-    paddingHorizontal: 24,
-    paddingBottom: 36
+    paddingHorizontal: 28,
+    paddingTop: 18,
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 24
+  },
+  categoryContinuousSectionTablet: {
+    paddingBottom: 30
   },
   categoryFeatureBand: {
     marginHorizontal: 0,
@@ -13824,9 +14756,14 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
     borderRadius: 16,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.34)' : '#f3eee8',
+    backgroundColor: 'rgba(255, 255, 255, 0.34)',
     borderWidth: 1,
-    borderColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.74)' : '#e8e1da'
+    borderColor: 'rgba(255, 255, 255, 0.74)'
+  },
+  categoryFeatureBandTablet: {
+    paddingTop: 20,
+    paddingBottom: 20,
+    borderRadius: 22
   },
   categoryKickerRow: {
     flexDirection: 'row',
@@ -13855,6 +14792,10 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     letterSpacing: 0
   },
+  categoryHeadlineTablet: {
+    fontSize: 27,
+    lineHeight: 34
+  },
   categoryFeaturedGrid: {
     marginTop: 13,
     flexDirection: 'row',
@@ -13869,6 +14810,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-start'
   },
+  categoryFeaturedTileTablet: {
+    minHeight: 152
+  },
   categoryFeaturedImageFrame: {
     width: 64,
     height: 64,
@@ -13879,6 +14823,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#faf8f5',
     borderWidth: 1,
     borderColor: '#e4dcd5'
+  },
+  categoryFeaturedImageFrameTablet: {
+    width: 116,
+    height: 116,
+    borderRadius: 24
   },
   categoryFeaturedImage: {
     width: '100%',
@@ -13897,6 +14846,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 0
   },
+  categoryFeaturedLabelTablet: {
+    marginTop: 10,
+    fontSize: 14,
+    lineHeight: 19
+  },
   categoryTileGrid: {
     marginTop: 17,
     flexDirection: 'row',
@@ -13906,12 +14860,21 @@ const styles = StyleSheet.create({
     rowGap: 18
   },
   categoryTileGridTablet: {
-    rowGap: 26
+    rowGap: 18
   },
   categoryTile: {
     minHeight: 116,
     alignItems: 'center',
     paddingTop: 3
+  },
+  categoryTileTablet: {
+    minHeight: 204,
+    paddingVertical: 18,
+    paddingHorizontal: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e9e0d7',
+    backgroundColor: 'rgba(255, 255, 255, 0.42)'
   },
   categoryContentImageFrame: {
     width: 76,
@@ -13923,6 +14886,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3eee8',
     borderWidth: 1,
     borderColor: '#e8e1da'
+  },
+  categoryContentImageFrameTablet: {
+    width: 130,
+    height: 130,
+    borderRadius: 26
   },
   categoryContentImage: {
     width: '100%',
@@ -13941,6 +14909,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: 0
   },
+  categoryTileLabelTablet: {
+    marginTop: 12,
+    fontSize: 15,
+    lineHeight: 20
+  },
   categorySectionTitle: {
     color: '#211f1d',
     fontFamily: fontFamilies.logo,
@@ -13954,6 +14927,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12
+  },
+  categorySectionHeaderTablet: {
+    marginTop: 28
+  },
+  categorySectionTitleTablet: {
+    fontSize: 24,
+    lineHeight: 31
   },
   categorySectionRule: {
     flex: 1,
@@ -14331,7 +15311,7 @@ const styles = StyleSheet.create({
   shopFloatingButton: {
     position: 'absolute',
     right: 18,
-    bottom: Platform.OS === 'ios' ? 91 : 82,
+    bottom: 91,
     width: 54,
     height: 54,
     borderRadius: 27,
@@ -14341,17 +15321,20 @@ const styles = StyleSheet.create({
   },
   wardrobeScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    backgroundColor: 'transparent'
   },
   wardrobeContent: {
     flexGrow: 1,
-    paddingBottom: 20,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 24,
+    backgroundColor: 'transparent'
+  },
+  wardrobeContentTablet: {
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 24
   },
   wardrobeTopBar: {
     height: 86,
     paddingHorizontal: 28,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.38)' : '#fbf7f6',
+    backgroundColor: 'rgba(255, 252, 250, 0.38)',
     borderBottomWidth: 1,
     borderBottomColor: '#ece5e1',
     flexDirection: 'row',
@@ -14400,6 +15383,14 @@ const styles = StyleSheet.create({
   wardrobeHeroHeadCompact: {
     gap: 9
   },
+  wardrobeHeroHeadTablet: {
+    width: '100%',
+    maxWidth: 900,
+    alignSelf: 'center',
+    paddingHorizontal: 0,
+    paddingTop: 26,
+    paddingBottom: 20
+  },
   wardrobeHeroCopy: {
     flex: 1,
     minWidth: 0
@@ -14416,17 +15407,25 @@ const styles = StyleSheet.create({
     fontSize: 25,
     lineHeight: 30
   },
+  wardrobeTitleTablet: {
+    fontSize: 35,
+    lineHeight: 42
+  },
   wardrobeSubtitle: {
     ...typography.smallBody,
     marginTop: 2,
     color: '#77716c',
     fontSize: 12,
     lineHeight: 17,
-    fontWeight: '600'
+    fontWeight: '400'
   },
   wardrobeSubtitleCompact: {
     fontSize: 11,
     lineHeight: 15
+  },
+  wardrobeSubtitleTablet: {
+    fontSize: 14,
+    lineHeight: 20
   },
   wardrobeAddButton: {
     minHeight: 42,
@@ -14444,6 +15443,11 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 10,
     gap: 4
+  },
+  wardrobeAddButtonTablet: {
+    minHeight: 48,
+    borderRadius: 24,
+    paddingHorizontal: 18
   },
   wardrobeAddText: {
     ...typography.label,
@@ -14472,11 +15476,21 @@ const styles = StyleSheet.create({
     top: 12,
     bottom: 12
   },
+  wardrobeCategoryRailTablet: {
+    top: 34,
+    bottom: 34
+  },
   wardrobeCategoryRailLeft: {
     left: 5
   },
+  wardrobeCategoryRailLeftPhone: {
+    left: 10
+  },
   wardrobeCategoryRailRight: {
     right: 5
+  },
+  wardrobeCategoryRailRightPhone: {
+    right: 10
   },
   wardrobeCategoryButton: {
     width: 76,
@@ -14488,6 +15502,10 @@ const styles = StyleSheet.create({
     width: 64,
     minHeight: 60
   },
+  wardrobeCategoryButtonTablet: {
+    width: 94,
+    minHeight: 94
+  },
   wardrobeCategoryIcon: {
     width: 46,
     height: 46,
@@ -14496,17 +15514,48 @@ const styles = StyleSheet.create({
     borderColor: '#ded6cf',
     backgroundColor: '#fffdfb',
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    overflow: 'hidden'
   },
   wardrobeCategoryIconCompact: {
     width: 42,
     height: 42,
     borderRadius: 21
   },
+  wardrobeCategoryIconTablet: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    borderColor: '#e2d9d1',
+    backgroundColor: 'rgba(255, 253, 251, 0.94)'
+  },
   wardrobeCategoryIconSelected: {
-    borderWidth: 1.5,
+    width: 60,
+    height: 60,
+    borderRadius: 12,
+    borderWidth: 2,
     borderColor: '#5b514b',
-    backgroundColor: '#e8dfd7'
+    backgroundColor: '#fffdfb'
+  },
+  wardrobeCategoryIconSelectedTablet: {
+    width: 82,
+    height: 82,
+    borderRadius: 15
+  },
+  wardrobeCategorySelectedImage: {
+    width: '100%',
+    height: '100%'
+  },
+  wardrobeCategorySelectedBadge: {
+    position: 'absolute',
+    right: 2,
+    top: 2,
+    width: 17,
+    height: 17,
+    borderRadius: 9,
+    backgroundColor: '#211f1d',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   wardrobeCategoryIconPressed: {
     backgroundColor: '#e4dad2',
@@ -14516,8 +15565,13 @@ const styles = StyleSheet.create({
     width: 23,
     height: 23
   },
+  wardrobeCategoryAssetIconTablet: {
+    width: 29,
+    height: 29
+  },
   wardrobeCategoryLabel: {
     ...typography.caption,
+    fontFamily: fontFamilies.bodyRegular,
     marginTop: 5,
     minHeight: 14,
     maxWidth: 76,
@@ -14525,7 +15579,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 10.5,
     lineHeight: 13,
-    fontWeight: '700'
+    fontWeight: '400'
   },
   wardrobeCategoryLabelCompact: {
     marginTop: 3,
@@ -14533,6 +15587,11 @@ const styles = StyleSheet.create({
     maxWidth: 62,
     fontSize: 9,
     lineHeight: 11
+  },
+  wardrobeCategoryLabelTablet: {
+    maxWidth: 94,
+    fontSize: 13,
+    lineHeight: 17
   },
   wardrobeCategoryLabelSelected: {
     color: '#211f1d',
@@ -14543,6 +15602,13 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     gap: 12,
     marginBottom: 0
+  },
+  wardrobePreviewWrapTablet: {
+    width: '100%',
+    maxWidth: 900,
+    alignSelf: 'center',
+    marginHorizontal: 0,
+    gap: 12
   },
   wardrobePreviewStage: {
     position: 'relative',
@@ -14557,6 +15623,17 @@ const styles = StyleSheet.create({
   wardrobePreviewStageCompact: {
     paddingVertical: 0
   },
+  wardrobePreviewStagePhone: {
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    overflow: 'visible'
+  },
+  wardrobePreviewStageTablet: {
+    alignSelf: 'center',
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    overflow: 'visible'
+  },
   wardrobePreviewCard: {
     width: '100%',
     alignSelf: 'center',
@@ -14567,9 +15644,61 @@ const styles = StyleSheet.create({
   wardrobePreviewCardCompact: {
     width: '100%'
   },
+  wardrobePreviewCardPhone: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#e2d9d1'
+  },
+  wardrobePreviewCardTablet: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#e2d9d1'
+  },
   wardrobePreviewImage: {
     width: '100%',
     height: '100%'
+  },
+  wardrobePortraitEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 30,
+    gap: 10
+  },
+  wardrobePortraitEmptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#f7e9e8',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  wardrobePortraitEmptyTitle: {
+    ...typography.h3,
+    color: '#211f1d',
+    textAlign: 'center'
+  },
+  wardrobePortraitEmptyCopy: {
+    ...typography.body,
+    color: '#756d67',
+    textAlign: 'center',
+    maxWidth: 250
+  },
+  wardrobePortraitEmptyAction: {
+    minHeight: 44,
+    borderRadius: 22,
+    backgroundColor: '#111111',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    marginTop: 8
+  },
+  wardrobePortraitEmptyActionText: {
+    ...typography.label,
+    color: '#ffffff',
+    fontSize: 13
   },
   wardrobeTryButton: {
     alignSelf: 'center',
@@ -14589,6 +15718,11 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     paddingHorizontal: 20
   },
+  wardrobeTryButtonTablet: {
+    minWidth: 200,
+    minHeight: 52,
+    borderRadius: 26
+  },
   wardrobeTryButtonDisabled: {
     borderWidth: 1,
     borderColor: '#d8d0ca',
@@ -14602,11 +15736,15 @@ const styles = StyleSheet.create({
   wardrobeTryButtonDockCompact: {
     marginTop: 0
   },
+  wardrobeTryButtonDockTablet: {
+    marginTop: 2
+  },
   wardrobeTryText: {
     ...typography.caption,
+    fontFamily: fontFamilies.bodyRegular,
     color: '#ffffff',
     fontSize: 13,
-    fontWeight: '700'
+    fontWeight: '400'
   },
   wardrobeTryTextDisabled: {
     color: '#77716c'
@@ -14619,6 +15757,199 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     fontWeight: '600',
     textAlign: 'center'
+  },
+  wardrobeTryHintTablet: {
+    fontSize: 12,
+    lineHeight: 17
+  },
+  wardrobeResultCaption: {
+    ...typography.caption,
+    color: '#514b47',
+    textAlign: 'center',
+    fontSize: 12,
+    lineHeight: 17
+  },
+  wardrobePickerOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end'
+  },
+  wardrobePickerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(26, 21, 18, 0.42)'
+  },
+  wardrobePickerSheet: {
+    maxHeight: '82%',
+    minHeight: 260,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#f8f3ec',
+    overflow: 'hidden'
+  },
+  wardrobePickerSheetTablet: {
+    width: '100%',
+    maxWidth: 620,
+    maxHeight: '75%',
+    alignSelf: 'center',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24
+  },
+  wardrobePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7dfd7'
+  },
+  wardrobePickerHeaderCopy: {
+    flex: 1,
+    paddingRight: 12
+  },
+  wardrobePickerEyebrow: {
+    ...typography.caption,
+    color: '#976b5b',
+    fontSize: 10,
+    letterSpacing: 1.5
+  },
+  wardrobePickerTitle: {
+    ...typography.h2,
+    color: '#211f1d',
+    fontSize: 22,
+    lineHeight: 28
+  },
+  wardrobePickerClose: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fffdfb'
+  },
+  wardrobePickerContent: {
+    padding: 18,
+    paddingBottom: 36
+  },
+  addStudioCategoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10
+  },
+  addStudioCategoryChoice: {
+    width: '48%',
+    minHeight: 82,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#e0d7cf',
+    borderRadius: 13,
+    backgroundColor: '#fffdfb'
+  },
+  addStudioCategoryChoiceSelected: {
+    borderColor: '#211f1d',
+    backgroundColor: '#211f1d'
+  },
+  addStudioCategoryChoiceIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f5eee8'
+  },
+  addStudioCategoryChoiceAsset: {
+    width: 20,
+    height: 20
+  },
+  addStudioCategoryChoiceCheck: {
+    position: 'absolute',
+    top: 8,
+    right: 8
+  },
+  addStudioCategoryChoiceText: {
+    ...typography.caption,
+    color: '#211f1d',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center'
+  },
+  addStudioCategoryChoiceTextSelected: {
+    color: '#fffdfb'
+  },
+  wardrobePickerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12
+  },
+  wardrobePickerItem: {
+    width: '48%',
+    minHeight: 184,
+    borderWidth: 1,
+    borderColor: '#e7dfd7',
+    borderRadius: 15,
+    backgroundColor: '#fffdfb',
+    overflow: 'hidden'
+  },
+  wardrobePickerItemTablet: {
+    width: '31%'
+  },
+  wardrobePickerItemSelected: {
+    borderColor: '#211f1d',
+    borderWidth: 2
+  },
+  wardrobePickerItemImage: {
+    width: '100%',
+    height: 140,
+    backgroundColor: '#f3eee8'
+  },
+  wardrobePickerItemName: {
+    ...typography.caption,
+    paddingHorizontal: 9,
+    paddingTop: 7,
+    color: '#211f1d',
+    fontSize: 12,
+    lineHeight: 16
+  },
+  wardrobePickerItemStatus: {
+    ...typography.caption,
+    paddingHorizontal: 9,
+    paddingBottom: 7,
+    color: '#0f766e',
+    fontSize: 10
+  },
+  wardrobePickerEmpty: {
+    minHeight: 190,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8
+  },
+  wardrobePickerEmptyTitle: {
+    ...typography.h2,
+    color: '#211f1d',
+    fontSize: 18
+  },
+  wardrobePickerEmptyCopy: {
+    ...typography.caption,
+    color: '#655e59',
+    textAlign: 'center',
+    fontSize: 12
+  },
+  wardrobePickerAddButton: {
+    marginTop: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 22,
+    backgroundColor: '#111111'
+  },
+  wardrobePickerAddText: {
+    ...typography.caption,
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700'
   },
   wardrobeRecommendationsHead: {
     paddingHorizontal: 18,
@@ -14722,18 +16053,165 @@ const styles = StyleSheet.create({
     paddingTop: 18,
     paddingBottom: 14
   },
+  wardrobeModeTabsTablet: {
+    width: '100%',
+    maxWidth: 900,
+    alignSelf: 'center',
+    paddingHorizontal: 0,
+    paddingTop: 4,
+    paddingBottom: 20
+  },
+  wardrobeTabletTabs: {
+    flexDirection: 'row',
+    padding: 4,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e9e0d8',
+    backgroundColor: 'rgba(255, 255, 255, 0.58)'
+  },
+  wardrobeTabletTab: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12
+  },
+  wardrobeTabletTabActive: {
+    backgroundColor: '#211e1c'
+  },
+  wardrobeTabletTabText: {
+    ...typography.smallBody,
+    color: '#5f5853',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600'
+  },
+  wardrobeTabletTabTextActive: {
+    color: '#ffffff'
+  },
+  wardrobeTabletEmpty: {
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
+    marginBottom: 24,
+    overflow: 'hidden',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e9e0d8',
+    backgroundColor: 'rgba(255, 255, 255, 0.72)'
+  },
+  wardrobeTabletEmptyImage: {
+    width: '100%',
+    aspectRatio: 2,
+    backgroundColor: '#eee7dd'
+  },
+  wardrobeTabletEmptyBody: {
+    alignItems: 'center',
+    paddingHorizontal: 30,
+    paddingTop: 26,
+    paddingBottom: 30,
+    gap: 10
+  },
+  wardrobeTabletEmptyTitle: {
+    ...typography.display,
+    color: '#211e1c',
+    fontSize: 30,
+    lineHeight: 36,
+    textAlign: 'center'
+  },
+  wardrobeTabletEmptyCopy: {
+    ...typography.smallBody,
+    maxWidth: 450,
+    color: '#625b56',
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center'
+  },
+  wardrobeTabletEmptyButton: {
+    minHeight: 48,
+    marginTop: 8,
+    paddingHorizontal: 22,
+    borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#111111'
+  },
+  wardrobeTabletEmptyButtonText: {
+    ...typography.smallBody,
+    color: '#ffffff',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700'
+  },
   addStudioScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
+    backgroundColor: 'transparent'
+  },
+  addStudioBackButton: {
+    minHeight: 44,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginHorizontal: 18,
+    paddingRight: 12
+  },
+  addStudioBackButtonTablet: {
+    width: '100%',
+    maxWidth: 1040,
+    alignSelf: 'center',
+    marginHorizontal: 0
+  },
+  addStudioBackText: {
+    ...typography.smallBody,
+    color: '#211f1d',
+    fontSize: 15,
+    fontWeight: '700'
   },
   addStudioContent: {
     paddingBottom: bottomNavigationHeight + screenBottomInset + 118,
     backgroundColor: '#fbf7f6'
   },
+  addStudioContentTablet: {
+    paddingHorizontal: 24,
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 32
+  },
+  addStudioHeroHead: {
+    paddingTop: 2
+  },
+  addStudioHeaderTablet: {
+    width: '100%',
+    maxWidth: 1040,
+    alignSelf: 'center',
+    paddingHorizontal: 0,
+    paddingTop: 8,
+    paddingBottom: 14
+  },
+  addStudioMain: {},
+  addStudioMainTablet: {
+    width: '100%',
+    maxWidth: 1040,
+    alignSelf: 'center',
+    paddingTop: 8,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 28
+  },
+  addStudioMediaColumn: {},
+  addStudioMediaColumnTablet: {
+    width: '40%'
+  },
+  addStudioDetailsColumn: {},
+  addStudioDetailsColumnTablet: {
+    flex: 1,
+    minWidth: 0
+  },
   addStudioTopBar: {
-    height: Platform.OS === 'android' ? 74 : 66,
+    height: 66,
     paddingHorizontal: 14,
-    paddingTop: Platform.OS === 'android' ? 12 : 4,
+    paddingTop: 4,
     borderBottomWidth: 1,
     borderBottomColor: '#e7dfdb',
     backgroundColor: '#fbf7f6',
@@ -14782,6 +16260,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center'
   },
+  addStudioUploadBoxTablet: {
+    height: 320,
+    marginTop: 0,
+    marginHorizontal: 0
+  },
   addStudioUploadImage: {
     width: '100%',
     height: '100%'
@@ -14817,46 +16300,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '500'
   },
-  addStudioThumbRow: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    flexDirection: 'row',
-    gap: 12
-  },
-  addStudioAddThumb: {
-    width: 70,
-    height: 82,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#d0d0d0',
-    backgroundColor: '#e6e3e1',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  addStudioThumbWrap: {
-    width: 70,
-    height: 82,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#d0d0d0',
-    overflow: 'hidden',
-    backgroundColor: '#ece7e3'
-  },
-  addStudioThumbImage: {
-    width: '100%',
-    height: '100%'
-  },
-  addStudioThumbClose: {
-    position: 'absolute',
-    right: 4,
-    top: 4,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: 'rgba(255, 255, 255, 0.88)',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
   addStudioSavedSection: {
     marginHorizontal: 20,
     marginTop: 18,
@@ -14864,6 +16307,10 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: '#eee5e1'
+  },
+  addStudioSavedSectionTablet: {
+    marginHorizontal: 0,
+    marginTop: 22
   },
   addStudioSavedHead: {
     minHeight: 24,
@@ -15021,6 +16468,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 26
   },
+  addStudioArchiveHeadTablet: {
+    paddingHorizontal: 0,
+    paddingTop: 0
+  },
   addStudioArchiveTitle: {
     ...typography.h2,
     color: '#171412',
@@ -15043,9 +16494,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0
   },
+  addStudioSectionLabelTablet: {
+    marginTop: 22,
+    paddingHorizontal: 0
+  },
   addStudioForm: {
     paddingHorizontal: 20,
     paddingTop: 22
+  },
+  addStudioFormTablet: {
+    paddingHorizontal: 0,
+    paddingTop: 18
   },
   addStudioFieldLabel: {
     marginBottom: 8,
@@ -15113,80 +16572,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '400'
   },
-  addStudioSegmented: {
-    minHeight: 38,
-    borderRadius: 10,
-    backgroundColor: '#e9e3e3',
-    padding: 4,
-    flexDirection: 'row'
-  },
-  addStudioSegment: {
-    flex: 1,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  addStudioSegmentActive: {
-    backgroundColor: '#1f1f1f'
-  },
-  addStudioSegmentText: {
-    color: '#171412',
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  addStudioSegmentTextActive: {
-    color: '#ffffff'
-  },
-  addStudioTagInput: {
-    minHeight: 48,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#c9cdd2',
-    backgroundColor: '#ffffff',
-    paddingLeft: 16,
-    paddingRight: 7,
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
-  addStudioTagTextInput: {
-    flex: 1,
-    minHeight: 44,
-    color: '#171412',
-    fontSize: 16,
-    fontWeight: '400'
-  },
-  addStudioTagAdd: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: '#eee8e8',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  addStudioTagRow: {
-    marginTop: 8,
-    flexDirection: 'row',
-    gap: 8
-  },
-  addStudioTagPill: {
-    minHeight: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#d4cecb',
-    backgroundColor: '#eee8e8',
-    paddingHorizontal: 11,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5
-  },
-  addStudioTagPillText: {
-    color: '#4f4a48',
-    fontSize: 12,
-    fontWeight: '500'
-  },
   addStudioMessage: {
     marginHorizontal: 20,
     marginTop: 18
+  },
+  addStudioMessageTablet: {
+    marginHorizontal: 0
   },
   addStudioFooter: {
     position: 'absolute',
@@ -15199,9 +16590,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#fbf7f6',
     paddingHorizontal: 20,
     paddingTop: 14,
-    paddingBottom: Platform.OS === 'ios' ? 18 : 12,
+    paddingBottom: 18,
     flexDirection: 'row',
     gap: 16
+  },
+  addStudioFooterTablet: {
+    position: 'relative',
+    marginTop: 24,
+    paddingHorizontal: 0,
+    paddingBottom: 8,
+    backgroundColor: 'transparent'
   },
   addStudioDiscardButton: {
     flex: 1,
@@ -15637,11 +17035,11 @@ const styles = StyleSheet.create({
   },
   searchScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#ffffff'
+    backgroundColor: 'transparent'
   },
   searchTopBar: {
-    minHeight: Platform.OS === 'android' ? appTopInset + 58 : 64,
-    paddingTop: Platform.OS === 'android' ? appTopInset + 8 : 8,
+    minHeight: 64,
+    paddingTop: 8,
     paddingBottom: 8,
     paddingLeft: 12,
     paddingRight: 12,
@@ -16289,7 +17687,7 @@ const styles = StyleSheet.create({
   },
   productDetailScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
+    backgroundColor: 'transparent'
   },
   productDetailContent: {
     paddingBottom: bottomNavigationHeight + screenBottomInset + 72,
@@ -16322,6 +17720,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#f3eee8'
+  },
+  productHeroMediaTablet: {
+    alignSelf: 'center'
   },
   productMediaTrack: {
     alignItems: 'stretch'
@@ -16575,6 +17976,13 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     textAlign: 'center'
   },
+  productTryOnDisclosure: {
+    color: '#817872',
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: 'center',
+    marginTop: 3
+  },
   productStorySection: {
     paddingHorizontal: 18,
     paddingTop: 36
@@ -16779,13 +18187,117 @@ const styles = StyleSheet.create({
   },
   aiStudioScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    backgroundColor: 'transparent'
+  },
+  aiStudioScroll: {
+    flex: 1
   },
   aiStudioContent: {
     paddingTop: 18,
     paddingBottom: screenBottomInset + 104,
     paddingHorizontal: 20,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    backgroundColor: 'transparent'
+  },
+  aiStudioContentTablet: {
+    paddingHorizontal: 32
+  },
+  aiStudioContentWelcome: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingTop: 24,
+    paddingBottom: screenBottomInset + 100
+  },
+  aiStudioConversation: {
+    width: '100%',
+    maxWidth: 920,
+    alignSelf: 'center'
+  },
+  aiStudioWelcomePanel: {
+    maxWidth: 900,
+    minHeight: 480,
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: '#e9dfd6',
+    backgroundColor: '#fffdfb',
+    paddingHorizontal: 42,
+    paddingTop: 28,
+    paddingBottom: 42,
+    justifyContent: 'center',
+    shadowColor: '#5e4a3c',
+    shadowOpacity: 0.05,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 2
+  },
+  aiStudioToolbarTablet: {
+    minHeight: 44,
+    marginBottom: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  aiStudioToolbarLeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 20
+  },
+  aiStudioMobileToolbar: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  aiStudioBackButton: {
+    minHeight: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#e9dfd6',
+    backgroundColor: '#fffdfb',
+    paddingLeft: 10,
+    paddingRight: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2
+  },
+  aiStudioBackButtonText: {
+    ...typography.caption,
+    color: '#3b3531',
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700'
+  },
+  aiStudioToolbarDockTablet: {
+    maxWidth: 920,
+    alignSelf: 'center',
+    paddingTop: 10,
+    paddingBottom: 8
+  },
+  aiStudioToolbarActiveTablet: {
+    marginBottom: 0
+  },
+  aiStudioToolbarLabel: {
+    ...typography.label,
+    color: '#8f5d59',
+    fontSize: 12,
+    letterSpacing: 1.4
+  },
+  aiStudioHistoryButtonTablet: {
+    minHeight: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#e9dfd6',
+    backgroundColor: '#faf6f1',
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  aiStudioHistoryButtonText: {
+    ...typography.caption,
+    color: '#3b3531',
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700'
   },
   aiStudioMenuButton: {
     width: 36,
@@ -16957,6 +18469,17 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: '400'
   },
+  aiStudioHeroTitleTablet: {
+    marginTop: 10,
+    fontSize: 43,
+    lineHeight: 52
+  },
+  aiStudioHeroTextTablet: {
+    maxWidth: 560,
+    marginTop: 12,
+    fontSize: 18,
+    lineHeight: 27
+  },
   aiHeroPanel: {
     minHeight: 92,
     borderRadius: 10,
@@ -17093,6 +18616,50 @@ const styles = StyleSheet.create({
   aiStarterArrow: {
     transform: [{ rotate: '45deg' }]
   },
+  aiStarterGridTablet: {
+    flexDirection: 'row',
+    gap: 14,
+    marginTop: 18
+  },
+  aiStarterCardTablet: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 176,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e9dfd6',
+    backgroundColor: '#faf6f1',
+    padding: 18
+  },
+  aiStarterIconTablet: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#f4e9e5',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  aiStarterCardTitleTablet: {
+    ...typography.caption,
+    marginTop: 17,
+    color: '#211f1d',
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '700'
+  },
+  aiStarterCardTextTablet: {
+    ...typography.smallBody,
+    marginTop: 3,
+    paddingRight: 15,
+    color: '#625c56',
+    fontSize: 14,
+    lineHeight: 19
+  },
+  aiStarterArrowTablet: {
+    position: 'absolute',
+    right: 15,
+    bottom: 16
+  },
   aiChatThread: {
     paddingTop: 14,
     gap: 10
@@ -17157,6 +18724,11 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: '400'
   },
+  aiMessageTextIntroTablet: {
+    maxWidth: 600,
+    fontSize: 16,
+    lineHeight: 24
+  },
   aiMessageTextUser: {
     color: '#ffffff',
     fontWeight: '500'
@@ -17194,6 +18766,10 @@ const styles = StyleSheet.create({
   aiSuggestionProductsTrack: {
     gap: 12,
     paddingRight: 16
+  },
+  aiStudioPreviewNote: {
+    marginHorizontal: 0,
+    marginTop: 12
   },
   aiFollowUpRow: {
     flexDirection: 'row',
@@ -17483,7 +19059,7 @@ const styles = StyleSheet.create({
     zIndex: 45,
     left: 16,
     right: 16,
-    bottom: Platform.OS === 'ios' ? 16 : 14,
+    bottom: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -17497,6 +19073,10 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
     elevation: 5
+  },
+  aiComposerTablet: {
+    borderRadius: 19,
+    padding: 7
   },
   aiComposerFocused: {
     borderColor: '#77716c',
@@ -17514,6 +19094,11 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontWeight: '400'
   },
+  aiComposerInputTablet: {
+    minHeight: 52,
+    fontSize: 16,
+    lineHeight: 23
+  },
   aiSendButton: {
     width: 46,
     height: 46,
@@ -17526,6 +19111,11 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
     elevation: 3
+  },
+  aiSendButtonTablet: {
+    width: 52,
+    height: 52,
+    borderRadius: 13
   },
   aiSendButtonDisabled: {
     backgroundColor: '#e1dbd6',
@@ -17689,7 +19279,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 20,
     right: 20,
-    top: Platform.OS === 'android' ? appTopInset + 12 : 16,
+    top: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between'
@@ -17856,11 +19446,11 @@ const styles = StyleSheet.create({
   },
   signupScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
+    backgroundColor: 'transparent'
   },
   signupContent: {
     flexGrow: 1,
-    paddingTop: Platform.OS === 'android' ? 34 : 54,
+    paddingTop: 54,
     paddingBottom: 34
   },
   signupBrandLogo: {
@@ -18101,7 +19691,7 @@ const styles = StyleSheet.create({
   },
   loginScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
+    backgroundColor: 'transparent'
   },
   loginContent: {
     flexGrow: 1,
@@ -18144,7 +19734,7 @@ const styles = StyleSheet.create({
   loginPanel: {
     paddingTop: 60,
     paddingBottom: 38,
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 252, 250, 0.36)' : '#fbf7f6'
+    backgroundColor: 'rgba(255, 252, 250, 0.36)'
   },
   loginTitle: {
     ...typography.h1,
@@ -18309,23 +19899,35 @@ const styles = StyleSheet.create({
     paddingBottom: 44,
     backgroundColor: '#fbf7f6'
   },
-  phoneAuthTopRow: {
+  phoneAuthContentTablet: {
+    justifyContent: 'center',
+    backgroundColor: '#f7f3eb'
+  },
+  phoneAuthLayout: {
     width: '100%',
-    maxWidth: 520,
+    alignItems: 'center'
+  },
+  phoneAuthLayoutTablet: {
+    maxWidth: 1060,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    marginBottom: 22
+    gap: 26
   },
-  phoneAuthClose: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    borderWidth: 1,
-    borderColor: '#eaded9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#fffdfb'
+  phoneAuthFormColumn: {
+    width: '100%',
+    alignItems: 'center'
+  },
+  phoneAuthFormColumnTablet: {
+    flex: 1,
+    minWidth: 0
+  },
+  phoneAuthStoryColumn: {
+    width: '100%',
+    alignItems: 'center'
+  },
+  phoneAuthStoryColumnTablet: {
+    flex: 0.92,
+    minWidth: 0
   },
   phoneAuthCard: {
     width: '100%',
@@ -18341,6 +19943,11 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 8 },
     elevation: 2
+  },
+  phoneAuthCardTablet: {
+    borderRadius: 18,
+    paddingHorizontal: 32,
+    paddingVertical: 36
   },
   phoneAuthIcon: {
     width: 52,
@@ -18385,6 +19992,9 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 8 },
     elevation: 2
+  },
+  signupDetailsCardTablet: {
+    maxWidth: 640
   },
   signupDetailsEyebrow: {
     ...typography.label,
@@ -18549,6 +20159,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 2
   },
+  phoneAuthEditorialTablet: {
+    borderRadius: 18,
+    padding: 14
+  },
   phoneAuthEditorialImageFrame: {
     borderRadius: 8,
     overflow: 'hidden',
@@ -18666,7 +20280,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 42
+    minHeight: 44
   },
   phoneAuthBrowseText: {
     ...typography.caption,
@@ -18780,19 +20394,27 @@ const styles = StyleSheet.create({
   },
   customTryOnScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    backgroundColor: 'transparent'
   },
   customTryOnScroll: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#faf8f5'
+    backgroundColor: 'transparent'
   },
   customTryOnContent: {
     paddingHorizontal: 18,
     paddingTop: 12,
-    paddingBottom: 112
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 96
   },
   customTryOnContentCompact: {
     paddingTop: 8
+  },
+  customTryOnContentTablet: {
+    width: '100%',
+    maxWidth: 960,
+    alignSelf: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 24
   },
   customHeroPanel: {
     paddingHorizontal: 2,
@@ -18803,6 +20425,10 @@ const styles = StyleSheet.create({
   customHeroPanelCompact: {
     paddingTop: 0,
     gap: 5
+  },
+  customHeroPanelTablet: {
+    gap: 10,
+    paddingBottom: 8
   },
   customHeroEyebrow: {
     ...typography.label,
@@ -18824,6 +20450,10 @@ const styles = StyleSheet.create({
     fontSize: 27,
     lineHeight: 32
   },
+  customHeroTitleTablet: {
+    fontSize: 36,
+    lineHeight: 44
+  },
   customHeroDescription: {
     ...typography.smallBody,
     color: '#5f5955',
@@ -18833,6 +20463,10 @@ const styles = StyleSheet.create({
   customHeroDescriptionCompact: {
     fontSize: 13,
     lineHeight: 18
+  },
+  customHeroDescriptionTablet: {
+    fontSize: 16,
+    lineHeight: 23
   },
   customHeroMetaRow: {
     minHeight: 28,
@@ -18866,6 +20500,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
     flexDirection: 'row',
     alignItems: 'stretch',
+    justifyContent: 'center',
     gap: 10
   },
   customUploadRowCompact: {
@@ -18873,7 +20508,8 @@ const styles = StyleSheet.create({
     gap: 10
   },
   customUploadRowTablet: {
-    gap: 14
+    maxWidth: 920,
+    gap: 18
   },
   customProfileCard: {
     flex: 1,
@@ -18881,7 +20517,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#e8e1da',
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.34)' : '#f3eee8',
+    backgroundColor: 'rgba(255, 255, 255, 0.34)',
     overflow: 'hidden'
   },
   customProfileImage: {
@@ -18956,7 +20592,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: 'dashed',
     borderColor: '#cfc2b9',
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.34)' : '#f3eee8',
+    backgroundColor: 'rgba(255, 255, 255, 0.34)',
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center'
@@ -18998,32 +20634,12 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: '#f3eee8'
   },
-  customGarmentOverlay: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    bottom: 10,
-    minHeight: 38,
-    borderRadius: 8,
-    backgroundColor: 'rgba(17, 17, 17, 0.74)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7
-  },
-  customGarmentOverlayText: {
-    ...typography.caption,
-    color: '#ffffff',
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '800'
-  },
   customResultCard: {
     marginTop: 18,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#e8e1da',
-    backgroundColor: Platform.OS === 'ios' ? 'rgba(255, 255, 255, 0.34)' : '#faf8f5',
+    backgroundColor: 'rgba(255, 255, 255, 0.34)',
     overflow: 'hidden'
   },
   customResultHead: {
@@ -19096,8 +20712,11 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontWeight: '600'
   },
-  customTryOnMessage: {
-    marginTop: 12,
+  customActionMessage: {
+    ...typography.caption,
+    width: '100%',
+    marginBottom: 8,
+    color: '#5f5955',
     textAlign: 'center'
   },
   customAiPreviewNote: {
@@ -19150,11 +20769,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#111111'
   },
+  customGenerateButtonTablet: {
+    maxWidth: 500,
+    minHeight: 58,
+    alignSelf: 'center'
+  },
+  customActionInlineTablet: {
+    width: '100%',
+    marginTop: 20,
+    alignItems: 'center'
+  },
   customActionDock: {
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: 0,
     zIndex: 12,
     paddingHorizontal: 18,
     paddingTop: 8,
@@ -19203,7 +20831,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    bottom: Platform.OS === 'ios' ? 80 : 106,
+    bottom: 80,
     padding: 10,
     backgroundColor: '#fff',
     borderTopWidth: 1,
@@ -19265,7 +20893,7 @@ const styles = StyleSheet.create({
   },
   creditsScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#FAF8F5'
+    backgroundColor: 'transparent'
   },
   creditsContent: {
     paddingBottom: 34
@@ -20060,6 +21688,16 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 7 },
     elevation: 2
   },
+  generationPreviewCardTablet: {
+    flex: 1,
+    minWidth: 0,
+    marginHorizontal: 0,
+    marginTop: 0,
+    paddingHorizontal: 22,
+    paddingTop: 22,
+    paddingBottom: 22,
+    borderRadius: 14
+  },
   generationPreviewHead: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -20176,7 +21814,7 @@ const styles = StyleSheet.create({
   },
   generationHistoryScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
+    backgroundColor: 'transparent'
   },
   generationHistoryContent: {
     paddingHorizontal: 18,
@@ -20340,15 +21978,44 @@ const styles = StyleSheet.create({
   },
   profileScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#FAF8F5'
+    backgroundColor: 'transparent'
   },
   profileContent: {
     paddingBottom: bottomNavigationHeight + screenBottomInset + 24
+  },
+  profileContentTablet: {
+    paddingHorizontal: 24,
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 64
+  },
+  profileLayout: {
+    width: '100%'
+  },
+  profileLayoutTablet: {
+    maxWidth: 1180,
+    alignSelf: 'center'
   },
   profileIntro: {
     paddingHorizontal: 22,
     paddingTop: 20,
     paddingBottom: 22
+  },
+  profileIntroTablet: {
+    paddingHorizontal: 18,
+    paddingTop: 28,
+    paddingBottom: 20
+  },
+  profileTopGridTablet: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 18,
+    paddingHorizontal: 18
+  },
+  profileMediaGridTablet: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 18,
+    paddingHorizontal: 18,
+    marginTop: 20
   },
   profilePageTitle: {
     fontFamily: fontFamilies.logo,
@@ -20398,10 +22065,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 18
   },
+  profileHeroTablet: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 250,
+    marginHorizontal: 0,
+    paddingHorizontal: 24,
+    paddingVertical: 28
+  },
   profilePhotoWrap: {
     width: 88,
     height: 88,
     position: 'relative'
+  },
+  profilePhotoWrapTablet: {
+    width: 112,
+    height: 112
   },
   profilePhotoFrame: {
     width: 88,
@@ -20411,6 +22090,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3EEE8',
     borderWidth: 2,
     borderColor: '#E8E1DA'
+  },
+  profilePhotoFrameTablet: {
+    width: 112,
+    height: 112,
+    borderRadius: 56
   },
   profilePhoto: {
     width: '100%',
@@ -20448,6 +22132,10 @@ const styles = StyleSheet.create({
     color: '#211F1D',
     lineHeight: 30
   },
+  profileNameTablet: {
+    fontSize: 26,
+    lineHeight: 34
+  },
   profileRole: {
     ...typography.caption,
     marginTop: 7,
@@ -20482,6 +22170,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end'
   },
+  profileEditOverlayTablet: {
+    justifyContent: 'center'
+  },
   profileEditBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(20, 16, 14, 0.42)'
@@ -20502,6 +22193,13 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -8 },
     elevation: 8
   },
+  profileEditSheetTablet: {
+    width: '88%',
+    maxWidth: 560,
+    alignSelf: 'center',
+    marginBottom: 0,
+    borderRadius: 18
+  },
   profileDeleteSheet: {
     maxHeight: '90%',
     borderColor: '#edd1ce',
@@ -20520,6 +22218,16 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 16
+  },
+  profileEditHeadingCopy: {
+    flex: 1,
+    minWidth: 0
+  },
+  profileEditDismissButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    flexShrink: 0
   },
   profileEditSheetTitle: {
     ...typography.h3,
@@ -20726,6 +22434,16 @@ const styles = StyleSheet.create({
     borderColor: '#E8E1DA',
     backgroundColor: '#F3EEE8'
   },
+  profileCreditsCardTablet: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 250,
+    marginHorizontal: 0,
+    marginTop: 0,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 22
+  },
   profileCreditsHead: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -20912,6 +22630,12 @@ const styles = StyleSheet.create({
     marginTop: 36,
     paddingHorizontal: 18
   },
+  profilePortraitSectionTablet: {
+    flex: 1,
+    minWidth: 0,
+    marginTop: 0,
+    paddingHorizontal: 0
+  },
   profileSectionHead: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -20942,6 +22666,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#eaded9',
     backgroundColor: '#eee8e3'
+  },
+  profilePortraitFeaturedTablet: {
+    width: 142,
+    height: 200
   },
   profilePortraitFeaturedImage: {
     width: '100%',
@@ -20996,6 +22724,10 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 16
   },
+  profileUploadPortraitTablet: {
+    height: 200,
+    borderRadius: 12
+  },
   profileUploadPortraitIcon: {
     width: 48,
     height: 48,
@@ -21046,6 +22778,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 18,
     gap: 12
   },
+  profileQuickOptionsTablet: {
+    flexDirection: 'row',
+    marginTop: 24,
+    gap: 14
+  },
   profileQuickCard: {
     minHeight: 68,
     borderRadius: 10,
@@ -21056,6 +22793,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14
+  },
+  profileQuickCardTablet: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 88,
+    paddingHorizontal: 16
+  },
+  profileSettingsGridTablet: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 18,
+    paddingHorizontal: 18,
+    marginTop: 36
+  },
+  profileSettingsSectionTablet: {
+    flex: 1,
+    minWidth: 0,
+    marginTop: 0,
+    paddingHorizontal: 0
   },
   profileQuickIcon: {
     width: 42,
@@ -21200,6 +22956,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center'
   },
+  profileAccountActionTablet: {
+    width: '100%',
+    maxWidth: 460,
+    minHeight: 52,
+    marginHorizontal: 0,
+    alignSelf: 'center'
+  },
   profileDeleteText: {
     ...typography.caption,
     color: '#ffffff',
@@ -21209,7 +22972,7 @@ const styles = StyleSheet.create({
   },
   collectionsScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
+    backgroundColor: 'transparent'
   },
   collectionsContent: {
     paddingBottom: bottomNavigationHeight + screenBottomInset + 28
@@ -21513,7 +23276,7 @@ const styles = StyleSheet.create({
   },
   wishlistScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#FAF8F5'
+    backgroundColor: 'transparent'
   },
   wishlistContent: {
     paddingBottom: screenBottomInset
@@ -22022,7 +23785,7 @@ const styles = StyleSheet.create({
   },
   ordersScreen: {
     flex: 1,
-    backgroundColor: Platform.OS === 'ios' ? 'transparent' : '#fbf7f6'
+    backgroundColor: 'transparent'
   },
   ordersContent: {
     paddingBottom: screenBottomInset
@@ -22831,6 +24594,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '900'
   },
+  wardrobeGeneratedResult: {
+    width: '100%',
+    maxWidth: 460,
+    alignSelf: 'center',
+    marginTop: 18,
+    marginBottom: 20,
+    padding: 14,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#e8dfd8',
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    gap: 8
+  },
+  wardrobeGeneratedTitle: {
+    ...typography.h2,
+    color: '#211e1c',
+    fontSize: 22,
+    lineHeight: 28
+  },
+  wardrobeGeneratedCopy: {
+    ...typography.smallBody,
+    color: '#625b56',
+    fontSize: 13,
+    lineHeight: 19
+  },
+  wardrobeGeneratedImage: {
+    width: '100%',
+    aspectRatio: 3 / 4,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#f2eeea'
+  },
   closetMessage: {
     marginHorizontal: 16,
     marginTop: 10
@@ -23435,4 +25230,4 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center'
   },
-});
+}, Platform.OS, Platform.Version));

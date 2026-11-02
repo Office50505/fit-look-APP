@@ -1,0 +1,72 @@
+{
+  "react_native": "0.81.5",
+  "metadata": {
+    "CFBundleIdentifier": "com.kratikdhote.lookmefy",
+    "CFBundleShortVersionString": "1.0.1",
+    "CFBundleVersion": "31",
+    "MinimumOSVersion": "15.1",
+    "DTSDKName": "iphoneos26.5",
+    "DTXcode": "2660",
+    "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
+    "NSPhotoLibraryUsageDescription": "Lookmefy needs photo access so you can upload profile and clothing images for try-ons.",
+    "NSMicrophoneUsageDescription": null
+  },
+  "expected_release_hermes_uuid": {
+    "arm64": "80D5528F-2C78-3B90-B90F-747E89A9F880"
+  },
+  "archive_hermes_uuid": {
+    "arm64": "80D5528F-2C78-3B90-B90F-747E89A9F880"
+  },
+  "archive_signature": "fit-look-APP/mobile/release/lookmefy-ios-1.0.1-build31.xcarchive/Products/Applications/Lookmefy.app: valid on disk\nfit-look-APP/mobile/release/lookmefy-ios-1.0.1-build31.xcarchive/Products/Applications/Lookmefy.app: satisfies its Designated Requirement\n",
+  "archive_signing": "Executable=/Users/kratik/Desktop/yttry-main copy/Lookmefy-Unified-Backend/fit-look-APP/mobile/release/lookmefy-ios-1.0.1-build31.xcarchive/Products/Applications/Lookmefy.app/Lookmefy\nIdentifier=com.kratikdhote.lookmefy\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=17020 flags=0x0(none) hashes=521+7 location=embedded\nSignature size=4789\nAuthority=Apple Development: Ali Hussain Khan (JGXF4R39DG)\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nSigned Time=22 Oct 2026 at 5:08:22\u202fPM\nInfo.plist entries=40\nTeamIdentifier=LJ48CVC23W\nSealed Resources version=2 rules=10 files=158\nInternal requirements count=1 size=188\n",
+  "ipa_metadata": {
+    "CFBundleIdentifier": "com.kratikdhote.lookmefy",
+    "CFBundleShortVersionString": "1.0.1",
+    "CFBundleVersion": "31",
+    "MinimumOSVersion": "15.1",
+    "DTSDKName": "iphoneos26.5",
+    "DTXcode": "2660",
+    "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
+    "NSPhotoLibraryUsageDescription": "Lookmefy needs photo access so you can upload profile and clothing images for try-ons.",
+    "NSMicrophoneUsageDescription": null
+  },
+  "ipa_hermes_uuid": {
+    "arm64": "80D5528F-2C78-3B90-B90F-747E89A9F880"
+  },
+  "ipa_signature": "/var/folders/tl/z0rfr49119vbwvp7ks733h780000gn/T/lookmefy-ios-verify-bhaocccz/ipa/Payload/Lookmefy.app: valid on disk\n/var/folders/tl/z0rfr49119vbwvp7ks733h780000gn/T/lookmefy-ios-verify-bhaocccz/ipa/Payload/Lookmefy.app: satisfies its Designated Requirement\n",
+  "ipa_signing": "Executable=/private/var/folders/tl/z0rfr49119vbwvp7ks733h780000gn/T/lookmefy-ios-verify-bhaocccz/ipa/Payload/Lookmefy.app/Lookmefy\nIdentifier=com.kratikdhote.lookmefy\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20400 size=17020 flags=0x0(none) hashes=521+7 location=embedded\nSignature size=4790\nAuthority=Apple Distribution: Ali Hussain Khan (LJ48CVC23W)\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nSigned Time=22 Oct 2026 at 5:08:53\u202fPM\nInfo.plist entries=40\nTeamIdentifier=LJ48CVC23W\nSealed Resources version=2 rules=10 files=158\nInternal requirements count=1 size=192\n",
+  "artifacts": {
+    "lookmefy-ios-1.0.1-build31.xcarchive.zip": {
+      "bytes": 69770351,
+      "sha256": "9ea5a6eb285ee098475c8ef8bf9ae44ba84f2ec4a15dbe748db609f06de7cd97",
+      "zip_verified": true
+    },
+    "lookmefy-ios-1.0.1-31.ipa": {
+      "bytes": 44222085,
+      "sha256": "fa8c7991bc5ad69d12cdef8783dc522a72e705ca3832ab7d152cfa380bc0bbcb",
+      "zip_verified": true
+    }
+  },
+  "baseline_metadata": {
+    "CFBundleIdentifier": "com.kratikdhote.lookmefy",
+    "CFBundleShortVersionString": "1.0.1",
+    "CFBundleVersion": "30",
+    "MinimumOSVersion": "15.1",
+    "DTSDKName": "iphoneos26.5",
+    "DTXcode": "2660",
+    "NSCameraUsageDescription": "Lookmefy needs camera access so you can take profile photos for virtual try-ons.",
+    "NSPhotoLibraryUsageDescription": "Lookmefy needs photo access so you can upload profile and clothing images for try-ons.",
+    "NSMicrophoneUsageDescription": null
+  },
+  "metadata_changes": {
+    "CFBundleVersion": {
+      "before": "30",
+      "after": "31"
+    }
+  },
+  "comparison": "iOS build 30 to 31, marketing version 1.0.1. Archive ZIP changes from 69,766,216 to 69,770,351 bytes (+4,135). Distribution IPA changes from 44,217,939 to 44,222,085 bytes (+4,146). Bundle ID, minimum OS, SDK, architecture, usage descriptions and Release Hermes engine match the preceding archive; build number is incremented. Prior archive SHA-256: 56dc0ef5fcb6c28caa1e4244d5ec8038348463da44107dbaf5482c75f084a254. Prior IPA SHA-256: 9aec4c4aeb204acacc682b0c85ae3247a51d6103c186be011b1eb6df3faaacc5.",
+  "hermes_result": "PASS: archive and exported IPA match the pinned React Native 0.81.5 Release engine.",
+  "signing_result": "Archive is Apple Development signed for team LJ48CVC23W, Ali Hussain Khan; exported IPA is Apple Distribution signed for team LJ48CVC23W. Both passed strict/deep verification with macOS trust services.",
+  "verification_summary": "PASS: Xcode Release archive and local App Store IPA export; bundle/version/build metadata; strict/deep signing verification; pinned Release Hermes UUID; archive and IPA ZIP CRC. No physical-device or simulator smoke run was performed for build 31.",
+  "ipa_export": "SUCCESS: local App Store Connect distribution IPA exported with the existing certificate and provisioning profile. No store upload occurred."
+}

@@ -1,15 +1,9 @@
-const BACK_EDGE_WIDTH = 36;
-const BACK_START_DISTANCE = 22;
-const BACK_FINISH_DISTANCE = 76;
-
-export function shouldStartBackSwipe(gesture, canGoBack) {
-  return Boolean(canGoBack)
-    && Number(gesture?.x0) <= BACK_EDGE_WIDTH
-    && Number(gesture?.dx) >= BACK_START_DISTANCE
-    && Number(gesture?.dx) > Math.abs(Number(gesture?.dy)) * 1.4;
-}
-
-export function shouldFinishBackSwipe(gesture) {
-  return Number(gesture?.dx) >= BACK_FINISH_DISTANCE
-    && Number(gesture?.dx) > Math.abs(Number(gesture?.dy)) * 1.2;
+export function routeTransitionSpec(direction, width, reduceMotion = false) {
+  if (reduceMotion || direction === 'replace') return { offset: 0, duration: 0, opacity: 1 };
+  const distance = Math.min(16, Math.max(10, Math.round((Number(width) || 360) * 0.035)));
+  return {
+    offset: direction === 'back' ? -distance : distance,
+    duration: direction === 'back' ? 140 : 160,
+    opacity: 0.98
+  };
 }

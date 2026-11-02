@@ -22,6 +22,12 @@ All three are ignored by Git and have private filesystem permissions. Keep
 an additional secure backup outside this computer. Never commit these files.
 The public certificate is `lookmefy-eas-upload-certificate.pem`.
 
+As checked on 2026-10-23 in this workspace, those private local files are
+absent, and the logged-in Expo account cannot read the Lookmefy EAS project.
+The paragraph above records the earlier signing setup; it does not mean this
+checkout can currently make a signed Play release. See
+`../../output/google-play-internal-testing/BUILD_32_STATUS.md`.
+
 ```sh
 export LOOKMEFY_KEYSTORE_PROPERTIES="$(pwd)/android/keystore.properties"
 cd android
