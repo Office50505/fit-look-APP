@@ -5,8 +5,7 @@ import { useFonts } from 'expo-font';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { SafeAreaProvider, SafeAreaView as InsetSafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Component, createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AccessibilityInfo,
@@ -14,7 +13,9 @@ import {
   Animated,
   AppState,
   BackHandler,
+  Easing,
   FlatList,
+  findNodeHandle,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -32,9 +33,24 @@ import {
   TextInput,
   TouchableOpacity,
   StatusBar as NativeStatusBar,
+  UIManager,
   useWindowDimensions,
   View
 } from 'react-native';
+
+// Keep the physical-device build independent of optional native view managers.
+// SafeAreaView is provided by React Native itself, so it remains available even
+// when a beta build is installed without Metro or third-party native pods.
+function InsetSafeAreaView({ edges: _edges, ...props }) {
+  return <SafeAreaView {...props} />;
+}
+
+function useSafeAreaInsets() {
+  return Platform.OS === 'ios'
+    ? { top: 0, right: 0, bottom: 34, left: 0 }
+    : { top: NativeStatusBar.currentHeight || 0, right: 0, bottom: 0, left: 0 };
+}
+
 import { api as sendApi, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
 import { authenticatedMediaSource, cachedAuthenticatedImageDataUri, cachedPrivateImage, clearPrivateImageCache, privateMediaPath, renewPrivateImageUrl } from './src/privateMediaRecovery';
 import { clearScreenSnapshots, readScreenSnapshot, writeScreenSnapshot } from './src/screenDataCache';
@@ -67,6 +83,10 @@ const USER_PASSWORD_MAX_BYTES = 72;
 
 const ContentReportingContext = createContext('');
 const PrivateMediaSessionContext = createContext('');
+// Root tabs are rendered side-by-side while the user swipes. Their individual
+// headers must stay hidden so a single stationary header can sit above the
+// pager without outgoing/incoming clones crossing the screen.
+const RootPagerPageContext = createContext(false);
 async function refreshPrivateImage(uri) {
   return renewPrivateImageUrl(uri, {
     apiOrigin: imageUrl('/api/health'), request: sendApi, resolveUrl: imageUrl, getSessionToken: getToken
@@ -164,6 +184,11 @@ const horizontalScrollProps = {
   directionalLockEnabled: true,
   scrollEventThrottle: 16
 };
+
+LogBox.ignoreLogs([
+  "SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead."
+]);
+
 const homeCategorySnapInterval = 70;
 const productImageAspectRatio = 0.72;
 const aiTryOnRequestTimeoutMs = 420000;
@@ -2075,11 +2100,13 @@ function headerCreditLabel(user) {
 
 function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', leftRoute = 'profile', rightIcon = 'receipt-outline', rightRoute = 'orders', user, showAvatar = false, hideLeft = true, brandAlign = 'left', compact = false, showWishlist = true, showSearch = true, preserveWordmarkOnNarrow = false, registerTourTarget, tourTargetKeys = {} }) {
   const { width, fontScale } = useWindowDimensions();
+  const embeddedInRootPager = useContext(RootPagerPageContext);
   const narrowHeader = width < 390;
   const compactToSymbol = width / Math.max(1, fontScale) < 390
     && (!preserveWordmarkOnNarrow || width < 350 || fontScale > 1);
-  const openLeft = () => leftRoute && onNavigate(leftRoute);
-  const openRight = () => rightRoute && onNavigate(rightRoute);
+  const navigateFromHeader = (route, params = {}) => route && onNavigate(route, params, { transition: 'header' });
+  const openLeft = () => navigateFromHeader(leftRoute);
+  const openRight = () => navigateFromHeader(rightRoute);
   const showWishlistAction = showWishlist && !showAvatar;
   const showProfileAction = Boolean(user) && !showAvatar;
   const brandLeft = brandAlign === 'left';
@@ -2090,6 +2117,7 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
   const avatarImageBaseStyle = avatarImageBaseStyleForUser(user);
   const creditLabel = headerCreditLabel(user);
   const creditAccessibilityLabel = `Open credits, ${userCreditBalance(user).toLocaleString('en-IN')} credits available`;
+  if (embeddedInRootPager) return null;
   return (
     <View style={[styles.appHeader, compact && styles.appHeaderCompact, narrowHeader && styles.appHeaderNarrow]}>
       <SurfaceBackdrop />
@@ -2102,7 +2130,7 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
           )}
         </View>
       ) : null}
-      <Pressable accessibilityRole="button" accessibilityLabel="Go to feed" onPress={() => onNavigate('home')} style={[styles.appHeaderBrandWrap, brandLeft && styles.appHeaderBrandWrapLeft, compactToSymbol && styles.appHeaderBrandWrapNarrow]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Go to feed" onPress={() => navigateFromHeader('home')} style={[styles.appHeaderBrandWrap, brandLeft && styles.appHeaderBrandWrapLeft, compactToSymbol && styles.appHeaderBrandWrapNarrow]}>
         {title === 'Lookmefy' ? (
           compactToSymbol
             ? <Image source={logoSymbol} style={styles.appHeaderNarrowLogo} resizeMode="contain" />
@@ -2111,12 +2139,12 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
       </Pressable>
       <View style={[styles.appHeaderSide, styles.appHeaderRightSide, narrowHeader && styles.appHeaderRightSideNarrow]}>
         {showWishlistAction ? (
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open wishlist" style={styles.appHeaderAction} onPress={() => onNavigate('wishlist')}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open wishlist" style={styles.appHeaderAction} onPress={() => navigateFromHeader('wishlist')}>
             <Ionicons name="heart-outline" size={21} color="#171412" />
           </TouchableOpacity>
         ) : null}
         {!showAvatar ? (
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel={creditAccessibilityLabel} style={[styles.appHeaderAction, styles.appHeaderCreditAction]} onPress={() => onNavigate('tokens')}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={creditAccessibilityLabel} style={[styles.appHeaderAction, styles.appHeaderCreditAction]} onPress={() => navigateFromHeader('tokens')}>
             <Ionicons name="sparkles-outline" size={11} color="#171412" />
             <Text style={styles.appHeaderCreditText} numberOfLines={1}>{creditLabel}</Text>
           </TouchableOpacity>
@@ -2127,7 +2155,7 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
           ) : <Ionicons name={rightIcon} size={20} color="#171412" />}
         </TouchableOpacity>
         {showProfileAction ? (
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open profile" style={styles.appHeaderAction} onPress={() => onNavigate('profile')}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open profile" style={styles.appHeaderAction} onPress={() => navigateFromHeader('profile')}>
             {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={avatarImageStyle} imageBaseStyle={avatarImageBaseStyle} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />}
           </TouchableOpacity>
         ) : null}
@@ -2149,10 +2177,11 @@ function SurfaceBackdrop({ intensity = 34 }) {
   );
 }
 
-function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
+function BottomNav({ route = { name: 'home' }, onNavigate = () => {}, tabProgress, pagerManaged = false }) {
   const layout = useResponsiveLayout();
   const { width, fontScale } = useWindowDimensions();
   const compactNav = width < 360 || fontScale > 1.15;
+  const [navWidth, setNavWidth] = useState(0);
   // Scale the font and line height together so the fixed tab bar stays readable.
   const navTextScale = Math.max(1, Math.min(Number(fontScale) || 1, 1.3));
   const navTextSize = { fontSize: 10.5 * navTextScale, lineHeight: 13 * navTextScale };
@@ -2167,8 +2196,156 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
     ['closet', 'shirt-outline', 'shirt', 'Wardrobe'],
     ['stylebot', 'sparkles-outline', 'sparkles', 'AI Stylist']
   ];
+  const activeIndex = Math.max(0, items.findIndex(([name]) => name === activeRoute));
+  const internalLiquidPosition = useRef(new Animated.Value(activeIndex)).current;
+  const liquidPosition = tabProgress || internalLiquidPosition;
+  const liquidStretch = useRef(new Animated.Value(0)).current;
+  const previousActiveIndex = useRef(activeIndex);
+  const dragStartIndex = useRef(activeIndex);
+  const [liquidPreviewIndex, setLiquidPreviewIndex] = useState(activeIndex);
+
+  const animateLiquidTo = useCallback((nextIndex) => {
+    liquidPosition.stopAnimation();
+    liquidStretch.stopAnimation();
+    liquidStretch.setValue(0);
+    Animated.parallel([
+      Animated.timing(liquidPosition, {
+        toValue: nextIndex,
+        duration: 180,
+        easing: Easing.bezier(0.2, 0.82, 0.25, 1),
+        useNativeDriver: true
+      }),
+      Animated.sequence([
+        Animated.timing(liquidStretch, { toValue: 1, duration: 165, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.spring(liquidStretch, { toValue: 0, stiffness: 155, damping: 18, mass: 0.82, useNativeDriver: true })
+      ])
+    ]).start();
+  }, [liquidPosition, liquidStretch]);
+
+  useEffect(() => {
+    setLiquidPreviewIndex(activeIndex);
+    if (previousActiveIndex.current === activeIndex) return;
+    previousActiveIndex.current = activeIndex;
+    if (!tabProgress || !pagerManaged) animateLiquidTo(activeIndex);
+  }, [activeIndex, animateLiquidTo, pagerManaged, tabProgress]);
+
+  useEffect(() => {
+    if (!tabProgress?.addListener) return undefined;
+    const listenerId = tabProgress.addListener(({ value }) => {
+      const previewIndex = Math.round(Math.max(0, Math.min(items.length - 1, Number(value) || 0)));
+      setLiquidPreviewIndex((current) => current === previewIndex ? current : previewIndex);
+    });
+    return () => tabProgress.removeListener(listenerId);
+  }, [items.length, tabProgress]);
+
+  const slotWidth = navWidth > 0 ? navWidth / items.length : 0;
+  const liquidIndicatorWidth = slotWidth > 0
+    ? Math.min(96, Math.max(58, slotWidth - 12))
+    : 58;
+  const liquidSlotInset = slotWidth > 0 ? Math.max(0, (slotWidth - liquidIndicatorWidth) / 2) : 0;
+  const liquidTranslateX = liquidPosition.interpolate({
+    inputRange: [0, items.length - 1],
+    outputRange: [liquidSlotInset, Math.max(liquidSlotInset, ((items.length - 1) * slotWidth) + liquidSlotInset)]
+  });
+  const liquidTranslateY = liquidStretch.interpolate({ inputRange: [0, 1], outputRange: [0, -3] });
+  const liquidScaleX = liquidStretch.interpolate({ inputRange: [0, 1], outputRange: [1, 1.34] });
+  const liquidScaleY = liquidStretch.interpolate({ inputRange: [0, 1], outputRange: [1, 1.10] });
+  const liquidContentTranslateX = Animated.multiply(liquidTranslateX, -1);
+  const navPanResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => (
+      navWidth > 0
+      && Math.abs(gesture.dx) > 5
+      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1
+    ),
+    onPanResponderGrant: () => {
+      dragStartIndex.current = activeIndex;
+      liquidPosition.stopAnimation();
+      liquidStretch.stopAnimation();
+      setLiquidPreviewIndex(activeIndex);
+    },
+    onPanResponderMove: (_event, gesture) => {
+      if (!(slotWidth > 0)) return;
+      const rawIndex = dragStartIndex.current + gesture.dx / slotWidth;
+      const nextPosition = Math.max(0, Math.min(items.length - 1, rawIndex));
+      const previewIndex = Math.round(nextPosition);
+      liquidPosition.setValue(nextPosition);
+      liquidStretch.setValue(Math.min(1, 0.24 + Math.abs(gesture.dx) / (slotWidth * 1.4)));
+      setLiquidPreviewIndex((current) => current === previewIndex ? current : previewIndex);
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const rawIndex = slotWidth > 0 ? dragStartIndex.current + gesture.dx / slotWidth : activeIndex;
+      const targetIndex = Math.round(Math.max(0, Math.min(items.length - 1, rawIndex)));
+      setLiquidPreviewIndex(targetIndex);
+      previousActiveIndex.current = targetIndex;
+      if (!pagerManaged) animateLiquidTo(targetIndex);
+      if (targetIndex !== activeIndex) {
+        Keyboard.dismiss();
+        const didNavigate = onNavigate(items[targetIndex][0]);
+        if (didNavigate === false) {
+          setLiquidPreviewIndex(activeIndex);
+          previousActiveIndex.current = activeIndex;
+          animateLiquidTo(activeIndex);
+        }
+      } else if (pagerManaged) {
+        animateLiquidTo(activeIndex);
+      }
+    },
+    onPanResponderTerminate: () => {
+      setLiquidPreviewIndex(activeIndex);
+      previousActiveIndex.current = activeIndex;
+      animateLiquidTo(activeIndex);
+    },
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true
+  }), [activeIndex, animateLiquidTo, items.length, liquidPosition, liquidStretch, navWidth, onNavigate, pagerManaged, slotWidth]);
+
   return (
-    <View style={[styles.bottomNav, compactNav && styles.bottomNavCompact, layout.isTablet && styles.bottomNavTablet]}>
+    <View
+      {...navPanResponder.panHandlers}
+      onLayout={({ nativeEvent }) => setNavWidth(nativeEvent.layout.width)}
+      style={[styles.bottomNav, compactNav && styles.bottomNavCompact, layout.isTablet && styles.bottomNavTablet]}
+    >
+      {navWidth > 0 ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.navLiquidIndicator,
+            {
+              width: liquidIndicatorWidth,
+              transform: [
+                { translateX: liquidTranslateX },
+                { translateY: liquidTranslateY },
+                { scaleX: liquidScaleX },
+                { scaleY: liquidScaleY }
+              ]
+            }
+          ]}
+        >
+          <BlurView intensity={94} tint="systemMaterialLight" style={StyleSheet.absoluteFillObject} />
+          <View style={styles.navLiquidTint} />
+          <Animated.View
+            style={[
+              styles.navLiquidContent,
+              { width: navWidth, transform: [{ translateX: liquidContentTranslateX }] }
+            ]}
+          >
+            {items.map(([name, icon, activeIcon, label], index) => {
+              const active = liquidPreviewIndex === index;
+              const displayLabel = compactNav ? ({ shop: 'Shop', closet: 'Closet', stylebot: 'Stylist' }[name] || label) : label;
+              return (
+                <View key={`lens-${name}`} style={[styles.navLiquidMirrorItem, { width: slotWidth }]}>
+                  <View style={styles.navIconWrap}>
+                    <Ionicons name={active ? activeIcon : icon} size={active ? 24 : 23} color={active ? '#9b5658' : 'rgba(63, 57, 53, 0.82)'} />
+                  </View>
+                  <Text numberOfLines={1} allowFontScaling={false} style={[styles.navText, navTextSize, styles.navLiquidMirrorText, active && styles.navTextActive]}>{displayLabel}</Text>
+                </View>
+              );
+            })}
+          </Animated.View>
+          <View style={styles.navLiquidInnerRing} />
+        </Animated.View>
+      ) : null}
       {items.map(([name, icon, activeIcon, label]) => {
         const active = activeRoute === name;
         const displayLabel = compactNav ? ({ shop: 'Shop', closet: 'Closet', stylebot: 'Stylist' }[name] || label) : label;
@@ -2182,14 +2359,24 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {} }) {
             style={styles.navItem}
             onPress={() => {
               Keyboard.dismiss();
-              onNavigate(name);
+              const nextIndex = items.findIndex(([itemName]) => itemName === name);
+              if (nextIndex !== previousActiveIndex.current) {
+                setLiquidPreviewIndex(nextIndex);
+                previousActiveIndex.current = nextIndex;
+                if (!pagerManaged) animateLiquidTo(nextIndex);
+              }
+              const didNavigate = onNavigate(name);
+              if (didNavigate === false) {
+                setLiquidPreviewIndex(activeIndex);
+                previousActiveIndex.current = activeIndex;
+                animateLiquidTo(activeIndex);
+              }
             }}
           >
-            <View style={[styles.navIconWrap, active && styles.navIconWrapCenter]}>
-              <Ionicons name={active ? activeIcon : icon} size={active ? 21 : 20} color={active ? '#ffffff' : 'rgba(255, 255, 255, 0.78)'} />
+            <View style={styles.navIconWrap}>
+              <Ionicons name={active ? activeIcon : icon} size={active ? 23 : 22} color={active ? '#9b5658' : 'rgba(63, 57, 53, 0.72)'} />
             </View>
             <Text numberOfLines={1} allowFontScaling={false} style={[styles.navText, navTextSize, active && styles.navTextActive]}>{displayLabel}</Text>
-            <View style={[styles.navActiveUnderline, active && styles.navActiveUnderlineVisible]} />
           </TouchableOpacity>
         );
       })}
@@ -2999,7 +3186,7 @@ function CategoryBubble({ item, size = 'large', active = false, tablet = false }
   );
 }
 
-function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate, onBack, user, initialScrollY = 0, onScrollPositionChange }) {
+function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate, onOpenFromPress, onBack, user, initialScrollY = 0, onScrollPositionChange }) {
   const layout = useResponsiveLayout();
   const categoryMainScrollRef = useRef(null);
   const categoryRailScrollRef = useRef(null);
@@ -3057,24 +3244,35 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
       .map(({ item }) => item)
       .slice(0, 6);
   }, [normalizedCategoryQuery]);
-  const openCategoryReference = (item) => {
+  const openWithMeasuredOrigin = (event, open, fallbackBounds) => {
+    if (onOpenFromPress) {
+      onOpenFromPress(event, open, fallbackBounds);
+      return;
+    }
+    open();
+  };
+  const openCategoryReference = (item, event) => {
     setCategoryQuery('');
     if (item.sectionKey && item.params?.section === item.sectionKey) {
       selectCategory(item.sectionKey);
       return;
     }
-    onNavigate('shop', item.params || { q: item.label });
+    openWithMeasuredOrigin(event, () => onNavigate('shop', item.params || { q: item.label }), { width: 176, height: 58 });
   };
-  const submitCategorySearch = () => {
+  const submitCategorySearch = (event) => {
     const firstMatch = categoryMatches[0];
     if (firstMatch) {
-      openCategoryReference(firstMatch);
+      openCategoryReference(firstMatch, event);
       return;
     }
     const query = categorySearchText(categoryQuery);
-    if (query) onNavigate('shop', { q: query });
+    if (query) openWithMeasuredOrigin(event, () => onNavigate('shop', { q: query }), { width: 44, height: 44 });
   };
-  const openTile = (item) => onNavigate('shop', item.params || { sort: 'newest' });
+  const openTile = (item, event, fallbackBounds) => openWithMeasuredOrigin(
+    event,
+    () => onNavigate('shop', item.params || { sort: 'newest' }),
+    fallbackBounds
+  );
   const selectCategory = (key) => {
     if (layout.isTablet) {
       initialSectionJumpedRef.current = true;
@@ -3131,7 +3329,7 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
           {categoryQuery ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.categoryReferenceTrack}>
               {categoryMatches.length ? categoryMatches.map((item) => (
-                <TouchableOpacity key={`${item.sectionKey}-${item.label}-${JSON.stringify(item.params || {})}`} style={styles.categoryReferenceChip} activeOpacity={0.82} onPress={() => openCategoryReference(item)}>
+                <TouchableOpacity key={`${item.sectionKey}-${item.label}-${JSON.stringify(item.params || {})}`} style={styles.categoryReferenceChip} activeOpacity={0.82} onPress={(event) => openCategoryReference(item, event)}>
                   <CategoryBubble item={item} size="reference" />
                   <View style={styles.categoryReferenceCopy}>
                     <Text style={styles.categoryReferenceText} numberOfLines={1}>{item.label}</Text>
@@ -3220,7 +3418,7 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
               <Text accessibilityRole="header" style={[styles.categoryHeadline, styles.categoryHeadlineTablet]}>{section.content.title}</Text>
               <View style={[styles.categoryTileGrid, styles.categoryTileGridTablet, { columnGap: categoryGridGap }]}>
                 {section.items.map((item) => (
-                  <TouchableOpacity key={`${section.key}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryTile, styles.categoryTileTablet, { width: categoryTileWidth }]} onPress={() => openTile(item)}>
+                  <TouchableOpacity key={`${section.key}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryTile, styles.categoryTileTablet, { width: categoryTileWidth }]} onPress={(event) => openTile(item, event, { width: categoryTileWidth, height: categoryTileWidth + 46 })}>
                     <CategoryBubble item={item} tablet />
                     <Text style={[styles.categoryTileLabel, styles.categoryTileLabelTablet]} numberOfLines={2}>{categorySearchText(item.label)}</Text>
                   </TouchableOpacity>
@@ -3237,7 +3435,7 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
             <Text style={[styles.categoryHeadline, layout.isTablet && styles.categoryHeadlineTablet]}>{content.title}</Text>
             <View style={[styles.categoryFeaturedGrid, { columnGap: categoryGridGap }, layout.isTablet && styles.categoryTileGridTablet]}>
               {featuredItems.map((item) => (
-                <TouchableOpacity key={`${content.kicker}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryFeaturedTile, layout.isTablet && styles.categoryFeaturedTileTablet, { width: categoryFeaturedTileWidth }]} onPress={() => openTile(item)}>
+                <TouchableOpacity key={`${content.kicker}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryFeaturedTile, layout.isTablet && styles.categoryFeaturedTileTablet, { width: categoryFeaturedTileWidth }]} onPress={(event) => openTile(item, event, { width: categoryFeaturedTileWidth, height: categoryFeaturedTileWidth + 52 })}>
                   <CategoryBubble item={item} size="featured" tablet={layout.isTablet} />
                   <Text
                     style={[styles.categoryFeaturedLabel, layout.isTablet && styles.categoryFeaturedLabelTablet]}
@@ -3257,7 +3455,7 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
           </View>
           <View style={[styles.categoryTileGrid, { columnGap: categoryGridGap }, layout.isTablet && styles.categoryTileGridTablet]}>
             {gridItems.map((item) => (
-              <TouchableOpacity key={`${gridTitle}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryTile, layout.isTablet && styles.categoryTileTablet, { width: categoryTileWidth }]} onPress={() => openTile(item)}>
+              <TouchableOpacity key={`${gridTitle}-${item.label}`} accessibilityRole="button" accessibilityLabel={`Browse ${categorySearchText(item.label)}`} activeOpacity={0.82} style={[styles.categoryTile, layout.isTablet && styles.categoryTileTablet, { width: categoryTileWidth }]} onPress={(event) => openTile(item, event, { width: categoryTileWidth, height: categoryTileWidth + 46 })}>
                 <CategoryBubble item={item} tablet={layout.isTablet} />
                 <Text style={[styles.categoryTileLabel, layout.isTablet && styles.categoryTileLabelTablet]} numberOfLines={2}>{categorySearchText(item.label)}</Text>
               </TouchableOpacity>
@@ -4484,7 +4682,7 @@ function SearchScreen({ initial = {}, user, token, onNavigate, onBack, onAddToWi
   );
 }
 
-function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate, onBack, onRequireAuth, onAuthExpired, onAddToWishlist, wishlistIds, initialScrollY = 0, onScrollPositionChange }) {
+function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate, onOpenFromPress, onBack, onRequireAuth, onAuthExpired, onAddToWishlist, wishlistIds, initialScrollY = 0, onScrollPositionChange }) {
   if (tryOnMode) {
     return <StyleBotScreen user={user} setUser={setUser} token={token} onNavigate={onNavigate} onRequireAuth={onRequireAuth} />;
   }
@@ -4665,6 +4863,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
         selectedCategory={selectedCategory}
         onSelectCategory={setSelectedCategory}
         onNavigate={onNavigate}
+        onOpenFromPress={onOpenFromPress}
         onBack={onBack}
         user={user}
         initialScrollY={initialScrollY}
@@ -7832,8 +8031,13 @@ function StyleBotScreen({
   setAiStudioTryOnErrors = () => {}
 }) {
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const isTabletLayout = width >= 700;
   const conversationInset = isTabletLayout ? Math.max(32, (width - 920) / 2) : 16;
+  const navFrameBottom = Platform.OS === 'ios'
+    ? Math.max(insets.bottom - 10, 10)
+    : Math.max(insets.bottom, 10);
+  const composerRestingBottom = bottomNavigationHeight + navFrameBottom + 8;
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -7846,7 +8050,7 @@ function StyleBotScreen({
   const requestInFlightRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
   const userScrollingRef = useRef(false);
-  const composerBottom = useRef(new Animated.Value(Platform.OS === 'ios' ? 10 : 14)).current;
+  const composerBottom = useRef(new Animated.Value(composerRestingBottom)).current;
   const composerTourTarget = useTourTarget('ai-studio-composer', registerTourTarget, { request: tourFocusRequest, scrollOffset: 84 });
   const messages = aiStudioMessages?.length ? aiStudioMessages : initialAiStudioMessages(user);
   const setMessages = setAiStudioMessages;
@@ -7910,7 +8114,7 @@ function StyleBotScreen({
   }, [archiveCurrentChat, currentChatId, setAiStudioActiveChatId, setAiStudioConversationId, setChatTryOnErrors, setChatTryOns, setMessages, user]);
 
   useEffect(() => {
-    const baseBottom = Platform.OS === 'ios' ? 10 : 14;
+    const baseBottom = composerRestingBottom;
     const keyboardGap = 8;
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
@@ -7945,7 +8149,7 @@ function StyleBotScreen({
       frameSub?.remove();
       hideSub.remove();
     };
-  }, [composerBottom]);
+  }, [composerBottom, composerRestingBottom]);
 
   const submit = async (preset, requestOptions = {}) => {
     const prompt = String(preset || query || '').trim();
@@ -11270,9 +11474,17 @@ function WishlistDoneButton({ saved, onPress, compact }) {
   );
 }
 
-function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onNext, onBack, onSkip, onDone }) {
+function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, reduceMotion = false, onNext, onBack, onSkip, onDone }) {
   const { width, height } = useWindowDimensions();
   const [tourCardLayout, setTourCardLayout] = useState({ key: '', height: 0 });
+  const [spotlightReady, setSpotlightReady] = useState(false);
+  const spotlightX = useRef(new Animated.Value(0)).current;
+  const spotlightY = useRef(new Animated.Value(0)).current;
+  const spotlightWidth = useRef(new Animated.Value(0)).current;
+  const spotlightHeight = useRef(new Animated.Value(0)).current;
+  const animatedCardTop = useRef(new Animated.Value(0)).current;
+  const spotlightAnimationRef = useRef(null);
+  const lastSpotlightRef = useRef(null);
   const total = onboardingTourSteps.length;
   const safeStep = Math.min(Math.max(step, 0), total - 1);
   const active = onboardingTourSteps[safeStep] || onboardingTourSteps[0];
@@ -11280,10 +11492,10 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
   const last = safeStep === total - 1;
   const measuredTarget = !intro && active.targetKey ? targetRects[active.targetKey] : null;
   const measuredMatchesRoute = measuredTarget && (!active.route?.name || measuredTarget.route === active.route.name || measuredTarget.route === currentRouteName);
-  const waitingForMeasuredTarget = !intro && active.targetKey && active.route?.name === currentRouteName && !measuredMatchesRoute;
+  const waitingForMeasuredTarget = !intro && Boolean(active.targetKey) && !measuredMatchesRoute;
   const rawTarget = !intro && measuredMatchesRoute
     ? measuredTarget
-    : (!intro && !waitingForMeasuredTarget && typeof active.target === 'function' ? active.target({ width, height }) : null);
+    : (!intro && !active.targetKey && typeof active.target === 'function' ? active.target({ width, height }) : null);
   const focusedTarget = rawTarget && typeof active.focusTarget === 'function'
     ? active.focusTarget(rawTarget, { width, height })
     : rawTarget;
@@ -11341,7 +11553,6 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
     ? clamp(preferredCardTop, cardSafeTop, maxCardTop)
     : undefined;
   const cardWidth = Math.min(360, width - 32);
-  const anchoredCardStyle = spotlight ? [styles.tourCardAnchored, { top: cardTop, left: (width - cardWidth) / 2, width: cardWidth }] : null;
   const handleTourCardLayout = useCallback((event) => {
     const nextHeight = event.nativeEvent.layout.height;
     setTourCardLayout((current) => (
@@ -11351,23 +11562,101 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
     ));
   }, [active.key]);
 
+  useEffect(() => {
+    if (!visible || intro) {
+      spotlightAnimationRef.current?.stop?.();
+      spotlightAnimationRef.current = null;
+      lastSpotlightRef.current = null;
+      setSpotlightReady(false);
+      return;
+    }
+    if (!spotlight) return;
+
+    const nextSpotlight = {
+      x: spotlight.x,
+      y: spotlight.y,
+      width: spotlight.width,
+      height: spotlight.height,
+      cardTop: cardTop ?? cardSafeTop
+    };
+    const previousSpotlight = lastSpotlightRef.current;
+    lastSpotlightRef.current = nextSpotlight;
+
+    if (!previousSpotlight || !spotlightReady) {
+      spotlightX.setValue(nextSpotlight.x);
+      spotlightY.setValue(nextSpotlight.y);
+      spotlightWidth.setValue(nextSpotlight.width);
+      spotlightHeight.setValue(nextSpotlight.height);
+      animatedCardTop.setValue(nextSpotlight.cardTop);
+      setSpotlightReady(true);
+      return;
+    }
+
+    const geometryChanged = ['x', 'y', 'width', 'height', 'cardTop']
+      .some((key) => Math.abs(previousSpotlight[key] - nextSpotlight[key]) >= 0.5);
+    if (!geometryChanged) return;
+
+    spotlightAnimationRef.current?.stop?.();
+    const duration = reduceMotion ? 0 : 760;
+    const easing = Easing.bezier(0.22, 1, 0.36, 1);
+    const animation = Animated.parallel([
+      Animated.timing(spotlightX, { toValue: nextSpotlight.x, duration, easing, useNativeDriver: false }),
+      Animated.timing(spotlightY, { toValue: nextSpotlight.y, duration, easing, useNativeDriver: false }),
+      Animated.timing(spotlightWidth, { toValue: nextSpotlight.width, duration, easing, useNativeDriver: false }),
+      Animated.timing(spotlightHeight, { toValue: nextSpotlight.height, duration, easing, useNativeDriver: false }),
+      Animated.timing(animatedCardTop, { toValue: nextSpotlight.cardTop, duration, easing, useNativeDriver: false })
+    ]);
+    spotlightAnimationRef.current = animation;
+    animation.start(({ finished }) => {
+      if (finished && spotlightAnimationRef.current === animation) spotlightAnimationRef.current = null;
+    });
+  }, [
+    active.key,
+    animatedCardTop,
+    cardSafeTop,
+    cardTop,
+    intro,
+    reduceMotion,
+    spotlight?.height,
+    spotlight?.width,
+    spotlight?.x,
+    spotlight?.y,
+    spotlightHeight,
+    spotlightReady,
+    spotlightWidth,
+    spotlightX,
+    spotlightY,
+    visible
+  ]);
+
+  useEffect(() => () => spotlightAnimationRef.current?.stop?.(), []);
+
+  const animatedSpotlightRight = Animated.add(spotlightX, spotlightWidth);
+  const animatedSpotlightBottom = Animated.add(spotlightY, spotlightHeight);
+  const animatedSpotlightRightCorner = Animated.subtract(animatedSpotlightRight, 16);
+  const animatedSpotlightBottomCorner = Animated.subtract(animatedSpotlightBottom, 16);
+  const showAnimatedSpotlight = !intro && spotlightReady;
+  const animatedAnchoredCardStyle = showAnimatedSpotlight
+    ? [styles.tourCardAnchored, { top: animatedCardTop, left: (width - cardWidth) / 2, width: cardWidth }]
+    : null;
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onSkip}>
       <View style={styles.tourOverlay}>
-        {spotlight ? (
+        {showAnimatedSpotlight ? (
           <>
-            <View style={[styles.tourDimPiece, { left: 0, right: 0, top: 0, height: spotlight.y }]} />
-            <View style={[styles.tourDimPiece, { left: 0, top: spotlight.y, width: spotlight.x, height: spotlight.height }]} />
-            <View style={[styles.tourDimPiece, { left: spotlight.x + spotlight.width, right: 0, top: spotlight.y, height: spotlight.height }]} />
-            <View style={[styles.tourDimPiece, { left: 0, right: 0, top: spotlight.y + spotlight.height, bottom: 0 }]} />
-            <View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerTopLeft, { left: spotlight.x, top: spotlight.y }]} />
-            <View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerTopRight, { left: spotlight.x + spotlight.width - 16, top: spotlight.y }]} />
-            <View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerBottomLeft, { left: spotlight.x, top: spotlight.y + spotlight.height - 16 }]} />
-            <View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerBottomRight, { left: spotlight.x + spotlight.width - 16, top: spotlight.y + spotlight.height - 16 }]} />
-            <View pointerEvents="none" style={[styles.tourSpotlight, { left: spotlight.x, top: spotlight.y, width: spotlight.width, height: spotlight.height }]} />
+            <Animated.View style={[styles.tourDimPiece, { left: 0, right: 0, top: 0, height: spotlightY }]} />
+            <Animated.View style={[styles.tourDimPiece, { left: 0, top: spotlightY, width: spotlightX, height: spotlightHeight }]} />
+            <Animated.View style={[styles.tourDimPiece, { left: animatedSpotlightRight, right: 0, top: spotlightY, height: spotlightHeight }]} />
+            <Animated.View style={[styles.tourDimPiece, { left: 0, right: 0, top: animatedSpotlightBottom, bottom: 0 }]} />
+            <Animated.View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerTopLeft, { left: spotlightX, top: spotlightY }]} />
+            <Animated.View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerTopRight, { left: animatedSpotlightRightCorner, top: spotlightY }]} />
+            <Animated.View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerBottomLeft, { left: spotlightX, top: animatedSpotlightBottomCorner }]} />
+            <Animated.View style={[styles.tourSpotlightCorner, styles.tourSpotlightCornerBottomRight, { left: animatedSpotlightRightCorner, top: animatedSpotlightBottomCorner }]} />
+            <Animated.View pointerEvents="none" style={[styles.tourSpotlight, { left: spotlightX, top: spotlightY, width: spotlightWidth, height: spotlightHeight }]} />
           </>
         ) : <View style={styles.tourBackdrop} />}
-        <View key={active.key} style={[styles.tourCard, intro && styles.tourIntroCard, anchoredCardStyle]} onLayout={handleTourCardLayout}>
+        <Animated.View key={active.key} style={[styles.tourCard, intro && styles.tourIntroCard, animatedAnchoredCardStyle]} onLayout={handleTourCardLayout}>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Skip onboarding tour" style={styles.tourCloseButton} activeOpacity={0.78} onPress={onSkip}>
             <DecorativeCloseIcon size={17} color="#5d5754" />
           </TouchableOpacity>
@@ -11402,7 +11691,7 @@ function OnboardingTour({ visible, step, targetRects = {}, currentRouteName, onN
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Skip onboarding tour" style={styles.tourSkipButton} activeOpacity={0.75} onPress={onSkip}>
             <Text style={styles.tourSkipText}>Skip this tour</Text>
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -11461,31 +11750,650 @@ function ImageLightbox({ uri, onClose }) {
   );
 }
 
-function RouteTransition({ direction, width, reduceMotion, children }) {
+function RouteTransition({ direction, width, height, origin, reduceMotion, swipeBackEnabled = false, onSwipeBack, preview, children }) {
   const motion = routeTransitionSpec(direction, width, reduceMotion);
   const translateX = useRef(new Animated.Value(motion.offset)).current;
-  const opacity = useRef(new Animated.Value(motion.opacity)).current;
+  const popProgress = useRef(new Animated.Value(direction === 'pop' && !reduceMotion ? 0 : 1)).current;
+  const swipingBackRef = useRef(false);
+  const viewportHeight = Math.max(1, Number(height) || 800);
+  const originX = Math.max(18, Math.min(Math.max(18, width - 18), Number(origin?.x) || width / 2));
+  const originY = Math.max(18, Math.min(Math.max(18, viewportHeight - 18), Number(origin?.y) || viewportHeight * 0.72));
+  const originDeltaX = originX - width / 2;
+  const originDeltaY = originY - viewportHeight / 2;
+  const originWidth = Math.max(36, Number(origin?.width) || 56);
+  const originHeight = Math.max(36, Number(origin?.height) || 56);
+  const popStartScale = Math.max(
+    0.04,
+    Math.min(0.28, Math.sqrt((originWidth * originHeight) / (Math.max(1, width) * viewportHeight)) * 0.96)
+  );
+  const popMidScale = popStartScale + (1 - popStartScale) * 0.34;
+  const previewTranslateX = translateX.interpolate({
+    inputRange: [0, Math.max(1, width)],
+    outputRange: [-Math.min(32, width * 0.08), 0],
+    extrapolate: 'clamp'
+  });
+  const previewOpacity = translateX.interpolate({
+    inputRange: [0, Math.max(1, width)],
+    outputRange: [0.88, 1],
+    extrapolate: 'clamp'
+  });
+  const popScale = popProgress.interpolate({
+    inputRange: [0, 0.32, 0.74, 1],
+    outputRange: [popStartScale, popMidScale, 0.88, 1],
+    extrapolate: 'clamp'
+  });
+  const popTranslateX = popProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [originDeltaX, 0],
+    extrapolate: 'clamp'
+  });
+  const popTranslateY = popProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [originDeltaY, 0],
+    extrapolate: 'clamp'
+  });
+  const popOpacity = popProgress.interpolate({
+    inputRange: [0, 0.22, 0.65, 1],
+    outputRange: [0.22, 0.78, 0.97, 1],
+    extrapolate: 'clamp'
+  });
+
+  const returnFromSwipe = useCallback(() => {
+    Animated.spring(translateX, {
+      toValue: 0,
+      damping: 30,
+      stiffness: 245,
+      mass: 0.95,
+      overshootClamping: true,
+      useNativeDriver: true
+    }).start(() => {
+      swipingBackRef.current = false;
+    });
+  }, [translateX]);
+
+  const finishSwipeBack = useCallback((gesture) => {
+    const traveled = Math.max(0, Number(gesture?.dx) || 0);
+    const remainingRatio = Math.max(0.18, 1 - traveled / Math.max(1, width));
+    const duration = reduceMotion ? 0 : Math.round(250 * remainingRatio);
+    Animated.timing(translateX, {
+      toValue: width,
+      duration,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (!finished) {
+        returnFromSwipe();
+        return;
+      }
+      const didGoBack = onSwipeBack?.();
+      if (didGoBack === false) returnFromSwipe();
+    });
+  }, [onSwipeBack, reduceMotion, returnFromSwipe, translateX, width]);
+
+  const swipeBackResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+      if (!swipeBackEnabled || swipingBackRef.current) return false;
+      const edgeWidth = Math.min(34, Math.max(24, width * 0.075));
+      const horizontalDistance = Math.abs(gesture.dx);
+      const verticalDistance = Math.abs(gesture.dy);
+      return gesture.x0 <= edgeWidth
+        && gesture.dx > 8
+        && horizontalDistance > verticalDistance * 1.3;
+    },
+    onPanResponderGrant: () => {
+      swipingBackRef.current = true;
+      translateX.stopAnimation();
+    },
+    onPanResponderMove: (_event, gesture) => {
+      const distance = Math.max(0, Math.min(width, gesture.dx));
+      translateX.setValue(distance);
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const crossedDistance = gesture.dx >= Math.min(132, width * 0.3);
+      const quickFlick = gesture.vx >= 0.58 && gesture.dx >= 20;
+      if (crossedDistance || quickFlick) finishSwipeBack(gesture);
+      else returnFromSwipe();
+    },
+    onPanResponderTerminate: returnFromSwipe,
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true
+  }), [finishSwipeBack, returnFromSwipe, swipeBackEnabled, translateX, width]);
 
   useEffect(() => {
     if (!motion.duration) return undefined;
-    const animation = Animated.parallel([
-      Animated.timing(translateX, { toValue: 0, duration: motion.duration, useNativeDriver: true }),
-      Animated.timing(opacity, { toValue: 1, duration: motion.duration, useNativeDriver: true })
-    ]);
+    const easing = Easing.bezier(0.22, 1, 0.36, 1);
+    const animation = Animated.timing(translateX, { toValue: 0, duration: motion.duration, easing, useNativeDriver: true });
     animation.start();
     return () => animation.stop();
-  }, [motion.duration, opacity, translateX]);
+  }, [motion.duration, translateX]);
 
-  return <Animated.View style={{ flex: 1, opacity, transform: [{ translateX }] }}>{children}</Animated.View>;
+  useEffect(() => {
+    if (direction !== 'pop' || reduceMotion) {
+      popProgress.setValue(1);
+      return undefined;
+    }
+    const animation = Animated.timing(popProgress, {
+      toValue: 1,
+      duration: 620,
+      easing: Easing.bezier(0.18, 0.74, 0.22, 1),
+      isInteraction: false,
+      useNativeDriver: true
+    });
+    const frame = requestAnimationFrame(() => animation.start());
+    return () => {
+      cancelAnimationFrame(frame);
+      animation.stop();
+    };
+  }, [direction, popProgress, reduceMotion]);
+
+  const routeAnimationStyle = direction === 'pop'
+    ? {
+      opacity: popOpacity,
+      transform: [
+        { translateX },
+        { translateX: popTranslateX },
+        { translateY: popTranslateY },
+        { scale: popScale }
+      ]
+    }
+    : { transform: [{ translateX }] };
+
+  return (
+    <View style={styles.routeTransitionStack}>
+      {preview ? (
+        <Animated.View
+          pointerEvents="none"
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={[styles.routePreviewSurface, { opacity: previewOpacity, transform: [{ translateX: previewTranslateX }] }]}
+        >
+          {preview}
+        </Animated.View>
+      ) : null}
+      <Animated.View
+        {...(swipeBackEnabled ? swipeBackResponder.panHandlers : {})}
+        style={[styles.routeTransitionSurface, swipeBackEnabled && styles.swipeBackRouteSurface, routeAnimationStyle]}
+      >
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
+const LOOKMEFY_ROOT_TAB_ORDER = ['home', 'shop', 'tryon', 'closet', 'stylebot'];
+const LOOKMEFY_ROOT_TAB_LABELS = {
+  home: 'Home',
+  shop: 'Categories',
+  tryon: 'Try-On',
+  closet: 'Wardrobe',
+  stylebot: 'AI Stylist'
+};
+
+function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entryDirection = 'replace', entryOrigin, reduceMotion = false }) {
+  const { width, height: windowHeight } = useWindowDimensions();
+  const pageGap = 10;
+  const pageStride = width + pageGap;
+  const activeIndex = LOOKMEFY_ROOT_TAB_ORDER.indexOf(activeTab);
+  const trackX = useRef(new Animated.Value(-Math.max(activeIndex, 0) * pageStride)).current;
+  const pageChrome = useRef(new Animated.Value(0)).current;
+  const entryProgress = useRef(new Animated.Value(1)).current;
+  const directJumpProgress = useRef(new Animated.Value(1)).current;
+  const navigateRef = useRef(onNavigate);
+  const transitionInProgressRef = useRef(false);
+  const pendingIndexRef = useRef(null);
+  const previousActiveIndexRef = useRef(activeIndex);
+  const animationEpochRef = useRef(0);
+  const gestureStartTrackRef = useRef(-Math.max(activeIndex, 0) * pageStride);
+  const gestureStartProgressRef = useRef(Math.max(activeIndex, 0));
+  const entryOriginX = Math.max(18, Math.min(Math.max(18, width - 18), Number(entryOrigin?.x) || width / 2));
+  const entryOriginY = Math.max(18, Math.min(Math.max(18, windowHeight - 18), Number(entryOrigin?.y) || windowHeight * 0.72));
+  const entryOriginWidth = Math.max(36, Number(entryOrigin?.width) || 56);
+  const entryOriginHeight = Math.max(36, Number(entryOrigin?.height) || 56);
+  const entryStartScale = Math.max(
+    0.04,
+    Math.min(0.28, Math.sqrt((entryOriginWidth * entryOriginHeight) / (Math.max(1, width) * Math.max(1, windowHeight))) * 0.96)
+  );
+  const entryMidScale = entryStartScale + (1 - entryStartScale) * 0.34;
+  const entryScale = entryProgress.interpolate({
+    inputRange: [0, 0.32, 0.74, 1],
+    outputRange: [entryStartScale, entryMidScale, 0.88, 1],
+    extrapolate: 'clamp'
+  });
+  const entryTranslateX = entryProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [entryOriginX - width / 2, 0],
+    extrapolate: 'clamp'
+  });
+  const entryTranslateY = entryProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [entryOriginY - windowHeight / 2, 0],
+    extrapolate: 'clamp'
+  });
+  const entryOpacity = entryProgress.interpolate({
+    inputRange: [0, 0.22, 0.65, 1],
+    outputRange: [0.22, 0.78, 0.97, 1],
+    extrapolate: 'clamp'
+  });
+  const directJumpScale = directJumpProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.985, 1],
+    extrapolate: 'clamp'
+  });
+  const directJumpOpacity = directJumpProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.82, 1],
+    extrapolate: 'clamp'
+  });
+  const [mountedTabs, setMountedTabs] = useState(() => LOOKMEFY_ROOT_TAB_ORDER.filter((_, index) => (
+    Math.abs(index - activeIndex) <= 1
+  )));
+
+  useEffect(() => {
+    navigateRef.current = onNavigate;
+  }, [onNavigate]);
+
+  const retainNeighborhood = useCallback((centerIndex) => {
+    if (centerIndex < 0) return;
+    setMountedTabs((current) => {
+      const next = new Set(current);
+      [centerIndex - 1, centerIndex, centerIndex + 1].forEach((index) => {
+        if (LOOKMEFY_ROOT_TAB_ORDER[index]) next.add(LOOKMEFY_ROOT_TAB_ORDER[index]);
+      });
+      if (next.size === current.length) return current;
+      return LOOKMEFY_ROOT_TAB_ORDER.filter((tab) => next.has(tab));
+    });
+  }, []);
+
+  const retainRange = useCallback((fromIndex, toIndex) => {
+    if (fromIndex < 0 || toIndex < 0) return;
+    const firstIndex = Math.min(fromIndex, toIndex);
+    const lastIndex = Math.max(fromIndex, toIndex);
+    setMountedTabs((current) => {
+      const next = new Set(current);
+      for (let index = firstIndex; index <= lastIndex; index += 1) {
+        const tab = LOOKMEFY_ROOT_TAB_ORDER[index];
+        if (tab) next.add(tab);
+      }
+      if (next.size === current.length) return current;
+      return LOOKMEFY_ROOT_TAB_ORDER.filter((tab) => next.has(tab));
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (activeIndex < 0) return;
+    const previousIndex = previousActiveIndexRef.current;
+    const activeTabChanged = previousIndex >= 0 && previousIndex !== activeIndex;
+    const completedGesture = pendingIndexRef.current === activeIndex;
+    if (completedGesture && transitionInProgressRef.current && !reduceMotion) {
+      previousActiveIndexRef.current = activeIndex;
+      return;
+    }
+    const animationEpoch = ++animationEpochRef.current;
+    const distance = Math.abs(activeIndex - previousIndex);
+    retainNeighborhood(activeIndex);
+    if (distance <= 1) retainRange(previousIndex, activeIndex);
+    trackX.stopAnimation();
+    tabProgress.stopAnimation();
+    pageChrome.stopAnimation();
+    entryProgress.stopAnimation();
+    directJumpProgress.stopAnimation();
+    if (activeTabChanged && !completedGesture && !reduceMotion && entryDirection === 'pop') {
+      trackX.setValue(-activeIndex * pageStride);
+      pageChrome.setValue(0);
+      directJumpProgress.setValue(1);
+      entryProgress.setValue(0);
+      transitionInProgressRef.current = true;
+      const entryAnimation = Animated.parallel([
+        Animated.timing(entryProgress, {
+          toValue: 1,
+          duration: 620,
+          easing: Easing.bezier(0.18, 0.74, 0.22, 1),
+          isInteraction: false,
+          useNativeDriver: true
+        }),
+        Animated.timing(tabProgress, {
+          toValue: activeIndex,
+          duration: 210,
+          easing: Easing.bezier(0.22, 0.72, 0.22, 1),
+          isInteraction: false,
+          useNativeDriver: true
+        })
+      ]);
+      const frame = requestAnimationFrame(() => entryAnimation.start(({ finished }) => {
+        if (animationEpochRef.current === animationEpoch && finished) transitionInProgressRef.current = false;
+      }));
+      previousActiveIndexRef.current = activeIndex;
+      pendingIndexRef.current = null;
+      return () => {
+        cancelAnimationFrame(frame);
+        entryAnimation.stop();
+        if (animationEpochRef.current === animationEpoch) animationEpochRef.current += 1;
+      };
+    }
+    entryProgress.setValue(1);
+    if (activeTabChanged && !completedGesture && !reduceMotion && distance > 1) {
+      trackX.setValue(-activeIndex * pageStride);
+      pageChrome.setValue(0);
+      directJumpProgress.setValue(0);
+      transitionInProgressRef.current = true;
+      const jumpAnimation = Animated.parallel([
+        Animated.timing(directJumpProgress, {
+          toValue: 1,
+          duration: 210,
+          easing: Easing.bezier(0.2, 0.82, 0.25, 1),
+          isInteraction: false,
+          useNativeDriver: true
+        }),
+        Animated.timing(tabProgress, {
+          toValue: activeIndex,
+          duration: 180,
+          easing: Easing.bezier(0.2, 0.82, 0.25, 1),
+          isInteraction: false,
+          useNativeDriver: true
+        })
+      ]);
+      const frame = requestAnimationFrame(() => jumpAnimation.start(({ finished }) => {
+        if (animationEpochRef.current === animationEpoch && finished) transitionInProgressRef.current = false;
+      }));
+      previousActiveIndexRef.current = activeIndex;
+      pendingIndexRef.current = null;
+      return () => {
+        cancelAnimationFrame(frame);
+        jumpAnimation.stop();
+        if (animationEpochRef.current === animationEpoch) animationEpochRef.current += 1;
+      };
+    }
+    directJumpProgress.setValue(1);
+    if (!activeTabChanged || completedGesture || reduceMotion) {
+      trackX.setValue(-activeIndex * pageStride);
+      tabProgress.setValue(activeIndex);
+      pageChrome.setValue(0);
+      transitionInProgressRef.current = false;
+    } else {
+      const duration = 186;
+      const easing = Easing.bezier(0.2, 0.82, 0.25, 1);
+      transitionInProgressRef.current = true;
+      pageChrome.setValue(0);
+      Animated.parallel([
+        Animated.timing(trackX, {
+          toValue: -activeIndex * pageStride,
+          duration,
+          easing,
+          isInteraction: false,
+          useNativeDriver: true
+        }),
+        Animated.timing(tabProgress, {
+          toValue: activeIndex,
+          duration,
+          easing,
+          isInteraction: false,
+          useNativeDriver: true
+        })
+      ]).start(({ finished }) => {
+        if (animationEpochRef.current === animationEpoch && finished) transitionInProgressRef.current = false;
+      });
+    }
+    previousActiveIndexRef.current = activeIndex;
+    pendingIndexRef.current = null;
+  }, [activeIndex, directJumpProgress, entryDirection, entryProgress, pageChrome, pageStride, reduceMotion, retainNeighborhood, retainRange, tabProgress, trackX]);
+
+  const returnToActive = useCallback((releaseProgress = 0.25) => {
+    if (activeIndex < 0) return;
+    const animationEpoch = ++animationEpochRef.current;
+    trackX.stopAnimation();
+    tabProgress.stopAnimation();
+    pageChrome.stopAnimation();
+    entryProgress.stopAnimation();
+    directJumpProgress.stopAnimation();
+    entryProgress.setValue(1);
+    directJumpProgress.setValue(1);
+    pendingIndexRef.current = null;
+    if (reduceMotion) {
+      trackX.setValue(-activeIndex * pageStride);
+      tabProgress.setValue(activeIndex);
+      pageChrome.setValue(0);
+      transitionInProgressRef.current = false;
+      return;
+    }
+
+    const normalizedProgress = Number.isFinite(releaseProgress)
+      ? Math.max(0, Math.min(1, releaseProgress))
+      : 0.25;
+    const duration = Math.round(140 + normalizedProgress * 45);
+    const easing = Easing.bezier(0.22, 0.72, 0.22, 1);
+    transitionInProgressRef.current = true;
+    pageChrome.setValue(0);
+    Animated.parallel([
+      Animated.timing(trackX, {
+        toValue: -activeIndex * pageStride,
+        duration,
+        easing,
+        isInteraction: false,
+        useNativeDriver: true
+      }),
+      Animated.timing(tabProgress, {
+        toValue: activeIndex,
+        duration,
+        easing,
+        isInteraction: false,
+        useNativeDriver: true
+      })
+    ]).start(({ finished }) => {
+      if (animationEpochRef.current === animationEpoch && finished) transitionInProgressRef.current = false;
+    });
+  }, [activeIndex, directJumpProgress, entryProgress, pageChrome, pageStride, reduceMotion, tabProgress, trackX]);
+
+  const navigateByDirection = useCallback((direction, releaseProgress = 0, releaseVelocity = 0) => {
+    if (activeIndex < 0) return;
+    const targetIndex = activeIndex + direction;
+    const targetTab = LOOKMEFY_ROOT_TAB_ORDER[targetIndex];
+    if (!targetTab) return;
+
+    const animationEpoch = ++animationEpochRef.current;
+    transitionInProgressRef.current = true;
+    const canNavigate = navigateRef.current?.(targetTab, { validateOnly: true });
+    if (canNavigate === false) {
+      navigateRef.current?.(targetTab);
+      returnToActive();
+      return;
+    }
+
+    trackX.stopAnimation();
+    tabProgress.stopAnimation();
+    pageChrome.stopAnimation();
+    entryProgress.stopAnimation();
+    directJumpProgress.stopAnimation();
+    entryProgress.setValue(1);
+    directJumpProgress.setValue(1);
+    pendingIndexRef.current = targetIndex;
+
+    const commitNavigation = () => {
+      const didNavigate = navigateRef.current?.(targetTab);
+      if (didNavigate === false) {
+        pendingIndexRef.current = null;
+        returnToActive(1);
+        return;
+      }
+      AccessibilityInfo.announceForAccessibility(`${LOOKMEFY_ROOT_TAB_LABELS[targetTab]} tab`);
+    };
+
+    if (reduceMotion) {
+      trackX.setValue(-targetIndex * pageStride);
+      tabProgress.setValue(targetIndex);
+      pageChrome.setValue(0);
+      commitNavigation();
+      return;
+    }
+
+    const normalizedProgress = Math.max(0, Math.min(1, Number(releaseProgress) || 0));
+    const normalizedVelocity = Math.max(0, Math.min(1.5, Number(releaseVelocity) || 0));
+    const remainingDistance = 1 - normalizedProgress;
+    const duration = Math.round(Math.max(
+      165,
+      Math.min(225, 150 + remainingDistance * 90 - normalizedVelocity * 20)
+    ));
+    const easing = Easing.bezier(0.22, 0.72, 0.22, 1);
+    pageChrome.setValue(0);
+    Animated.parallel([
+      Animated.timing(trackX, {
+        toValue: -targetIndex * pageStride,
+        duration,
+        easing,
+        isInteraction: false,
+        useNativeDriver: true
+      }),
+      Animated.timing(tabProgress, {
+        toValue: targetIndex,
+        duration,
+        easing,
+        isInteraction: false,
+        useNativeDriver: true
+      })
+    ]).start(({ finished }) => {
+      if (!finished || animationEpochRef.current !== animationEpoch) return;
+      pendingIndexRef.current = null;
+      transitionInProgressRef.current = false;
+      retainNeighborhood(targetIndex);
+    });
+    commitNavigation();
+  }, [activeIndex, directJumpProgress, entryProgress, pageChrome, pageStride, reduceMotion, retainNeighborhood, returnToActive, tabProgress, trackX]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => {
+      const horizontalDistance = Math.abs(gesture.dx);
+      const verticalDistance = Math.abs(gesture.dy);
+      const direction = gesture.dx < 0 ? 1 : -1;
+      const targetTab = LOOKMEFY_ROOT_TAB_ORDER[activeIndex + direction];
+      const shouldStart = Boolean(targetTab)
+        && horizontalDistance > 5
+        && horizontalDistance > verticalDistance * 1.08;
+      return shouldStart;
+    },
+    onPanResponderGrant: () => {
+      animationEpochRef.current += 1;
+      transitionInProgressRef.current = false;
+      pendingIndexRef.current = null;
+      gestureStartTrackRef.current = -activeIndex * pageStride;
+      gestureStartProgressRef.current = activeIndex;
+      trackX.stopAnimation((value) => {
+        if (Number.isFinite(value)) gestureStartTrackRef.current = value;
+      });
+      tabProgress.stopAnimation((value) => {
+        if (Number.isFinite(value)) gestureStartProgressRef.current = value;
+      });
+      pageChrome.stopAnimation();
+      entryProgress.stopAnimation();
+      directJumpProgress.stopAnimation();
+      entryProgress.setValue(1);
+      directJumpProgress.setValue(1);
+      pageChrome.setValue(0);
+    },
+    onPanResponderMove: (_event, gesture) => {
+      const direction = gesture.dx < 0 ? 1 : -1;
+      const hasTarget = Boolean(LOOKMEFY_ROOT_TAB_ORDER[activeIndex + direction]);
+      const clampedDistance = Math.max(-pageStride, Math.min(pageStride, gesture.dx));
+      const resistedDistance = hasTarget ? clampedDistance : clampedDistance * 0.18;
+      trackX.setValue(gestureStartTrackRef.current + resistedDistance);
+      tabProgress.setValue(Math.max(0, Math.min(
+        LOOKMEFY_ROOT_TAB_ORDER.length - 1,
+        gestureStartProgressRef.current - (resistedDistance / pageStride)
+      )));
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const distanceThreshold = Math.min(76, Math.max(44, width * 0.13));
+      const crossedDistance = Math.abs(gesture.dx) >= distanceThreshold;
+      const quickFlick = Math.abs(gesture.vx) >= 0.42 && Math.abs(gesture.dx) >= 18;
+      const direction = gesture.dx < 0 ? 1 : -1;
+      const hasTarget = Boolean(LOOKMEFY_ROOT_TAB_ORDER[activeIndex + direction]);
+      if (!hasTarget || (!crossedDistance && !quickFlick)) {
+        returnToActive(Math.min(1, Math.abs(gesture.dx) / pageStride));
+        return;
+      }
+      navigateByDirection(
+        direction,
+        Math.min(1, Math.abs(gesture.dx) / pageStride),
+        Math.abs(gesture.vx)
+      );
+    },
+    onPanResponderTerminate: () => returnToActive(0.25),
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => false
+  }), [activeIndex, directJumpProgress, entryProgress, navigateByDirection, pageChrome, pageStride, returnToActive, tabProgress, trackX, width]);
+
+  const renderStartIndex = previousActiveIndexRef.current;
+  const firstRenderIndex = Math.min(renderStartIndex, activeIndex);
+  const lastRenderIndex = Math.max(renderStartIndex, activeIndex);
+  const transitionTabs = lastRenderIndex - firstRenderIndex <= 1
+    ? LOOKMEFY_ROOT_TAB_ORDER.filter((_, index) => index >= firstRenderIndex && index <= lastRenderIndex)
+    : [];
+  const renderedTabs = LOOKMEFY_ROOT_TAB_ORDER.filter((tab) => mountedTabs.includes(tab) || transitionTabs.includes(tab) || tab === activeTab);
+  const pageCornerRadius = pageChrome.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 28],
+    extrapolate: 'clamp'
+  });
+
+  const rootEntryStyle = entryDirection === 'pop'
+    ? {
+      opacity: entryOpacity,
+      transform: [{ translateX: entryTranslateX }, { translateY: entryTranslateY }, { scale: entryScale }]
+    }
+    : { opacity: directJumpOpacity, transform: [{ scale: directJumpScale }] };
+
+  return (
+    <Animated.View style={[styles.rootTabEntrySurface, rootEntryStyle]}>
+    <View style={styles.swipePagerViewport}>
+      <Animated.View
+        style={[
+          styles.swipePagerTrack,
+          {
+            width: LOOKMEFY_ROOT_TAB_ORDER.length * pageStride,
+            transform: [{ translateX: trackX }]
+          }
+        ]}
+      >
+        {renderedTabs.map((tab) => {
+          const tabIndex = LOOKMEFY_ROOT_TAB_ORDER.indexOf(tab);
+          const isInteractive = tab === activeTab;
+          return (
+            <Animated.View
+              key={tab}
+              {...(isInteractive ? panResponder.panHandlers : {})}
+              pointerEvents={isInteractive ? 'auto' : 'none'}
+              accessibilityElementsHidden={!isInteractive || undefined}
+              importantForAccessibility={!isInteractive ? 'no-hide-descendants' : 'auto'}
+              style={[
+                styles.swipePagerPage,
+                {
+                  left: tabIndex * pageStride,
+                  width,
+                  borderRadius: pageCornerRadius
+                }
+              ]}
+            >
+              <RootPagerPageContext.Provider value>
+                {renderTab(tab, { isActive: isInteractive })}
+              </RootPagerPageContext.Provider>
+            </Animated.View>
+          );
+        })}
+      </Animated.View>
+    </View>
+    </Animated.View>
+  );
 }
 
 function LookmefyApp() {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const responsiveLayout = useMemo(() => responsiveLayoutForWindow(width), [width]);
   const [fontsLoaded, fontLoadError] = useFonts(fontAssets);
   const [routeStack, setRouteStack] = useState([{ name: 'home', params: {} }]);
+  const rootTabProgress = useRef(new Animated.Value(0)).current;
   const routeDirection = useRef('replace');
+  const routeTransitionOriginRef = useRef({ x: width / 2, y: height * 0.72, width: 56, height: 56 });
   const authBackHandlerRef = useRef(null);
   const [reduceMotion, setReduceMotion] = useState(true);
   useEffect(() => {
@@ -11576,17 +12484,63 @@ function LookmefyApp() {
       }
       return { ...current, [key]: nextRect };
     });
-  }, [currentRoute.name]);
-  const navigate = useCallback((name, params = {}) => {
+  }, [currentRoute.name, routeParamsKey]);
+  const navigate = useCallback((name, params = {}, navigationOptions = {}) => {
     Keyboard.dismiss();
     const next = normalizeRoute(name, params);
-    routeDirection.current = 'forward';
+    const sourceIsRootTab = LOOKMEFY_ROOT_TAB_ORDER.includes(currentRoute.name)
+      && Object.keys(currentRoute.params || {}).length === 0;
+    const useButtonPop = sourceIsRootTab && navigationOptions.transition !== 'header';
+    routeDirection.current = useButtonPop ? 'pop' : 'forward';
     setRouteStack((current) => {
       const active = normalizeRoute(current[current.length - 1]?.name, current[current.length - 1]?.params);
       if (active.name === next.name && JSON.stringify(active.params || {}) === JSON.stringify(next.params || {})) return current;
       return [...current, next];
     });
-  }, []);
+  }, [currentRoute.name, routeParamsKey]);
+  const openRouteFromPress = useCallback((event, open, fallbackBounds = {}) => {
+    if (typeof open !== 'function') return;
+    const nativeEvent = event?.nativeEvent || {};
+    const pageX = Number(nativeEvent.pageX);
+    const pageY = Number(nativeEvent.pageY);
+    const fallbackWidth = Math.max(36, Number(fallbackBounds.width) || 56);
+    const fallbackHeight = Math.max(36, Number(fallbackBounds.height) || 56);
+    let completed = false;
+    let fallbackTimer;
+    const finish = (bounds) => {
+      if (completed) return;
+      completed = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      routeTransitionOriginRef.current = bounds;
+      requestAnimationFrame(open);
+    };
+    const fallback = {
+      x: Number.isFinite(pageX) ? pageX : width / 2,
+      y: Number.isFinite(pageY) ? pageY : height * 0.72,
+      width: fallbackWidth,
+      height: fallbackHeight
+    };
+    const rawTarget = event?.currentTarget ?? nativeEvent.target;
+    const target = typeof rawTarget === 'number' ? rawTarget : findNodeHandle(rawTarget);
+    fallbackTimer = setTimeout(() => finish(fallback), 90);
+    if (target == null || typeof UIManager?.measure !== 'function') return;
+    try {
+      UIManager.measure(target, (_x, _y, measuredWidth, measuredHeight, measuredPageX, measuredPageY) => {
+        if (!(measuredWidth > 0) || !(measuredHeight > 0)) {
+          finish(fallback);
+          return;
+        }
+        finish({
+          x: measuredPageX + measuredWidth / 2,
+          y: measuredPageY + measuredHeight / 2,
+          width: measuredWidth,
+          height: measuredHeight
+        });
+      });
+    } catch {
+      finish(fallback);
+    }
+  }, [height, width]);
   useEffect(() => {
     const openRouteFromUrl = (url) => {
       const nextRoute = mobileRouteFromUrl(url);
@@ -11621,7 +12575,7 @@ function LookmefyApp() {
     setAiStudioTryOnErrors({});
     requestAuth(message);
   }, [requestAuth]);
-  const guardedNavigate = useCallback((name, params = {}) => {
+  const guardedNavigate = useCallback((name, params = {}, navigationOptions = {}) => {
     const protectedMessages = {
       closet: 'Log in with your mobile number to use your wardrobe.',
       tryon: 'Log in with your mobile number to use Try-On.',
@@ -11634,8 +12588,23 @@ function LookmefyApp() {
       requestAuth(protectedMessages[name]);
       return;
     }
-    navigate(name, params);
+    navigate(name, params, navigationOptions);
   }, [navigate, requestAuth, user]);
+  const navigateRootTab = useCallback((targetTab, options = {}) => {
+    if (!LOOKMEFY_ROOT_TAB_ORDER.includes(targetTab)) return false;
+    const protectedMessages = {
+      tryon: 'Log in with your mobile number to use Try-On.',
+      closet: 'Log in with your mobile number to use your wardrobe.',
+      stylebot: 'Log in with your mobile number to use AI Studio.'
+    };
+    if (!user && protectedMessages[targetTab]) {
+      if (!options.validateOnly) requestAuth(protectedMessages[targetTab]);
+      return false;
+    }
+    if (options.validateOnly) return true;
+    replaceRoute(targetTab);
+    return true;
+  }, [replaceRoute, requestAuth, user]);
   const goBack = useCallback(() => {
     Keyboard.dismiss();
     if (routeStack.length > 1) {
@@ -11654,6 +12623,11 @@ function LookmefyApp() {
     }
     return false;
   }, [routeStack]);
+  const completeSwipeBack = useCallback(() => {
+    const didGoBack = goBack();
+    if (didGoBack) routeDirection.current = 'replace';
+    return didGoBack;
+  }, [goBack]);
   const handleBack = useCallback(() => {
     if (authBackHandlerRef.current) {
       authBackHandlerRef.current();
@@ -11952,6 +12926,30 @@ function LookmefyApp() {
     showOnboardingStep(onboardingStep - 1);
   }, [onboardingStep, showOnboardingStep]);
 
+  const renderRootTab = useCallback((tab, { isActive = false } = {}) => {
+    const tabRouteKey = `${tab}:{}`;
+    const initialScrollY = scrollPositionsRef.current[tabRouteKey] || 0;
+    const onScrollPositionChange = (y) => {
+      scrollPositionsRef.current[tabRouteKey] = Math.max(0, Number(y) || 0);
+    };
+    const activeTourTarget = isActive ? registerTourTarget : () => {};
+    const activeTourFocus = isActive ? tourFocusRequest : null;
+    switch (tab) {
+      case 'home':
+        return <HomeScreen onNavigate={guardedNavigate} user={user} token={token} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} initialScrollY={initialScrollY} onScrollPositionChange={onScrollPositionChange} />;
+      case 'shop':
+        return <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onOpenFromPress={openRouteFromPress} onBack={null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={initialScrollY} onScrollPositionChange={onScrollPositionChange} />;
+      case 'tryon':
+        return <CustomTryOnScreen initial={{}} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={null} refreshUser={refreshUser} />;
+      case 'closet':
+        return <ClosetScreen initial={{}} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={null} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} />;
+      case 'stylebot':
+        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={goBack} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioActiveChatId={aiStudioActiveChatId} setAiStudioActiveChatId={setAiStudioActiveChatId} aiStudioChatHistory={aiStudioChatHistory} setAiStudioChatHistory={setAiStudioChatHistory} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
+      default:
+        return null;
+    }
+  }, [addToWishlist, aiStudioActiveChatId, aiStudioChatHistory, aiStudioConversationId, aiStudioMessages, aiStudioTryOnErrors, aiStudioTryOns, goBack, guardedNavigate, openRouteFromPress, refreshUser, registerTourTarget, requestAuth, requireFreshLogin, token, tourFocusRequest, user, wishlistIds]);
+
   const screen = useMemo(() => {
     const routeParams = currentRoute.params || {};
     switch (currentRoute.name) {
@@ -12000,6 +12998,18 @@ function LookmefyApp() {
     }
   }, [currentRoute.name, routeParamsKey, currentRouteKey, user, token, navigate, replaceRoute, guardedNavigate, requestAuth, requireFreshLogin, addToWishlist, removeFromWishlist, collections, wishlistIds, wishlistProducts, wishlistReady, wishlistLoadError, wishlistMutatingId, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioActiveChatId, aiStudioChatHistory, aiStudioTryOns, aiStudioTryOnErrors, refreshUser, routeStack.length, goBack, exitAuthToHome, registerAuthBackHandler, rememberCurrentScrollY]);
 
+  const latestScreenRef = useRef({ key: currentRouteKey, routeName: currentRoute.name, screen });
+  const previousScreenPreviewRef = useRef(null);
+  const previousScreenPreview = latestScreenRef.current.key !== currentRouteKey
+    ? latestScreenRef.current
+    : previousScreenPreviewRef.current;
+  useLayoutEffect(() => {
+    if (latestScreenRef.current.key !== currentRouteKey) {
+      previousScreenPreviewRef.current = latestScreenRef.current;
+    }
+    latestScreenRef.current = { key: currentRouteKey, routeName: currentRoute.name, screen };
+  }, [currentRoute.name, currentRouteKey, screen]);
+
   if (!ready || (!fontsLoaded && !fontLoadError)) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -12031,25 +13041,111 @@ function LookmefyApp() {
   const collectionsRoute = currentRoute.name === 'collections';
   const ordersRoute = currentRoute.name === 'orders';
   const accountChildRoute = wishlistRoute || collectionsRoute || ordersRoute || generationHistoryRoute;
-  const showBottomNav = !(authOnlyRoute || searchRoute || closetAddRoute || aiStudioRoute || tokensRoute || checkoutRoute);
+  const rootTabRoute = LOOKMEFY_ROOT_TAB_ORDER.includes(currentRoute.name)
+    && Object.keys(currentRoute.params || {}).length === 0;
+  const previousStackRoute = routeStack.length > 1
+    ? normalizeRoute(routeStack[routeStack.length - 2]?.name, routeStack[routeStack.length - 2]?.params)
+    : null;
+  const previousRouteIsRootTab = Boolean(previousStackRoute)
+    && LOOKMEFY_ROOT_TAB_ORDER.includes(previousStackRoute.name)
+    && Object.keys(previousStackRoute.params || {}).length === 0;
+  const sourceRootRoute = [...routeStack].reverse().find((route) => (
+    LOOKMEFY_ROOT_TAB_ORDER.includes(route?.name)
+    && Object.keys(route?.params || {}).length === 0
+  ));
+  const bottomNavRoute = rootTabRoute ? currentRoute : (sourceRootRoute || currentRoute);
+  const retainedRootRoute = rootTabRoute ? currentRoute : sourceRootRoute;
+  const iPhoneSwipeBackEnabled = Platform.OS === 'ios'
+    && Platform.isPad !== true
+    && !authOnlyRoute
+    && !rootTabRoute
+    && (routeStack.length > 1 || currentRoute.name !== 'home');
+  const showBottomNav = !(authOnlyRoute || searchRoute || closetAddRoute || tokensRoute || checkoutRoute);
 
   return (
     <ResponsiveLayoutContext.Provider value={responsiveLayout}>
     <PrivateMediaSessionContext.Provider key={String(user?.id || user?._id || 'guest')} value={user ? token || '' : ''}>
     <ContentReportingContext.Provider value={String(user?.id || user?._id || '')}>
-    <InsetSafeAreaView edges={showBottomNav ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']} style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, checkoutRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe, !welcomeRoute && styles.surfaceRoot]} onAccessibilityEscape={handleBack}>
+    <InsetSafeAreaView
+      edges={showBottomNav ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']}
+      style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, checkoutRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe, !welcomeRoute && styles.surfaceRoot]}
+      onAccessibilityEscape={handleBack}
+      onTouchStart={(event) => {
+        const capturesRootButton = LOOKMEFY_ROOT_TAB_ORDER.includes(currentRoute.name)
+          && Object.keys(currentRoute.params || {}).length === 0;
+        if (!capturesRootButton) return;
+        const pageX = Number(event?.nativeEvent?.pageX);
+        const pageY = Number(event?.nativeEvent?.pageY);
+        routeTransitionOriginRef.current = {
+          x: Number.isFinite(pageX) ? pageX : width / 2,
+          y: Number.isFinite(pageY) ? pageY : height * 0.72,
+          width: 56,
+          height: 56
+        };
+        const target = event?.nativeEvent?.target;
+        if (target == null || typeof UIManager?.measure !== 'function') return;
+        UIManager.measure(target, (_x, _y, measuredWidth, measuredHeight, measuredPageX, measuredPageY) => {
+          if (!(measuredWidth > 0) || !(measuredHeight > 0)) return;
+          routeTransitionOriginRef.current = {
+            x: measuredPageX + measuredWidth / 2,
+            y: measuredPageY + measuredHeight / 2,
+            width: Math.max(44, measuredWidth),
+            height: Math.max(36, measuredHeight)
+          };
+        });
+      }}
+    >
       {!welcomeRoute ? <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
         <View style={styles.surfaceGlowTop} />
         <View style={styles.surfaceGlowBottom} />
       </View> : null}
       <StatusBar style={welcomeRoute ? 'light' : 'dark'} />
-      {authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || checkoutRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={!tryOnRoute} />}
+      {rootTabRoute ? (
+        <View style={[styles.rootPagerHeaderFrame, responsiveLayout.contentFrameStyle]}>
+          <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={false} />
+        </View>
+      ) : authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || checkoutRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : (
+        <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={!tryOnRoute} />
+      )}
       <View style={[styles.content, styles.surfaceTransparent, responsiveLayout.contentFrameStyle]}>
-        <RouteTransition key={currentRouteKey} direction={routeDirection.current} width={width} reduceMotion={reduceMotion}>
-          <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
-            {screen}
-          </ScreenErrorBoundary>
-        </RouteTransition>
+        {retainedRootRoute ? (
+          <View
+            pointerEvents={rootTabRoute ? 'auto' : 'none'}
+            accessibilityElementsHidden={!rootTabRoute}
+            importantForAccessibility={rootTabRoute ? 'auto' : 'no-hide-descendants'}
+            style={rootTabRoute ? styles.retainedRootTabsActive : styles.retainedRootTabsParked}
+          >
+            {!rootTabRoute ? (
+              <View style={styles.rootPagerHeaderFrame}>
+                <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={false} />
+              </View>
+            ) : null}
+            <View style={styles.flex}>
+              <SwipeableRootTabs activeTab={retainedRootRoute.name} onNavigate={navigateRootTab} renderTab={renderRootTab} tabProgress={rootTabProgress} entryDirection={routeDirection.current} entryOrigin={routeTransitionOriginRef.current} reduceMotion={reduceMotion} />
+            </View>
+          </View>
+        ) : null}
+        {!rootTabRoute ? (
+          <RouteTransition
+            key={currentRouteKey}
+            direction={routeDirection.current}
+            width={width}
+            height={height}
+            origin={routeTransitionOriginRef.current}
+            reduceMotion={reduceMotion}
+            swipeBackEnabled={iPhoneSwipeBackEnabled}
+            onSwipeBack={completeSwipeBack}
+            preview={iPhoneSwipeBackEnabled && !previousRouteIsRootTab && previousScreenPreview?.screen ? (
+              <ScreenErrorBoundary routeName={previousScreenPreview.routeName} onHome={() => navigate('home')}>
+                {previousScreenPreview.screen}
+              </ScreenErrorBoundary>
+            ) : null}
+          >
+            <ScreenErrorBoundary routeName={currentRoute.name} onHome={() => navigate('home')}>
+              {screen}
+            </ScreenErrorBoundary>
+          </RouteTransition>
+        ) : null}
       </View>
       {/* Preserve the tab labels across full-screen routes and keyboard transitions. */}
       <View
@@ -12059,8 +13155,18 @@ function LookmefyApp() {
         style={[styles.bottomNavFrame, { display: showBottomNav ? 'flex' : 'none', bottom: Platform.OS === 'ios' ? Math.max(insets.bottom - 10, 10) : Math.max(insets.bottom, 10) }]}
       >
         <View style={styles.bottomNavGlass}>
-          <BlurView pointerEvents="none" intensity={38} tint="dark" blurReductionFactor={2.5} experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : 'none'} style={StyleSheet.absoluteFillObject} />
-          <BottomNav route={currentRoute} onNavigate={guardedNavigate} />
+          <View style={styles.bottomNavGlassClip}>
+            <BlurView
+              pointerEvents="none"
+              intensity={Platform.OS === 'ios' ? 78 : 38}
+              tint={Platform.OS === 'ios' ? 'systemUltraThinMaterialLight' : 'dark'}
+              blurReductionFactor={2.5}
+              experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : 'none'}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View pointerEvents="none" style={styles.bottomNavGlassTint} />
+            <BottomNav route={bottomNavRoute} onNavigate={navigateRootTab} tabProgress={rootTabProgress} pagerManaged={rootTabRoute} />
+          </View>
         </View>
       </View>
       <AuthPromptModal
@@ -12077,6 +13183,7 @@ function LookmefyApp() {
         step={onboardingStep}
         targetRects={tourTargetRects}
         currentRouteName={currentRoute.name}
+        reduceMotion={reduceMotion}
         onNext={nextOnboardingStep}
         onBack={previousOnboardingStep}
         onSkip={completeOnboarding}
@@ -12090,7 +13197,7 @@ function LookmefyApp() {
 }
 
 export default function App() {
-  return <SafeAreaProvider><LookmefyApp /></SafeAreaProvider>;
+  return <LookmefyApp />;
 }
 
 const styles = StyleSheet.create(nativeAppearanceStyles({
@@ -12259,6 +13366,61 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     width: '100%',
     alignSelf: 'center',
     backgroundColor: '#fbf7f6'
+  },
+  swipePagerViewport: {
+    flex: 1,
+    overflow: 'hidden',
+    backgroundColor: '#fbf7f6'
+  },
+  rootTabEntrySurface: {
+    flex: 1
+  },
+  retainedRootTabsActive: {
+    flex: 1
+  },
+  retainedRootTabsParked: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
+    backgroundColor: '#fbf7f6'
+  },
+  routeTransitionSurface: {
+    flex: 1
+  },
+  routeTransitionStack: {
+    flex: 1,
+    overflow: 'hidden',
+    zIndex: 1,
+    backgroundColor: 'transparent'
+  },
+  routePreviewSurface: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#fbf7f6'
+  },
+  swipeBackRouteSurface: {
+    flex: 1,
+    backgroundColor: '#fbf7f6',
+    shadowColor: '#2c201c',
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    shadowOffset: { width: -5, height: 0 }
+  },
+  rootPagerHeaderFrame: {
+    width: '100%',
+    alignSelf: 'center'
+  },
+  swipePagerTrack: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0
+  },
+  swipePagerPage: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    zIndex: 1,
+    backgroundColor: '#fbf7f6',
+    overflow: 'hidden'
   },
   pageBackRow: {
     width: '100%',
@@ -12616,13 +13778,24 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   bottomNavGlass: {
     width: '100%',
     maxWidth: 560,
-    borderRadius: 25,
+    borderRadius: 36,
+    shadowColor: '#5c4238',
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 14
+  },
+  bottomNavGlassClip: {
+    width: '100%',
+    borderRadius: 36,
     overflow: 'hidden',
-    shadowColor: '#100e0d',
-    shadowOpacity: 0.23,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 11
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.90)',
+    backgroundColor: 'rgba(248, 243, 237, 0.86)'
+  },
+  bottomNavGlassTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(250, 245, 239, 0.78)'
   },
   bottomNav: {
     width: '100%',
@@ -12630,41 +13803,82 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    minHeight: 66,
-    borderRadius: 25,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.28)',
-    paddingVertical: 7,
-    paddingHorizontal: 8,
-    backgroundColor: 'rgba(21, 20, 22, 0.28)'
+    minHeight: 70,
+    borderRadius: 35,
+    paddingVertical: 5,
+    paddingHorizontal: 0,
+    backgroundColor: 'transparent'
   },
   bottomNavCompact: {
-    paddingHorizontal: 4
+    paddingHorizontal: 0
   },
   bottomNavTablet: {
-    paddingHorizontal: 18
+    paddingHorizontal: 0
   },
   navItem: {
     flex: 1,
     minWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
-    minHeight: 50
+    gap: 2,
+    minHeight: 60,
+    zIndex: 2
   },
   navIconWrap: {
-    width: 38,
-    height: 29,
-    borderRadius: 12,
+    width: 40,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent'
   },
-  navIconWrapCenter: {
-    width: 38,
-    height: 29,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.17)'
+  navLiquidIndicator: {
+    position: 'absolute',
+    left: 0,
+    top: 4,
+    bottom: 4,
+    borderRadius: 31,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(155, 86, 88, 0.46)',
+    backgroundColor: 'rgba(255, 249, 246, 0.84)',
+    shadowColor: '#8f6258',
+    shadowOpacity: 0.24,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    zIndex: 4
+  },
+  navLiquidTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255, 246, 242, 0.46)'
+  },
+  navLiquidContent: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  navLiquidMirrorItem: {
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    transform: [{ scale: 1.04 }]
+  },
+  navLiquidMirrorText: {
+    color: 'rgba(63, 57, 53, 0.82)'
+  },
+  navLiquidInnerRing: {
+    position: 'absolute',
+    top: 1,
+    right: 1,
+    bottom: 1,
+    left: 1,
+    borderRadius: 30,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255, 255, 255, 0.92)'
   },
   navText: {
     ...typography.nav,
@@ -12672,23 +13886,13 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     lineHeight: 13,
     width: '100%',
     textAlign: 'center',
-    color: 'rgba(255, 255, 255, 0.78)',
+    color: 'rgba(63, 57, 53, 0.72)',
     fontWeight: '600'
   },
   navTextActive: {
-    color: '#ffffff',
+    color: '#9b5658',
     fontFamily: fontFamilies.bodyBold,
     fontWeight: '800'
-  },
-  navActiveUnderline: {
-    width: 16,
-    height: 2,
-    borderRadius: 1,
-    marginTop: 0,
-    backgroundColor: 'transparent'
-  },
-  navActiveUnderlineVisible: {
-    backgroundColor: '#eadbc0'
   },
   homeScreen: {
     flex: 1,
@@ -17790,7 +18994,7 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     justifyContent: 'center'
   },
   productFavoriteButtonSaved: {
-    backgroundColor: '#111111'
+    backgroundColor: '#9b5658'
   },
   productSwipeHint: {
     position: 'absolute',
@@ -18194,7 +19398,7 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   },
   aiStudioContent: {
     paddingTop: 18,
-    paddingBottom: screenBottomInset + 104,
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 104,
     paddingHorizontal: 20,
     backgroundColor: 'transparent'
   },
@@ -18205,7 +19409,7 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     flexGrow: 1,
     justifyContent: 'center',
     paddingTop: 24,
-    paddingBottom: screenBottomInset + 100
+    paddingBottom: bottomNavigationHeight + screenBottomInset + 100
   },
   aiStudioConversation: {
     width: '100%',
