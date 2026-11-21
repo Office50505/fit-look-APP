@@ -107,7 +107,7 @@ const JOB_TIMEOUT_MS = 420000;
 const JOB_POLL_INTERVAL_MS = 1400;
 
 function shouldBypassCache(path, explicitNoCache) {
-  return Boolean(explicitNoCache) || /^\/(?:auth\/me|tryons)(?:[/?]|$)/i.test(String(path || ''));
+  return Boolean(explicitNoCache) || /^\/(?:auth\/me|products|tryons)(?:[/?]|$)/i.test(String(path || ''));
 }
 
 function cacheBustedPath(path) {

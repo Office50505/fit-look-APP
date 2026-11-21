@@ -180,6 +180,18 @@ export function isMarketplaceProduct(product = {}) {
   });
 }
 
+// Detail visibility and checkout are separate capabilities. A catalog detail
+// must not depend on whether this user has already generated a private preview.
+export function productDetailPolicy(product = {}, { hasSavedPreview = false } = {}) {
+  const marketplace = isMarketplaceProduct(product || {});
+  const available = product?.isActive !== false && (!product?.availabilityStatus || product.availabilityStatus === 'available');
+  return {
+    detailsAvailable: Boolean(product && (product.id || product._id)),
+    savedPreviewOnly: marketplace && hasSavedPreview,
+    checkoutAvailable: available && !marketplace && product?.checkout?.eligible !== false
+  };
+}
+
 export function productMerchantUrl(product = {}) {
   for (const value of [product.affiliateLink, product.sourceUrl]) {
     const candidate = cleanText(value);
@@ -195,14 +207,14 @@ export function productMerchantUrl(product = {}) {
 }
 
 export function getProductDisplayLabel(product = {}) {
-  const brand = cleanText(product.brand);
+  const brand = verifiedProductBrand(product);
   if (brand && !isMeasurementLabel(brand)) return brand;
-  const badge = cleanText(product.badge);
-  if (badge && !isMeasurementLabel(badge)) return badge;
   const category = cleanText(product.category);
   if (category) return titleCaseWord(category);
   const gender = cleanText(product.gender);
   if (gender) return titleCaseWord(gender);
+  const badge = cleanText(product.badge);
+  if (badge && !isMeasurementLabel(badge) && !UNVERIFIED_BRAND_PATTERN.test(badge)) return badge;
   return '';
 }
 
@@ -243,6 +255,22 @@ export function normalizeProduct(apiProduct = {}) {
 
 export function normalizeProducts(products = []) {
   return toArray(products).map(normalizeProduct).filter((product) => product.id && !isMarketplaceProduct(product));
+}
+
+export function isAiStudioProductVisible(product = {}) {
+  if (product.eligibility?.mobile === false) return false;
+  if (product.eligibility?.mobile === true) return true;
+  const source = cleanText(product.sourceType || product.source || product.searchSource || product.sourceLabel).toLowerCase();
+  if (/lookmefy|catalog|wardrobe|closet/.test(source)) return true;
+  return !isMarketplaceProduct(product);
+}
+
+export function normalizeAiStudioProductList(products = []) {
+  return toArray(products).map(normalizeProduct).filter((product) => product.id && isAiStudioProductVisible(product));
+}
+
+export function normalizeCatalogProducts(products = []) {
+  return toArray(products).map(normalizeProduct).filter((product) => product.id);
 }
 
 export function calculateCreditPercentage(remaining, total) {

@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { resolveFashionAction } from '../../shared/fashionActions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
 import { useFonts } from 'expo-font';
@@ -45,7 +46,7 @@ import { buildCategorySections, categoryAtScrollPosition, uniqueCategoryTiles } 
 import { beginGooglePlayPurchase, googlePlayPurchaseCancelled, initGooglePlayCatalog } from './src/googlePlayClient';
 import { subscriptionTerms } from './src/paymentTerms';
 import { categories, images, infoPages, policyPages } from './src/assets';
-import { calculateCreditPercentage, isMarketplaceProduct, normalizeProduct, normalizeProducts, productCategoryPresentation, resolveImageUrl, verifiedProductBrand, verifiedProductRating } from './src/products';
+import { calculateCreditPercentage, isMarketplaceProduct, normalizeAiStudioProductList, normalizeCatalogProducts, normalizeProduct, normalizeProducts, productDetailPolicy, productCategoryPresentation, resolveImageUrl, verifiedProductBrand, verifiedProductRating } from './src/products';
 import { routeTransitionSpec } from './src/gestureNavigation';
 import { nativeAppearanceStyles } from './src/nativeAppearance';
 import {
@@ -656,12 +657,14 @@ function normalizeAiStudioAction(action) {
   if (typeof action === 'string') return { type: 'message', label: action, prompt: action };
   const label = String(action.label || action.type || 'Action').replace(/\s+/g, ' ').trim();
   if (!label) return null;
+  if (!['message','check_wardrobe','search_catalog','search_online','search_products','plan_try_on','style_option','support_answer'].includes(String(action.type || 'message'))) return null;
   return {
     type: String(action.type || 'message'),
     label,
     prompt: String(action.prompt || label).replace(/\s+/g, ' ').trim(),
     disabled: Boolean(action.disabled),
-    disabledReason: String(action.disabledReason || '').replace(/\s+/g, ' ').trim()
+    disabledReason: String(action.disabledReason || '').replace(/\s+/g, ' ').trim(),
+    payload: action.payload && typeof action.payload === 'object' ? { outfitId:String(action.payload.outfitId || ''), productId:String(action.payload.productId || '') } : undefined
   };
 }
 
@@ -672,7 +675,7 @@ function normalizeAiStudioActions(data = {}) {
 }
 
 function stylistResponseText(value = '') {
-  return String(value || '').replace(/\bAmazon(?:\.in)?\b/gi, 'Lookmefy catalog');
+  return String(value || '');
 }
 
 function normalizeAiStudioOutfits(outfits = []) {
@@ -689,7 +692,7 @@ function normalizeAiStudioOutfits(outfits = []) {
 
 function normalizeAiStudioProducts(products = [], outfits = []) {
   const outfitProducts = outfits.flatMap((outfit) => outfit.products || []);
-  return uniqueProductsById(normalizeProducts([...(Array.isArray(products) ? products : []), ...outfitProducts]));
+  return uniqueProductsById(normalizeAiStudioProductList([...(Array.isArray(products) ? products : []), ...outfitProducts]));
 }
 
 function recentSearchStorageKey(user) {
@@ -1743,13 +1746,12 @@ function usePagedShopProducts(filters, token, missionPreset, pageSize = shopProd
       const firstPage = page.skip === 0;
       if (!firstPage) setState((current) => ({ ...current, loadingMore: true, loadMoreError: '' }));
       try {
-        // Some deployed catalogs still include marketplace rows that normalizeProducts hides.
-        // Keep advancing through those pages until a visible item arrives or the API is exhausted.
+        // Keep advancing through pages with no usable product ids until the API is exhausted.
         while (page.alive && page.hasMore) {
           const data = await api(productListPath(query, { limit: pageSize, skip: page.skip, includeTotal: 'true' }));
           if (!page.alive) return;
           const records = Array.isArray(data.products) ? data.products : [];
-          const incoming = orderProductsForMission(uniqueProductsById(normalizeProducts(records)), missionPreset);
+          const incoming = orderProductsForMission(uniqueProductsById(normalizeCatalogProducts(records)), missionPreset);
           if (incoming.length && incoming.every((product) => page.ids.has(product.id))) {
             page.failed = true;
             setState((current) => ({ ...current, loading: false, loadingMore: false, loadMoreError: 'More products are unavailable from the catalog service right now.' }));
@@ -1968,6 +1970,7 @@ function DecorativeCloseIcon({ size, color }) {
 }
 
 function AppButton({ label, icon, variant = 'primary', disabled, onPress, style, labelProps }) {
+  const usesLightContent = variant === 'primary' || variant === 'video';
   return (
     <Pressable
       accessibilityRole="button"
@@ -1978,13 +1981,14 @@ function AppButton({ label, icon, variant = 'primary', disabled, onPress, style,
         styles.button,
         variant === 'secondary' && styles.secondaryButton,
         variant === 'ghost' && styles.ghostButton,
+        variant === 'video' && styles.videoButton,
         pressed && !disabled && styles.buttonPressed,
         disabled && styles.disabledButton,
         style
       ]}
     >
-      {icon ? <Ionicons name={icon} size={17} color={variant === 'primary' ? '#fff' : '#111827'} /> : null}
-      <Text style={[styles.buttonText, variant !== 'primary' && styles.secondaryButtonText]} {...labelProps}>{label}</Text>
+      {icon ? <Ionicons name={icon} size={17} color={usesLightContent ? '#fff' : '#111827'} /> : null}
+      <Text style={[styles.buttonText, !usesLightContent && styles.secondaryButtonText, variant === 'video' && styles.videoButtonText]} {...labelProps}>{label}</Text>
     </Pressable>
   );
 }
@@ -2587,7 +2591,7 @@ const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLo
           <AppButton
             label={videoLoading ? 'Video...' : videoUri ? 'New Video' : 'Video Try-On'}
             icon="videocam-outline"
-            variant="secondary"
+            variant="video"
             disabled={loading || videoLoading}
             onPress={onTryOnVideo}
             style={styles.cardButton}
@@ -3309,7 +3313,7 @@ function CurationProductCard({ product, onPress, onTryOn, onVideoTryOn, onAddToW
           ) : null}
           {onVideoTryOn ? (
             <TouchableOpacity style={styles.homeProductVideoButton} activeOpacity={0.86} onPress={handleVideoTryOnPress}>
-              <Ionicons name="videocam-outline" size={14} color="#111827" />
+              <Ionicons name="videocam-outline" size={14} color="#ffffff" />
               <Text style={styles.homeProductVideoText}>Video Try-On</Text>
             </TouchableOpacity>
           ) : null}
@@ -3786,7 +3790,7 @@ function CompleteLookCard({ product, fallback, onPress, onAddToWishlist, isWishl
   );
 }
 
-function ConciergeSuggestionCard({ product, fallback, featured, onOpenProduct, onShop, onTryOn, onPreview, tryOn, tryOnLoading, tryOnError, actionLabel = 'Generate Try-On' }) {
+function ConciergeSuggestionCard({ product, fallback, featured, onOpenProduct, onShop, onTryOn, onPreview, onSelect, tryOn, tryOnLoading, tryOnError, actionLabel = 'Generate Try-On' }) {
   const source = product ? productImageSource(product) : images[fallback.image];
   const price = Number(product?.price);
   const handleCardPress = onOpenProduct || onShop;
@@ -3823,6 +3827,8 @@ function ConciergeSuggestionCard({ product, fallback, featured, onOpenProduct, o
           <Text style={styles.conciergeSuggestionName} numberOfLines={2}>{product?.title || product?.name || fallback?.name}</Text>
           <Text style={styles.conciergeSuggestionPrice}>{product ? (Number.isFinite(price) ? formatMoney(price, product.currency) : 'Price unavailable') : fallback?.price}</Text>
         </TouchableOpacity>
+        {product?.recommendationReasons?.length ? <Text style={styles.aiOutfitReason}>{product.recommendationReasons.slice(0,2).map(reason=>typeof reason === 'string' ? reason : reason.label).join(' ')}</Text> : null}
+        {onSelect ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Select ${product?.name}`} style={styles.conciergeExternalLink} onPress={onSelect}><Text style={styles.conciergeExternalLinkText}>Select this item</Text></TouchableOpacity> : null}
         <TouchableOpacity style={[styles.conciergeShopButton, tryOnLoading && styles.disabledButton]} disabled={tryOnLoading} onPress={onTryOn || onShop}>
           <Text style={styles.conciergeShopText}>{tryOnLoading ? 'Generating...' : actionLabel}</Text>
         </TouchableOpacity>
@@ -3834,8 +3840,8 @@ function ConciergeSuggestionCard({ product, fallback, featured, onOpenProduct, o
   );
 }
 
-function AiStudioOutfitCard({ outfit }) {
-  const items = Array.isArray(outfit?.items) ? outfit.items : [];
+function AiStudioOutfitCard({ outfit, onSelect, onCompare }) {
+  const items = [...(Array.isArray(outfit?.items) ? outfit.items : []), ...(Array.isArray(outfit?.products) ? outfit.products : [])];
   return (
     <View style={styles.aiOutfitCard}>
       <View style={styles.aiOutfitHead}>
@@ -3843,6 +3849,8 @@ function AiStudioOutfitCard({ outfit }) {
         {outfit?.sourceLabel ? <Text style={styles.aiOutfitSource} numberOfLines={1}>{stylistResponseText(outfit.sourceLabel)}</Text> : null}
       </View>
       {outfit?.reason ? <Text style={styles.aiOutfitReason}>{outfit.reason}</Text> : null}
+      {onSelect ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Select outfit ${outfit.title}`} onPress={onSelect}><Text style={styles.aiFollowUpText}>Select this look</Text></TouchableOpacity> : null}
+      {onCompare ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Compare outfits" onPress={onCompare}><Text style={styles.aiFollowUpText}>Compare looks</Text></TouchableOpacity> : null}
       {items.length ? (
         <ScrollView {...horizontalScrollProps} contentContainerStyle={styles.aiOutfitItems}>
           {items.map((item) => (
@@ -4196,7 +4204,7 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
                         onNavigate('product', { id: product.id });
                       }}
                     >
-                      <Ionicons name="videocam-outline" size={14} color="#111827" />
+                      <Ionicons name="videocam-outline" size={14} color="#ffffff" />
                       <Text style={styles.homeJournalVideoText}>Video Try-On</Text>
                     </TouchableOpacity>
                   </View>
@@ -4901,7 +4909,6 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
       scrollToTryOnPreview();
       return;
     }
-    if (savedLegacyProduct) return;
     generate();
   };
 
@@ -4957,14 +4964,14 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
     }
   };
 
-  const savedLegacyProduct = Boolean(state.product && isMarketplaceProduct(state.product));
-  const legacyLookUnavailable = savedLegacyProduct && tryOnLoaded && !tryOn?.imageUrl;
-  if (state.loading || state.error || !state.product || (savedLegacyProduct && !tryOnLoaded) || legacyLookUnavailable) {
+  const detailPolicy = productDetailPolicy(state.product, { hasSavedPreview: Boolean(tryOn?.imageUrl) });
+  const savedLegacyProduct = detailPolicy.savedPreviewOnly;
+  if (state.loading || state.error || !detailPolicy.detailsAvailable) {
     return (
       <View style={styles.productDetailScreen}>
         <ProductTopBar onNavigate={onNavigate} user={user} onBack={onBack} />
         <ScrollView contentContainerStyle={styles.scrollContent} {...screenScrollProps}>
-          <StatusPanel loading={state.loading || (savedLegacyProduct && !tryOnLoaded)} error={state.error} empty={!state.loading && (!state.product || legacyLookUnavailable)} text="This item may have been removed from the catalog." />
+          <StatusPanel loading={state.loading} error={state.error} empty={!state.loading && !detailPolicy.detailsAvailable} text="This item may have been removed from the catalog." />
         </ScrollView>
       </View>
     );
@@ -4993,6 +5000,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
     .slice(0, 5);
   const productSizes = (product.sizes || []).map((size) => String(size || '').trim()).filter(Boolean).slice(0, 8);
   const openShop = () => {
+    if (!detailPolicy.checkoutAvailable) return;
     if (!user) {
       onRequireAuth?.('Log in with your mobile number to checkout.');
       return;
@@ -5042,7 +5050,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
       </View>
 
       <View style={styles.productSummary}>
-        {savedLegacyProduct ? <Text style={styles.productBrandLabel}>SAVED TRY-ON</Text> : productBrand ? <Text style={styles.productBrandLabel}>{productBrand}</Text> : null}
+        {productBrand ? <Text style={styles.productBrandLabel}>{productBrand}</Text> : null}
         <Text
           accessibilityLabel={productTitle}
           numberOfLines={collapsibleTitle && !titleExpanded ? 2 : undefined}
@@ -5063,7 +5071,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
             <Ionicons name={titleExpanded ? 'chevron-up' : 'chevron-down'} size={14} color="#625a55" />
           </TouchableOpacity>
         ) : null}
-        {!savedLegacyProduct ? <View style={styles.productValueRow}>
+        <View style={styles.productValueRow}>
           <Text style={styles.productDetailPrice}>{Number.isFinite(Number(product.price)) ? formatMoney(Number(product.price), product.currency) : 'Price unavailable'}</Text>
           {productRating ? (
             <View style={styles.productRatingLine}>
@@ -5071,8 +5079,8 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
               <Text style={styles.productRatingText}>{productRating.rating.toFixed(1)} ({productRating.ratingCount})</Text>
             </View>
           ) : null}
-        </View> : null}
-        {!savedLegacyProduct ? <View style={styles.productMetadataRow}>
+        </View>
+        <View style={styles.productMetadataRow}>
           <TouchableOpacity style={styles.productMetadataItem} activeOpacity={0.76} onPress={openCategory}>
             <Text style={styles.productCategoryMetaLabel}>PRODUCT TYPE</Text>
             <Text style={styles.productCategoryMetaValue}>{categoryPresentation.label}</Text>
@@ -5083,38 +5091,38 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
               <Text style={styles.productCategoryMetaValue}>{titleCase(product.gender)}</Text>
             </View>
           ) : null}
-        </View> : null}
+        </View>
 
-        {!savedLegacyProduct || tryOnPreviewFailed ? <View style={styles.productActionRow}>
+        <View style={styles.productActionRow}>
           <TouchableOpacity style={[styles.productPrimaryAction, tryOnLoading && styles.disabledButton]} activeOpacity={0.86} disabled={tryOnLoading} onPress={handleTryOnAction} accessibilityHint="Creates a look by sending your profile and product photos to AI providers.">
             <Ionicons name="sparkles-outline" size={17} color="#ffffff" />
             <Text style={styles.productPrimaryActionText}>{tryOnLoading ? 'Creating your try-on…' : tryOnPreviewFailed ? 'Retry Preview — no credits' : tryOn?.imageUrl ? 'Try It On Again' : 'Try It On'}</Text>
             {!tryOnLoading ? <Ionicons name="arrow-forward" size={17} color="#ffffff" /> : null}
           </TouchableOpacity>
           {!savedLegacyProduct ? <View style={styles.productSecondaryActionRow}>
-            {Number.isFinite(Number(product.price)) && Number(product.price) > 0 ? (
+            {detailPolicy.checkoutAvailable && Number.isFinite(Number(product.price)) && Number(product.price) > 0 ? (
               <TouchableOpacity accessibilityRole="button" accessibilityLabel="Checkout this product" style={styles.productSecondaryAction} activeOpacity={0.8} onPress={openShop}>
                 <Text style={styles.productSecondaryActionText}>Checkout</Text>
                 <Ionicons name="arrow-forward" size={15} color="#211f1d" />
               </TouchableOpacity>
             ) : null}
             <TouchableOpacity style={[styles.productVideoAction, (tryOnLoading || tryOnVideoLoading) && styles.disabledButton]} activeOpacity={0.8} disabled={tryOnLoading || tryOnVideoLoading} onPress={generateVideo}>
-              <Ionicons name="play-circle-outline" size={17} color="#514b47" />
+              <Ionicons name="play-circle-outline" size={17} color="#ffffff" />
               <Text style={styles.productVideoActionText}>{tryOnVideoLoading ? 'Creating…' : tryOn?.videoUrl ? 'New Video' : 'Video Try-On'}</Text>
             </TouchableOpacity>
           </View> : null}
-          {!savedLegacyProduct && !(Number.isFinite(Number(product.price)) && Number(product.price) > 0) ? <Text style={styles.productCommerceUnavailable}>Checkout is unavailable for this item.</Text> : null}
+          {!savedLegacyProduct && (!detailPolicy.checkoutAvailable || !(Number.isFinite(Number(product.price)) && Number(product.price) > 0)) ? <Text style={styles.productCommerceUnavailable}>Checkout is unavailable for this item.</Text> : null}
           {!savedLegacyProduct ? <Text style={styles.productTryOnDisclosure}>
             Try-On shares your profile and product photos with AI providers.{' '}
             <Text accessibilityRole="link" style={styles.aiPhotoDisclosureLink} onPress={() => openLegalPolicy('privacy')}>Privacy Policy</Text>
           </Text> : null}
-        </View> : null}
+        </View>
         {tryOn?.imageUrl || tryOn?.videoUrl ? <AiPreviewNote content={reportContentReference(tryOn, 'product_tryon')} /> : null}
         {tryOnError ? <Text style={styles.errorText}>{tryOnError}</Text> : null}
         {tryOnVideoError ? <Text style={styles.errorText}>{tryOnVideoError}</Text> : null}
       </View>
 
-      {!savedLegacyProduct ? <View style={styles.productStorySection}>
+      <View style={styles.productStorySection}>
         <Text style={styles.productStoryTitle}>Product Description</Text>
         <Text style={styles.productStoryText}>
           {product.description || 'No additional product description is available yet.'}
@@ -5141,9 +5149,9 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
             ) : null}
           </View>
         ) : null}
-      </View> : null}
+      </View>
 
-      {!savedLegacyProduct ? <View style={styles.completeLookSection}>
+      <View style={styles.completeLookSection}>
         <View style={styles.completeLookHead}>
           <Text style={styles.completeLookTitle}>Complete the Look</Text>
           <TouchableOpacity onPress={openCategory}>
@@ -5163,7 +5171,7 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
             );
           }) : <StatusPanel empty text={categoryPresentation.reliable ? 'No related products found yet.' : 'Related products are unavailable while this item’s category is reviewed.'} />}
         </View>
-      </View> : null}
+      </View>
       </ScrollView>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
     </View>
@@ -7844,6 +7852,9 @@ function StyleBotScreen({
   const [lightbox, setLightbox] = useState(null);
   const scrollRef = useRef(null);
   const requestInFlightRef = useRef(false);
+  const generationInFlightRef = useRef(new Set());
+  const hydratedOwnerRef = useRef('');
+  useEffect(()=>()=>{requestInFlightRef.epoch=(requestInFlightRef.epoch||0)+1;},[user?.id,user?._id]);
   const shouldAutoScrollRef = useRef(true);
   const userScrollingRef = useRef(false);
   const composerBottom = useRef(new Animated.Value(Platform.OS === 'ios' ? 10 : 14)).current;
@@ -7884,8 +7895,11 @@ function StyleBotScreen({
 
   const startNewChat = useCallback(() => {
     archiveCurrentChat();
+    requestInFlightRef.epoch = (requestInFlightRef.epoch || 0) + 1;
     setAiStudioActiveChatId(`chat-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    setAiStudioConversationId('');
+    setAiStudioConversationId(`studio-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    requestInFlightRef.current = false;
+    setBusy(false);
     setMessages(initialAiStudioMessages(user));
     setChatTryOns({});
     setChatTryOnErrors({});
@@ -7900,6 +7914,9 @@ function StyleBotScreen({
       return;
     }
     archiveCurrentChat();
+    requestInFlightRef.epoch=(requestInFlightRef.epoch||0)+1;
+    requestInFlightRef.current=false;
+    setBusy(false);
     setAiStudioActiveChatId(chat.id);
     setAiStudioConversationId(chat.conversationId || '');
     setMessages(Array.isArray(chat.messages) && chat.messages.length ? chat.messages : initialAiStudioMessages(user));
@@ -7950,6 +7967,8 @@ function StyleBotScreen({
   const submit = async (preset, requestOptions = {}) => {
     const prompt = String(preset || query || '').trim();
     if (!prompt || requestInFlightRef.current) return;
+    requestInFlightRef.historyRevision=(requestInFlightRef.historyRevision||0)+1;
+    const epoch = requestInFlightRef.epoch || 0;
     const retryMessageId = String(requestOptions.retryMessageId || '');
     const retryUserMessageId = String(requestOptions.retryUserMessageId || '');
     const retrying = Boolean(retryMessageId);
@@ -7993,9 +8012,11 @@ function StyleBotScreen({
           message: prompt,
           catalogOnly: true,
           conversationId: aiStudioConversationId || '',
-          history: requestHistory
+          history: requestHistory,
+          action: requestOptions.action
         })
       });
+      if (epoch !== (requestInFlightRef.epoch || 0)) return;
       const outfits = normalizeAiStudioOutfits(data.outfits || []);
       const products = normalizeAiStudioProducts(data.products || [], outfits);
       const actions = normalizeAiStudioActions(data);
@@ -8023,6 +8044,7 @@ function StyleBotScreen({
           : message
       )));
     } catch (error) {
+      if (epoch !== (requestInFlightRef.epoch || 0)) return;
       const messageText = aiStudioErrorMessage(error);
       setMessages((current) => current.map((message) => (
         message.id === requestId
@@ -8030,20 +8052,24 @@ function StyleBotScreen({
           : message
       )));
     } finally {
-      requestInFlightRef.current = false;
-      setBusy(false);
+      if (epoch === (requestInFlightRef.epoch || 0)) {
+        requestInFlightRef.current = false;
+        setBusy(false);
+      }
     }
   };
 
   const generateChatTryOn = async (product, stateKey) => {
     const key = stateKey || chatProductKey(product);
-    if (!product || product.searchLink || product.tryOnAvailable === false || product.aiTryOnAvailable === false || chatTryOnLoading[key]) return;
+    const epoch=requestInFlightRef.epoch||0;
+    if (!product || product.searchLink || product.tryOnAvailable === false || product.aiTryOnAvailable === false || chatTryOnLoading[key] || generationInFlightRef.current.has(key)) return;
     const profileMessage = tryOnProfileBlockMessage(user);
     if (profileMessage) {
       setChatTryOnErrors((current) => ({ ...current, [key]: profileMessage }));
       return;
     }
     setChatTryOnLoading((current) => ({ ...current, [key]: true }));
+    generationInFlightRef.current.add(key);
     setChatTryOnErrors((current) => ({ ...current, [key]: '' }));
     try {
       const isExternalProduct = isOnlineAiStudioProduct(product);
@@ -8054,6 +8080,7 @@ function StyleBotScreen({
         jobTimeoutMs: aiTryOnJobTimeoutMs,
         body: JSON.stringify(isExternalProduct ? { product, force: regenerate } : { force: regenerate })
       });
+      if(epoch!==(requestInFlightRef.epoch||0))return;
       requireGeneratedImage(data.tryOn);
       setChatTryOns((current) => ({ ...current, [key]: data.tryOn }));
       if (regenerate && data.reused) {
@@ -8061,11 +8088,58 @@ function StyleBotScreen({
       }
       if (data.user) setUser(data.user);
     } catch (error) {
+      if(epoch!==(requestInFlightRef.epoch||0))return;
       setChatTryOnErrors((current) => ({ ...current, [key]: aiFeatureErrorMessage(error, 'Could not generate try-on.') }));
     } finally {
-      setChatTryOnLoading((current) => ({ ...current, [key]: false }));
+      generationInFlightRef.current.delete(key);
+      if(epoch===(requestInFlightRef.epoch||0))setChatTryOnLoading((current) => ({ ...current, [key]: false }));
     }
   };
+
+  const handleChatAction = async (action,message) => {
+    if (busy || action.disabled) return;
+    const target=resolveFashionAction(action,message);
+    if(target.kind==='message')return submit(target.prompt);
+    if(target.kind==='product_try_on')return generateChatTryOn(target.product,chatTryOnStateKey(message.id,target.product));
+    if(target.kind==='outfit_try_on'){
+      const epoch=requestInFlightRef.epoch||0;
+      const outfit=target.outfit,key=`outfit:${message.id}:${outfit.id}`;
+      if(generationInFlightRef.current.has(key))return;
+      const profileMessage=tryOnProfileBlockMessage(user);
+      if(profileMessage)return setChatTryOnErrors(current=>({...current,[key]:profileMessage}));
+      generationInFlightRef.current.add(key);
+      setChatTryOnLoading(current=>({...current,[key]:true}));
+      setChatTryOnErrors(current=>({...current,[key]:''}));
+      try{
+        const data=await api('/closet/outfits/generate',{method:'POST',timeoutMs:aiTryOnRequestTimeoutMs,jobTimeoutMs:aiTryOnJobTimeoutMs,body:JSON.stringify({itemIds:outfit.items.map(i=>i.id),title:outfit.title,occasion:outfit.eventKey||''})});
+        if(epoch!==(requestInFlightRef.epoch||0))return;
+        requireGeneratedImage(data.outfit,'Your selected wardrobe look');
+        if(data.user)setUser(data.user);
+        setLightbox(imageUrl(data.outfit.imageUrl));
+      }catch(error){if(epoch===(requestInFlightRef.epoch||0))setChatTryOnErrors(current=>({...current,[key]:aiFeatureErrorMessage(error,'Could not generate this wardrobe look.')}));}
+      finally{generationInFlightRef.current.delete(key);if(epoch===(requestInFlightRef.epoch||0))setChatTryOnLoading(current=>({...current,[key]:false}));}
+      return;
+    }
+    Alert.alert('Action unavailable',target.reason);
+  };
+
+  useEffect(()=>{
+    const owner=String(user?.id||user?._id||'');
+    if(!owner||hydratedOwnerRef.current===owner)return;
+    hydratedOwnerRef.current=owner;
+    if(hasUserMessages||aiStudioConversationId)return;
+    const epoch=requestInFlightRef.epoch || 0;
+    const historyRevision=requestInFlightRef.historyRevision || 0;
+    let alive=true;
+    api('/recommendations/studio-chat/history').then(data=>{
+      if(!alive||epoch!==(requestInFlightRef.epoch || 0)||historyRevision!==(requestInFlightRef.historyRevision||0)||requestInFlightRef.current)return;
+      const turns=Array.isArray(data.turns)?data.turns:[];
+      if(!turns.some(t=>t.role==='user'))return;
+      setAiStudioConversationId(data.conversationId||'');
+      setMessages(turns.map((turn,index)=>({...turn,id:`restored-${data.conversationId}-${index}`,text:turn.text||'',products:normalizeAiStudioProducts(turn.products||[],turn.outfits||[]),outfits:normalizeAiStudioOutfits(turn.outfits||[]),actions:normalizeAiStudioActions(turn)})));
+    }).catch(()=>{});
+    return()=>{alive=false;};
+  },[user?.id,user?._id]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageScrollKey = `${messages.length}:${lastMessage?.id || ''}:${lastMessage?.loading ? 'loading' : 'settled'}:${String(lastMessage?.text || '').length}`;
@@ -8235,6 +8309,7 @@ function StyleBotScreen({
                             onPreview={previewUri ? () => setLightbox(previewUri) : null}
                             onOpenProduct={() => onNavigate('product', { id: product.id })}
                             onShop={() => onNavigate('product', { id: product.id })}
+                            onSelect={()=>submit(`Select ${product.name}`,{action:{type:'select_product',productId:product.id}})}
                             onTryOn={tryOnEnabled ? () => generateChatTryOn(product, key) : undefined}
                           />
                         );
@@ -8248,7 +8323,11 @@ function StyleBotScreen({
                 ) : null}
                 {message.outfits?.length ? (
                   <View style={styles.aiOutfitList}>
-                    {message.outfits.map((outfit) => <AiStudioOutfitCard key={outfit.id} outfit={outfit} />)}
+                    {message.outfits.map((outfit) => <View key={outfit.id}>
+                      <AiStudioOutfitCard outfit={outfit} onSelect={()=>submit(`Select ${outfit.title}`,{action:{type:'select_outfit',outfitId:outfit.id}})} onCompare={message.outfits.length>1?()=>submit('Compare the first two outfits'):null} />
+                      {chatTryOnLoading[`outfit:${message.id}:${outfit.id}`] ? <Text accessibilityRole="text">Preparing selected wardrobe preview…</Text> : null}
+                      {chatTryOnErrors[`outfit:${message.id}:${outfit.id}`] ? <Text accessibilityRole="alert" style={styles.errorText}>{chatTryOnErrors[`outfit:${message.id}:${outfit.id}`]}</Text> : null}
+                    </View>)}
                   </View>
                 ) : null}
                 {message.actions?.length ? (
@@ -8259,9 +8338,10 @@ function StyleBotScreen({
                         style={[styles.aiFollowUpChip, (action.disabled || busy) && styles.disabledButton]}
                         activeOpacity={0.82}
                         disabled={action.disabled || busy}
-                        onPress={() => submit(action.prompt || action.label)}
+                        onPress={() => handleChatAction(action,message)}
                       >
                         <Text style={styles.aiFollowUpText}>{action.label}</Text>
+                        {action.disabledReason ? <Text style={styles.aiOutfitReason}>{action.disabledReason}</Text> : null}
                       </TouchableOpacity>
                     ))}
                   </View>
@@ -10002,12 +10082,12 @@ function CheckoutScreen({ productId, user, onNavigate, onBack }) {
           <CheckoutField label="Pincode" value={form.pincode} onChangeText={(value) => update('pincode')(value.replace(/\D/g, '').slice(0, 6))} placeholder="Enter a 6-digit pincode" keyboardType="number-pad" maxLength={6} />
         </View>
         {pinStatus ? <Text style={[styles.checkoutPinStatus, !pinServiceable && styles.errorText]}>{pinStatus}</Text> : null}
-        <View style={styles.checkoutDivider} /><Text style={styles.checkoutSectionTitle}>Payment</Text><Text style={styles.checkoutSubtext}>Demo checkout</Text>
-        <View style={styles.checkoutPaymentOption}><Ionicons name="radio-button-on" size={19} color="#a75d5c" /><View><Text style={styles.checkoutPaymentTitle}>Confirm demo order</Text><Text style={styles.checkoutPaymentDescription}>No payment will be collected.</Text></View></View>
+        <View style={styles.checkoutDivider} /><Text style={styles.checkoutSectionTitle}>Payment</Text><Text style={styles.checkoutSubtext}>Order confirmation</Text>
+        <View style={styles.checkoutPaymentOption}><Ionicons name="radio-button-on" size={19} color="#a75d5c" /><View><Text style={styles.checkoutPaymentTitle}>Confirm order</Text><Text style={styles.checkoutPaymentDescription}>Review your order details before confirming.</Text></View></View>
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled: submitting || !canOrder }} style={[styles.checkoutConfirmButton, (submitting || !canOrder) && styles.disabledButton]} disabled={submitting || !canOrder} onPress={confirmOrder}><Text style={styles.checkoutConfirmText}>{submitting ? 'Confirming order…' : canOrder ? 'Confirm demo order' : 'Checkout unavailable'}</Text></TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityState={{ disabled: submitting || !canOrder }} style={[styles.checkoutConfirmButton, (submitting || !canOrder) && styles.disabledButton]} disabled={submitting || !canOrder} onPress={confirmOrder}><Text style={styles.checkoutConfirmText}>{submitting ? 'Confirming order…' : canOrder ? 'Confirm order' : 'Checkout unavailable'}</Text></TouchableOpacity>
       </> : null}
-      {completedOrder ? <View style={styles.checkoutSuccess}><Ionicons name="checkmark-circle" size={32} color="#29855b" /><Text style={styles.checkoutSectionTitle}>Order confirmed</Text><Text style={styles.checkoutSubtext}>Demo order #{String(completedOrder.id).slice(-8)} has been saved.</Text><TouchableOpacity onPress={() => onNavigate('orders')}><Text style={styles.checkoutOrdersLink}>View My Orders →</Text></TouchableOpacity></View> : null}
+      {completedOrder ? <View style={styles.checkoutSuccess}><Ionicons name="checkmark-circle" size={32} color="#29855b" /><Text style={styles.checkoutSectionTitle}>Order confirmed</Text><Text style={styles.checkoutSubtext}>Order #{String(completedOrder.id).slice(-8)} has been confirmed.</Text><TouchableOpacity onPress={() => onNavigate('orders')}><Text style={styles.checkoutOrdersLink}>View My Orders →</Text></TouchableOpacity></View> : null}
       </View> : null}
       {product ? <View style={[styles.checkoutSummary, layout.isTablet && styles.checkoutSummaryTablet]}>
         <Text style={styles.checkoutSectionTitle}>Order summary</Text>
@@ -10042,7 +10122,7 @@ function OrdersScreen({ onNavigate, onBack, token, user }) {
       <PageBackRow onBack={onBack} />
       <View style={styles.ordersBody}>
         <Text style={styles.wishlistTitle}>My Orders</Text>
-        {orderState.loading ? <ActivityIndicator color="#9b5658" /> : orderState.error ? <Text style={styles.errorText}>{orderState.error}</Text> : orderState.orders.length ? <View style={styles.checkoutOrderList}>{orderState.orders.map((order) => <View key={order.id} style={styles.checkoutOrderCard}><Text style={styles.checkoutItemName}>Order #{String(order.id).slice(-8)}</Text><Text style={styles.checkoutItemMeta}>{order.items?.map((item) => item.name).join(', ')}</Text><Text style={styles.checkoutItemMeta}>{order.paymentMode === 'demo' ? 'Demo order' : 'Product order'} · {order.fulfillmentStatus || order.paymentStatus}</Text><Text style={styles.checkoutItemPrice}>{formatMoney(order.total, order.currency)}</Text></View>)}</View> : <EmptyStateCard
+        {orderState.loading ? <ActivityIndicator color="#9b5658" /> : orderState.error ? <Text style={styles.errorText}>{orderState.error}</Text> : orderState.orders.length ? <View style={styles.checkoutOrderList}>{orderState.orders.map((order) => <View key={order.id} style={styles.checkoutOrderCard}><Text style={styles.checkoutItemName}>Order #{String(order.id).slice(-8)}</Text><Text style={styles.checkoutItemMeta}>{order.items?.map((item) => item.name).join(', ')}</Text><Text style={styles.checkoutItemMeta}>Order · {order.fulfillmentStatus || order.paymentStatus}</Text><Text style={styles.checkoutItemPrice}>{formatMoney(order.total, order.currency)}</Text></View>)}</View> : <EmptyStateCard
           icon="receipt-outline"
           title="No orders yet"
           text="Your confirmed orders will show up here."
@@ -12038,7 +12118,7 @@ function LookmefyApp() {
     <PrivateMediaSessionContext.Provider key={String(user?.id || user?._id || 'guest')} value={user ? token || '' : ''}>
     <ContentReportingContext.Provider value={String(user?.id || user?._id || '')}>
     <InsetSafeAreaView edges={showBottomNav ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']} style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, checkoutRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe, !welcomeRoute && styles.surfaceRoot]} onAccessibilityEscape={handleBack}>
-      {!welcomeRoute ? <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+      {!welcomeRoute ? <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, aiStudioRoute && styles.aiStudioBackdrop]}>
         <View style={styles.surfaceGlowTop} />
         <View style={styles.surfaceGlowBottom} />
       </View> : null}
@@ -14257,8 +14337,8 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     minHeight: 40,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#d8d1cc',
-    backgroundColor: '#fffdfb',
+    borderColor: '#8f1820',
+    backgroundColor: '#b3262e',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -14274,7 +14354,7 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   },
   homeProductVideoText: {
     ...typography.caption,
-    color: '#111827',
+    color: '#ffffff',
     fontSize: 11,
     lineHeight: 14,
     fontWeight: '800',
@@ -14563,8 +14643,8 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     marginTop: 6,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#d8d1cc',
-    backgroundColor: '#fffdfb',
+    borderColor: '#8f1820',
+    backgroundColor: '#b3262e',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -14572,7 +14652,7 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   },
   homeJournalVideoText: {
     ...typography.caption,
-    color: '#111827',
+    color: '#ffffff',
     fontSize: 11,
     lineHeight: 14,
     fontWeight: '800',
@@ -16699,6 +16779,11 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     borderWidth: 1,
     borderColor: '#d1d5db'
   },
+  videoButton: {
+    backgroundColor: '#b3262e',
+    borderWidth: 1,
+    borderColor: '#8f1820'
+  },
   ghostButton: {
     backgroundColor: 'transparent'
   },
@@ -16715,6 +16800,9 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   },
   secondaryButtonText: {
     color: '#111827'
+  },
+  videoButtonText: {
+    color: '#ffffff'
   },
   section: {
     paddingHorizontal: 16,
@@ -17954,7 +18042,7 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     flex: 1,
     minHeight: 46,
     borderRadius: 12,
-    backgroundColor: '#f3eee8',
+    backgroundColor: '#b3262e',
     paddingHorizontal: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -17965,7 +18053,7 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     flex: 1
   },
   productVideoActionText: {
-    color: '#514b47',
+    color: '#ffffff',
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '700'
@@ -18188,6 +18276,9 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   aiStudioScreen: {
     flex: 1,
     backgroundColor: 'transparent'
+  },
+  aiStudioBackdrop: {
+    overflow: 'hidden'
   },
   aiStudioScroll: {
     flex: 1
