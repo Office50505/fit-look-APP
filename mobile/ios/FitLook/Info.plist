@@ -66,7 +66,11 @@
 					<key>UISceneConfigurationName</key>
 					<string>Default Configuration</string>
 					<key>UISceneDelegateClassName</key>
+<<<<<<< HEAD
 					<string>EXExpoAppSceneDelegate</string>
+=======
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+>>>>>>> edfa2871443bfac26006fdc914c02cbe72cd2805
 				</dict>
 			</array>
 		</dict>

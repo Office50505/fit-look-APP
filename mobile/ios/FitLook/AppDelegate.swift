@@ -2,10 +2,15 @@ import Expo
 import React
 import ReactAppDependencyProvider
 
+<<<<<<< HEAD
 @main
 class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider {
   var window: UIWindow?
 
+=======
+@UIApplicationMain
+public class AppDelegate: ExpoAppDelegate {
+>>>>>>> edfa2871443bfac26006fdc914c02cbe72cd2805
   var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
 
@@ -19,8 +24,20 @@ class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider {
 
     reactNativeDelegate = delegate
     reactNativeFactory = factory
+<<<<<<< HEAD
+=======
+    bindReactNativeFactory(factory)
+>>>>>>> edfa2871443bfac26006fdc914c02cbe72cd2805
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  public func application(
+    _ application: UIApplication,
+    configurationForConnecting connectingSceneSession: UISceneSession,
+    options: UIScene.ConnectionOptions
+  ) -> UISceneConfiguration {
+    UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
   }
 
   // Linking API
@@ -40,6 +57,26 @@ class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider {
   ) -> Bool {
     let result = RCTLinkingManager.application(application, continue: userActivity, restorationHandler: restorationHandler)
     return super.application(application, continue: userActivity, restorationHandler: restorationHandler) || result
+  }
+}
+
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+  var window: UIWindow?
+
+  func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions
+  ) {
+    guard let windowScene = scene as? UIWindowScene,
+          let appDelegate = UIApplication.shared.delegate as? AppDelegate,
+          let reactNativeFactory = appDelegate.reactNativeFactory else {
+      return
+    }
+
+    let window = UIWindow(windowScene: windowScene)
+    self.window = window
+    reactNativeFactory.startReactNative(withModuleName: "main", in: window, launchOptions: nil)
   }
 }
 
