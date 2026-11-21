@@ -4,13 +4,13 @@ const ANDROIDX_MARKER = 'LOOKMEFY_ANDROIDX_CORE_PIN';
 const KOTLIN_MARKER = 'LOOKMEFY_KOTLIN_METADATA_COMPAT';
 
 const androidXCorePin = `
-// ${ANDROIDX_MARKER}: keep Expo SDK 53 compatible with newer OpenIAP transitive deps.
+// ${ANDROIDX_MARKER}: keep the Android build compatible with OpenIAP transitive deps.
 allprojects {
   configurations.configureEach {
     resolutionStrategy.eachDependency { details ->
       if (details.requested.group == 'androidx.core' && ['core', 'core-ktx'].contains(details.requested.name)) {
         details.useVersion '1.16.0'
-        details.because 'Expo SDK 53 builds with compileSdk 35 and Android Gradle Plugin 8.8.2.'
+        details.because 'Keep the OpenIAP Android dependency graph on a compatible AndroidX core release.'
       }
     }
   }

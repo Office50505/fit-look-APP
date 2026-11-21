@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { resolveFashionAction } from '../../shared/fashionActions';
+import { resolveFashionAction } from './src/fashionActions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
 import { useFonts } from 'expo-font';
@@ -27,7 +27,6 @@ import {
   Platform,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -39,17 +38,44 @@ import {
   View
 } from 'react-native';
 
-// Keep the physical-device build independent of optional native view managers.
-// SafeAreaView is provided by React Native itself, so it remains available even
-// when a beta build is installed without Metro or third-party native pods.
+if (typeof __DEV__ !== 'undefined' && __DEV__) {
+  LogBox.ignoreLogs([
+    'SafeAreaView has been deprecated and will be removed in a future release.',
+    'Response.blob() is using React Native\'s Blob'
+  ]);
+}
+
+// Keep the existing iOS beta independent of optional native view managers while
+// using Android's real system-bar insets in the freshly generated Android app.
+// Platform.OS is static for the lifetime of the bundle, so these conditional
+// hooks/components keep a stable render order.
+const androidSafeArea = Platform.OS === 'android'
+  ? require('react-native-safe-area-context')
+  : null;
+const NativePagerView = Platform.OS === 'android' || Platform.OS === 'ios'
+  ? require('react-native-pager-view').default
+  : null;
+const NativePagerViewAvailable = Boolean(
+  NativePagerView && UIManager.getViewManagerConfig?.('RNCViewPager')
+);
+const AnimatedNativePagerView = NativePagerViewAvailable
+  ? Animated.createAnimatedComponent(NativePagerView)
+  : null;
+const LegacySafeAreaView = Platform.OS === 'ios'
+  ? require('react-native').SafeAreaView
+  : View;
+
 function InsetSafeAreaView({ edges: _edges, ...props }) {
-  return <SafeAreaView {...props} />;
+  if (androidSafeArea?.SafeAreaView) {
+    const AndroidSafeAreaView = androidSafeArea.SafeAreaView;
+    return <AndroidSafeAreaView edges={_edges} {...props} />;
+  }
+  return <LegacySafeAreaView {...props} />;
 }
 
 function useSafeAreaInsets() {
-  return Platform.OS === 'ios'
-    ? { top: 0, right: 0, bottom: 34, left: 0 }
-    : { top: NativeStatusBar.currentHeight || 0, right: 0, bottom: 0, left: 0 };
+  if (androidSafeArea?.useSafeAreaInsets) return androidSafeArea.useSafeAreaInsets();
+  return { top: 0, right: 0, bottom: 34, left: 0 };
 }
 
 import { api as sendApi, clearToken, filePart, formatMoney, getToken, imageUrl, saveToken } from './src/api';
@@ -88,6 +114,10 @@ const PrivateMediaSessionContext = createContext('');
 // headers must stay hidden so a single stationary header can sit above the
 // pager without outgoing/incoming clones crossing the screen.
 const RootPagerPageContext = createContext(false);
+// Detail routes live inside animated surfaces, but the main app header belongs
+// to the stationary shell. Nested screens still render their back/tool rows;
+// only their duplicate AppHeader instance is suppressed by this context.
+const PersistentAppHeaderContext = createContext(false);
 async function refreshPrivateImage(uri) {
   return renewPrivateImageUrl(uri, {
     apiOrigin: imageUrl('/api/health'), request: sendApi, resolveUrl: imageUrl, getSessionToken: getToken
@@ -124,10 +154,6 @@ const requireAiPhotoConsent = createAiPhotoConsentGuard({
 async function api(path, options = {}) {
   if (sendsPhotosToAi(path, options)) await requireAiPhotoConsent();
   return sendApi(path, options);
-}
-
-if (typeof __DEV__ !== 'undefined' && __DEV__) {
-  LogBox.ignoreLogs(['SafeAreaView has been deprecated and will be removed in a future release.']);
 }
 
 const genders = ['men', 'women', 'unisex'];
@@ -185,10 +211,6 @@ const horizontalScrollProps = {
   directionalLockEnabled: true,
   scrollEventThrottle: 16
 };
-
-LogBox.ignoreLogs([
-  "SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead."
-]);
 
 const homeCategorySnapInterval = 70;
 const productImageAspectRatio = 0.72;
@@ -459,17 +481,24 @@ function gridWidthForColumns(columns) {
   return null;
 }
 
-function responsiveLayoutForWindow(windowWidth) {
+function responsiveLayoutForWindow(windowWidth, windowHeight = windowWidth) {
   const safeWindowWidth = Math.max(1, Math.round(Number(windowWidth) || 0));
-  const isTablet = safeWindowWidth >= tabletLayoutMinWidth;
+  const safeWindowHeight = Math.max(1, Math.round(Number(windowHeight) || safeWindowWidth));
+  const shortestSide = Math.min(safeWindowWidth, safeWindowHeight);
+  const isTablet = safeWindowWidth >= tabletLayoutMinWidth && shortestSide >= 600;
   const productColumns = productColumnsForWindow(safeWindowWidth);
   const gridWidth = gridWidthForColumns(productColumns);
   const contentWidth = responsiveContentWidthForWindow(safeWindowWidth);
   return {
     windowWidth: safeWindowWidth,
+    windowHeight: safeWindowHeight,
     contentWidth,
     isTablet,
     isLargeTablet: safeWindowWidth >= 1024,
+    isNarrowPhone: !isTablet && safeWindowWidth <= 360,
+    isCompactPhone: !isTablet && safeWindowWidth <= 390,
+    isWidePhone: !isTablet && safeWindowWidth >= 430,
+    isLandscape: safeWindowWidth > safeWindowHeight,
     productColumns,
     contentFrameStyle: isTablet ? { width: contentWidth } : null,
     productGridItemStyle: gridWidth ? { flexGrow: 0, flexBasis: gridWidth, maxWidth: gridWidth } : null,
@@ -478,7 +507,7 @@ function responsiveLayoutForWindow(windowWidth) {
   };
 }
 
-const defaultResponsiveLayout = responsiveLayoutForWindow(390);
+const defaultResponsiveLayout = responsiveLayoutForWindow(390, 844);
 const ResponsiveLayoutContext = createContext(defaultResponsiveLayout);
 
 function useResponsiveLayout() {
@@ -2104,7 +2133,9 @@ function headerCreditLabel(user) {
 
 function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', leftRoute = 'profile', rightIcon = 'receipt-outline', rightRoute = 'orders', user, showAvatar = false, hideLeft = true, brandAlign = 'left', compact = false, showWishlist = true, showSearch = true, preserveWordmarkOnNarrow = false, registerTourTarget, tourTargetKeys = {} }) {
   const { width, fontScale } = useWindowDimensions();
+  const androidHeader = Platform.OS === 'android';
   const embeddedInRootPager = useContext(RootPagerPageContext);
+  const managedByPersistentShell = useContext(PersistentAppHeaderContext);
   const narrowHeader = width < 390;
   const compactToSymbol = width / Math.max(1, fontScale) < 390
     && (!preserveWordmarkOnNarrow || width < 350 || fontScale > 1);
@@ -2117,50 +2148,50 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
   const avatarTourTarget = useTourTarget(tourTargetKeys.avatar, registerTourTarget);
   const avatarUri = userAvatarUrl(user);
   const avatarResizeMode = userAvatarResizeMode(user);
-  const avatarImageStyle = avatarImageStyleForUser(user, 32);
+  const avatarImageStyle = avatarImageStyleForUser(user, androidHeader ? 28 : 32);
   const avatarImageBaseStyle = avatarImageBaseStyleForUser(user);
   const creditLabel = headerCreditLabel(user);
   const creditAccessibilityLabel = `Open credits, ${userCreditBalance(user).toLocaleString('en-IN')} credits available`;
-  if (embeddedInRootPager) return null;
+  if (embeddedInRootPager || managedByPersistentShell) return null;
   return (
-    <View style={[styles.appHeader, compact && styles.appHeaderCompact, narrowHeader && styles.appHeaderNarrow]}>
+    <View style={[styles.appHeader, compact && styles.appHeaderCompact, narrowHeader && styles.appHeaderNarrow, androidHeader && styles.appHeaderAndroid]}>
       <SurfaceBackdrop />
       {!brandLeft ? (
-        <View style={[styles.appHeaderSide, styles.appHeaderLeftSide]}>
+        <View style={[styles.appHeaderSide, styles.appHeaderLeftSide, androidHeader && styles.appHeaderSideAndroid]}>
           {hideLeft ? null : (
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open left action" style={styles.appHeaderAction} onPress={openLeft}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open left action" style={[styles.appHeaderAction, androidHeader && styles.appHeaderActionAndroid]} onPress={openLeft}>
               <Ionicons name={leftIcon} size={22} color="#171412" />
             </TouchableOpacity>
           )}
         </View>
       ) : null}
-      <Pressable accessibilityRole="button" accessibilityLabel="Go to feed" onPress={() => navigateFromHeader('home')} style={[styles.appHeaderBrandWrap, brandLeft && styles.appHeaderBrandWrapLeft, compactToSymbol && styles.appHeaderBrandWrapNarrow]}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Go to feed" onPress={() => navigateFromHeader('home')} style={[styles.appHeaderBrandWrap, brandLeft && styles.appHeaderBrandWrapLeft, compactToSymbol && styles.appHeaderBrandWrapNarrow, androidHeader && styles.appHeaderBrandWrapAndroid]}>
         {title === 'Lookmefy' ? (
           compactToSymbol
-            ? <Image source={logoSymbol} style={styles.appHeaderNarrowLogo} resizeMode="contain" />
+            ? <Image source={logoSymbol} style={[styles.appHeaderNarrowLogo, androidHeader && styles.appHeaderNarrowLogoAndroid]} resizeMode="contain" />
             : <BrandLogo compact={compact} style={preserveWordmarkOnNarrow && narrowHeader ? styles.aiStudioHeaderBrandLogo : null} textStyle={preserveWordmarkOnNarrow && narrowHeader ? styles.aiStudioHeaderBrandText : null} textProps={preserveWordmarkOnNarrow && narrowHeader ? { maxFontSizeMultiplier: 1 } : undefined} />
         ) : <Text style={styles.appHeaderBrand} numberOfLines={1}>{title}</Text>}
       </Pressable>
-      <View style={[styles.appHeaderSide, styles.appHeaderRightSide, narrowHeader && styles.appHeaderRightSideNarrow]}>
+      <View style={[styles.appHeaderSide, styles.appHeaderRightSide, narrowHeader && styles.appHeaderRightSideNarrow, androidHeader && styles.appHeaderSideAndroid, androidHeader && styles.appHeaderRightSideAndroid]}>
         {showWishlistAction ? (
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open wishlist" style={styles.appHeaderAction} onPress={() => navigateFromHeader('wishlist')}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open wishlist" style={[styles.appHeaderAction, androidHeader && styles.appHeaderActionAndroid]} onPress={() => navigateFromHeader('wishlist')}>
             <Ionicons name="heart-outline" size={21} color="#171412" />
           </TouchableOpacity>
         ) : null}
         {!showAvatar ? (
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel={creditAccessibilityLabel} style={[styles.appHeaderAction, styles.appHeaderCreditAction]} onPress={() => navigateFromHeader('tokens')}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={creditAccessibilityLabel} style={[styles.appHeaderAction, styles.appHeaderCreditAction, androidHeader && styles.appHeaderCreditActionAndroid]} onPress={() => navigateFromHeader('tokens')}>
             <Ionicons name="sparkles-outline" size={11} color="#171412" />
             <Text style={styles.appHeaderCreditText} numberOfLines={1}>{creditLabel}</Text>
           </TouchableOpacity>
         ) : null}
-        <TouchableOpacity ref={avatarTourTarget.ref} onLayout={avatarTourTarget.onLayout} accessibilityRole="button" accessibilityLabel={rightRoute === 'orders' ? 'Open orders' : 'Open bag'} style={styles.appHeaderAction} onPress={openRight}>
+        <TouchableOpacity ref={avatarTourTarget.ref} onLayout={avatarTourTarget.onLayout} accessibilityRole="button" accessibilityLabel={rightRoute === 'orders' ? 'Open orders' : 'Open bag'} style={[styles.appHeaderAction, androidHeader && styles.appHeaderActionAndroid]} onPress={openRight}>
           {showAvatar ? (
-            avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={avatarImageStyle} imageBaseStyle={avatarImageBaseStyle} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />
+            avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={[styles.appHeaderAvatar, androidHeader && styles.appHeaderAvatarAndroid]} imageStyle={avatarImageStyle} imageBaseStyle={avatarImageBaseStyle} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={[styles.appHeaderAvatar, androidHeader && styles.appHeaderAvatarAndroid]} textStyle={styles.appHeaderAvatarInitials} />
           ) : <Ionicons name={rightIcon} size={20} color="#171412" />}
         </TouchableOpacity>
         {showProfileAction ? (
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open profile" style={styles.appHeaderAction} onPress={() => navigateFromHeader('profile')}>
-            {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={styles.appHeaderAvatar} imageStyle={avatarImageStyle} imageBaseStyle={avatarImageBaseStyle} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={styles.appHeaderAvatar} textStyle={styles.appHeaderAvatarInitials} />}
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open profile" style={[styles.appHeaderAction, androidHeader && styles.appHeaderActionAndroid]} onPress={() => navigateFromHeader('profile')}>
+            {avatarUri ? <ResilientImage source={{ uri: imageUrl(avatarUri) }} style={[styles.appHeaderAvatar, androidHeader && styles.appHeaderAvatarAndroid]} imageStyle={avatarImageStyle} imageBaseStyle={avatarImageBaseStyle} resizeMode={avatarResizeMode} fallbackIcon="person-outline" /> : <InitialsAvatar user={user} style={[styles.appHeaderAvatar, androidHeader && styles.appHeaderAvatarAndroid]} textStyle={styles.appHeaderAvatarInitials} />}
           </TouchableOpacity>
         ) : null}
       </View>
@@ -2169,12 +2200,14 @@ function AppHeader({ onNavigate, title = 'Lookmefy', leftIcon = 'menu-outline', 
 }
 
 function SurfaceBackdrop({ intensity = 34 }) {
+  if (Platform.OS === 'android') {
+    return <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, styles.surfaceBackdrop, styles.surfaceBackdropAndroid]} />;
+  }
   return (
     <BlurView
       pointerEvents="none"
       intensity={intensity}
-      tint={Platform.OS === 'ios' ? 'systemUltraThinMaterialLight' : 'light'}
-      experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : 'none'}
+      tint="systemUltraThinMaterialLight"
       blurReductionFactor={2.5}
       style={[StyleSheet.absoluteFillObject, styles.surfaceBackdrop]}
     />
@@ -2184,29 +2217,74 @@ function SurfaceBackdrop({ intensity = 34 }) {
 function BottomNav({ route = { name: 'home' }, onNavigate = () => {}, tabProgress, pagerManaged = false }) {
   const layout = useResponsiveLayout();
   const { width, fontScale } = useWindowDimensions();
+  const androidNav = Platform.OS === 'android';
+  const iosNav = Platform.OS === 'ios';
   const compactNav = width < 360 || fontScale > 1.15;
   const [navWidth, setNavWidth] = useState(0);
+  const responsiveNavHeight = androidNav
+    ? layout.isTablet ? 72 : width <= 340 ? 56 : width <= 390 ? 60 : width >= 430 ? 64 : 62
+    : layout.isTablet ? 68 : width <= 340 ? 54 : width <= 390 ? 56 : width >= 430 ? 60 : 58;
   // Scale the font and line height together so the fixed tab bar stays readable.
-  const navTextScale = Math.max(1, Math.min(Number(fontScale) || 1, 1.3));
-  const navTextSize = { fontSize: 10.5 * navTextScale, lineHeight: 13 * navTextScale };
+  const navTextScale = androidNav ? 1 : Math.max(1, Math.min(Number(fontScale) || 1, 1.3));
+  const navTextSize = androidNav
+    ? { fontSize: width <= 340 ? 8.5 : width <= 375 ? 9 : 9.5, lineHeight: width <= 340 ? 11 : 12 }
+    : { fontSize: (width <= 340 ? 9.5 : layout.isTablet ? 11 : 10.5) * navTextScale, lineHeight: (width <= 340 ? 12 : layout.isTablet ? 14 : 13) * navTextScale };
   const routeName = route?.name || 'home';
   const activeRoute = routeName === 'product' || routeName === 'wishlist' || routeName === 'search'
       ? 'shop'
       : routeName;
-  const items = [
+  const items = useMemo(() => [
     ['home', 'home-outline', 'home', 'Home'],
     ['shop', 'grid-outline', 'grid', 'Categories'],
     ['tryon', 'scan-outline', 'scan', 'Try-On'],
     ['closet', 'shirt-outline', 'shirt', 'Wardrobe'],
     ['stylebot', 'sparkles-outline', 'sparkles', 'AI Stylist']
-  ];
+  ], []);
   const activeIndex = Math.max(0, items.findIndex(([name]) => name === activeRoute));
   const internalLiquidPosition = useRef(new Animated.Value(activeIndex)).current;
   const liquidPosition = tabProgress || internalLiquidPosition;
   const liquidStretch = useRef(new Animated.Value(0)).current;
+  const liquidHold = useRef(new Animated.Value(0)).current;
+  const navDragPosition = useRef(new Animated.Value(activeIndex)).current;
+  const navDragBlend = useRef(new Animated.Value(0)).current;
+  const navDragEpochRef = useRef(0);
+  const navDragActiveRef = useRef(false);
+  const navDragConsumedPressRef = useRef(false);
   const previousActiveIndex = useRef(activeIndex);
   const dragStartIndex = useRef(activeIndex);
-  const [liquidPreviewIndex, setLiquidPreviewIndex] = useState(activeIndex);
+  const liveLiquidPositionRef = useRef(activeIndex);
+
+  useEffect(() => {
+    if (!iosNav || typeof liquidPosition?.addListener !== 'function') return undefined;
+    const listenerId = liquidPosition.addListener(({ value }) => {
+      if (Number.isFinite(value)) liveLiquidPositionRef.current = value;
+    });
+    return () => liquidPosition.removeListener(listenerId);
+  }, [iosNav, liquidPosition]);
+
+  const expandLiquidCapsule = useCallback(() => {
+    liquidHold.stopAnimation();
+    Animated.spring(liquidHold, {
+      toValue: 1,
+      stiffness: androidNav ? 270 : 235,
+      damping: androidNav ? 21 : 19,
+      mass: androidNav ? 0.68 : 0.76,
+      velocity: 0.45,
+      useNativeDriver: true
+    }).start();
+  }, [androidNav, liquidHold]);
+
+  const releaseLiquidCapsule = useCallback(() => {
+    liquidHold.stopAnimation();
+    Animated.spring(liquidHold, {
+      toValue: 0,
+      stiffness: androidNav ? 225 : 195,
+      damping: androidNav ? 18 : 17,
+      mass: androidNav ? 0.72 : 0.8,
+      velocity: -0.28,
+      useNativeDriver: true
+    }).start();
+  }, [androidNav, liquidHold]);
 
   const animateLiquidTo = useCallback((nextIndex) => {
     liquidPosition.stopAnimation();
@@ -2215,46 +2293,70 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {}, tabProgres
     Animated.parallel([
       Animated.timing(liquidPosition, {
         toValue: nextIndex,
-        duration: 180,
+        duration: androidNav ? 145 : 180,
         easing: Easing.bezier(0.2, 0.82, 0.25, 1),
         useNativeDriver: true
       }),
       Animated.sequence([
-        Animated.timing(liquidStretch, { toValue: 1, duration: 165, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-        Animated.spring(liquidStretch, { toValue: 0, stiffness: 155, damping: 18, mass: 0.82, useNativeDriver: true })
+        Animated.timing(liquidStretch, { toValue: 1, duration: androidNav ? 105 : 165, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.spring(liquidStretch, { toValue: 0, stiffness: androidNav ? 220 : 155, damping: androidNav ? 23 : 18, mass: androidNav ? 0.7 : 0.82, useNativeDriver: true })
       ])
     ]).start();
-  }, [liquidPosition, liquidStretch]);
+  }, [androidNav, liquidPosition, liquidStretch]);
 
   useEffect(() => {
-    setLiquidPreviewIndex(activeIndex);
     if (previousActiveIndex.current === activeIndex) return;
     previousActiveIndex.current = activeIndex;
     if (!tabProgress || !pagerManaged) animateLiquidTo(activeIndex);
   }, [activeIndex, animateLiquidTo, pagerManaged, tabProgress]);
 
-  useEffect(() => {
-    if (!tabProgress?.addListener) return undefined;
-    const listenerId = tabProgress.addListener(({ value }) => {
-      const previewIndex = Math.round(Math.max(0, Math.min(items.length - 1, Number(value) || 0)));
-      setLiquidPreviewIndex((current) => current === previewIndex ? current : previewIndex);
-    });
-    return () => tabProgress.removeListener(listenerId);
-  }, [items.length, tabProgress]);
-
   const slotWidth = navWidth > 0 ? navWidth / items.length : 0;
   const liquidIndicatorWidth = slotWidth > 0
-    ? Math.min(96, Math.max(58, slotWidth - 12))
-    : 58;
+    ? androidNav
+      ? Math.min(76, Math.max(52, slotWidth - 8))
+      : Math.min(96, Math.max(58, slotWidth - 12))
+    : androidNav ? 52 : 58;
   const liquidSlotInset = slotWidth > 0 ? Math.max(0, (slotWidth - liquidIndicatorWidth) / 2) : 0;
-  const liquidTranslateX = liquidPosition.interpolate({
+  const visualLiquidPosition = Animated.add(
+    Animated.multiply(liquidPosition, Animated.subtract(1, navDragBlend)),
+    Animated.multiply(navDragPosition, navDragBlend)
+  );
+  const liquidTranslateX = visualLiquidPosition.interpolate({
     inputRange: [0, items.length - 1],
     outputRange: [liquidSlotInset, Math.max(liquidSlotInset, ((items.length - 1) * slotWidth) + liquidSlotInset)]
   });
-  const liquidTranslateY = liquidStretch.interpolate({ inputRange: [0, 1], outputRange: [0, -3] });
-  const liquidScaleX = liquidStretch.interpolate({ inputRange: [0, 1], outputRange: [1, 1.34] });
-  const liquidScaleY = liquidStretch.interpolate({ inputRange: [0, 1], outputRange: [1, 1.10] });
+  // The capsule stretches most between two tabs, then naturally contracts as
+  // the native pager's fling physics settles on its destination.
+  const liquidTravelStretch = visualLiquidPosition.interpolate({
+    inputRange: [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4],
+    outputRange: [0, 1, 0, 1, 0, 1, 0, 1, 0],
+    extrapolate: 'clamp'
+  });
+  const liquidMotion = Animated.add(
+    liquidStretch,
+    Animated.multiply(liquidTravelStretch, androidNav ? 0.82 : 0.9)
+  ).interpolate({
+    inputRange: [0, 1.6],
+    outputRange: [0, 1],
+    extrapolate: 'clamp'
+  });
+  // Keep vertical growth centred. Translating upward while scaling made the
+  // capsule appear anchored to its lower edge instead of expanding equally
+  // above and below the navigation bar.
+  const liquidTranslateY = 0;
+  const liquidScaleX = liquidMotion.interpolate({ inputRange: [0, 1], outputRange: [1, androidNav ? 1.2 : 1.3] });
+  const liquidScaleY = liquidMotion.interpolate({ inputRange: [0, 1], outputRange: [1, androidNav ? 1.045 : 1.08] });
+  const liquidHoldScaleX = liquidHold.interpolate({ inputRange: [0, 1], outputRange: [1, androidNav ? 1.32 : 1.35] });
+  const liquidHoldScaleY = liquidHold.interpolate({ inputRange: [0, 1], outputRange: [1, androidNav ? 1.18 : 1.26] });
+  const liquidCombinedScaleX = Animated.multiply(liquidScaleX, liquidHoldScaleX);
+  const liquidCombinedScaleY = Animated.multiply(liquidScaleY, liquidHoldScaleY);
+  const liquidGlowOpacity = Animated.add(liquidMotion, liquidHold).interpolate({
+    inputRange: [0, 1, 2],
+    outputRange: [0.08, 0.34, 0.5],
+    extrapolate: 'clamp'
+  });
   const liquidContentTranslateX = Animated.multiply(liquidTranslateX, -1);
+  const navDragEnabled = true;
   const navPanResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponderCapture: (_event, gesture) => (
@@ -2263,70 +2365,131 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {}, tabProgres
       && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.1
     ),
     onPanResponderGrant: () => {
-      dragStartIndex.current = activeIndex;
-      liquidPosition.stopAnimation();
+      navDragEpochRef.current += 1;
+      navDragActiveRef.current = true;
+      navDragConsumedPressRef.current = true;
+      const liveStartIndex = iosNav
+        ? Math.max(0, Math.min(items.length - 1, Number(liveLiquidPositionRef.current) || 0))
+        : activeIndex;
+      dragStartIndex.current = liveStartIndex;
+      navDragPosition.stopAnimation();
+      navDragBlend.stopAnimation();
+      navDragPosition.setValue(liveStartIndex);
+      navDragBlend.setValue(1);
       liquidStretch.stopAnimation();
-      setLiquidPreviewIndex(activeIndex);
+      liquidStretch.setValue(0);
+      expandLiquidCapsule();
     },
     onPanResponderMove: (_event, gesture) => {
       if (!(slotWidth > 0)) return;
       const rawIndex = dragStartIndex.current + gesture.dx / slotWidth;
-      const nextPosition = Math.max(0, Math.min(items.length - 1, rawIndex));
-      const previewIndex = Math.round(nextPosition);
-      liquidPosition.setValue(nextPosition);
-      liquidStretch.setValue(Math.min(1, 0.24 + Math.abs(gesture.dx) / (slotWidth * 1.4)));
-      setLiquidPreviewIndex((current) => current === previewIndex ? current : previewIndex);
+      const lastIndex = items.length - 1;
+      const nextPosition = rawIndex < 0
+        ? rawIndex * 0.16
+        : rawIndex > lastIndex
+          ? lastIndex + (rawIndex - lastIndex) * 0.16
+          : rawIndex;
+      navDragPosition.setValue(nextPosition);
+      liquidStretch.setValue(Math.min(1, 0.18 + Math.abs(gesture.vx) * 0.5));
     },
     onPanResponderRelease: (_event, gesture) => {
+      const dragEpoch = ++navDragEpochRef.current;
+      navDragActiveRef.current = false;
       const rawIndex = slotWidth > 0 ? dragStartIndex.current + gesture.dx / slotWidth : activeIndex;
-      const targetIndex = Math.round(Math.max(0, Math.min(items.length - 1, rawIndex)));
-      setLiquidPreviewIndex(targetIndex);
-      previousActiveIndex.current = targetIndex;
-      if (!pagerManaged) animateLiquidTo(targetIndex);
+      const projectedIndex = rawIndex + gesture.vx * 0.22;
+      const targetIndex = Math.round(Math.max(0, Math.min(items.length - 1, projectedIndex)));
+      let settleIndex = targetIndex;
       if (targetIndex !== activeIndex) {
         Keyboard.dismiss();
         const didNavigate = onNavigate(items[targetIndex][0]);
         if (didNavigate === false) {
-          setLiquidPreviewIndex(activeIndex);
-          previousActiveIndex.current = activeIndex;
-          animateLiquidTo(activeIndex);
+          settleIndex = activeIndex;
         }
-      } else if (pagerManaged) {
-        animateLiquidTo(activeIndex);
       }
+      previousActiveIndex.current = settleIndex;
+      liquidStretch.stopAnimation();
+      releaseLiquidCapsule();
+      Animated.parallel([
+        Animated.spring(navDragPosition, {
+          toValue: settleIndex,
+          stiffness: androidNav ? 250 : 220,
+          damping: androidNav ? 25 : 22,
+          mass: androidNav ? 0.82 : 0.9,
+          velocity: gesture.vx * 0.48,
+          useNativeDriver: true
+        }),
+        Animated.spring(liquidStretch, {
+          toValue: 0,
+          stiffness: androidNav ? 230 : 205,
+          damping: androidNav ? 21 : 19,
+          mass: 0.75,
+          useNativeDriver: true
+        })
+      ]).start(({ finished }) => {
+        if (!finished || navDragEpochRef.current !== dragEpoch) return;
+        navDragBlend.setValue(0);
+        navDragPosition.setValue(settleIndex);
+      });
     },
     onPanResponderTerminate: () => {
-      setLiquidPreviewIndex(activeIndex);
+      const dragEpoch = ++navDragEpochRef.current;
+      navDragActiveRef.current = false;
       previousActiveIndex.current = activeIndex;
-      animateLiquidTo(activeIndex);
+      releaseLiquidCapsule();
+      Animated.parallel([
+        Animated.spring(navDragPosition, {
+          toValue: activeIndex,
+          stiffness: androidNav ? 250 : 220,
+          damping: androidNav ? 25 : 22,
+          mass: 0.82,
+          useNativeDriver: true
+        }),
+        Animated.spring(liquidStretch, {
+          toValue: 0,
+          stiffness: 230,
+          damping: 21,
+          mass: 0.75,
+          useNativeDriver: true
+        })
+      ]).start(({ finished }) => {
+        if (!finished || navDragEpochRef.current !== dragEpoch) return;
+        navDragBlend.setValue(0);
+        navDragPosition.setValue(activeIndex);
+      });
     },
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => true
-  }), [activeIndex, animateLiquidTo, items.length, liquidPosition, liquidStretch, navWidth, onNavigate, pagerManaged, slotWidth]);
+  }), [activeIndex, androidNav, expandLiquidCapsule, iosNav, items, liquidStretch, navDragBlend, navDragPosition, navWidth, onNavigate, releaseLiquidCapsule, slotWidth]);
 
   return (
     <View
-      {...navPanResponder.panHandlers}
+      {...(navDragEnabled ? navPanResponder.panHandlers : {})}
       onLayout={({ nativeEvent }) => setNavWidth(nativeEvent.layout.width)}
-      style={[styles.bottomNav, compactNav && styles.bottomNavCompact, layout.isTablet && styles.bottomNavTablet]}
+      style={[styles.bottomNav, compactNav && styles.bottomNavCompact, layout.isTablet && styles.bottomNavTablet, androidNav && styles.bottomNavAndroid, { minHeight: responsiveNavHeight }]}
     >
       {navWidth > 0 ? (
         <Animated.View
           pointerEvents="none"
           style={[
             styles.navLiquidIndicator,
+            androidNav && styles.navLiquidIndicatorAndroid,
             {
               width: liquidIndicatorWidth,
               transform: [
                 { translateX: liquidTranslateX },
                 { translateY: liquidTranslateY },
-                { scaleX: liquidScaleX },
-                { scaleY: liquidScaleY }
+                { scaleX: liquidCombinedScaleX },
+                { scaleY: liquidCombinedScaleY }
               ]
             }
           ]}
         >
-          <BlurView intensity={94} tint="systemMaterialLight" style={StyleSheet.absoluteFillObject} />
+          {Platform.OS === 'ios' ? (
+            <BlurView intensity={94} tint="systemMaterialLight" style={StyleSheet.absoluteFillObject} />
+          ) : (
+            <View style={[StyleSheet.absoluteFillObject, styles.navLiquidAndroidGlass]} />
+          )}
+          <Animated.View pointerEvents="none" style={[styles.navLiquidDynamicGlow, { opacity: liquidGlowOpacity }]} />
           <View style={styles.navLiquidTint} />
           <Animated.View
             style={[
@@ -2335,52 +2498,64 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {}, tabProgres
             ]}
           >
             {items.map(([name, icon, activeIcon, label], index) => {
-              const active = liquidPreviewIndex === index;
               const displayLabel = compactNav ? ({ shop: 'Shop', closet: 'Closet', stylebot: 'Stylist' }[name] || label) : label;
               return (
-                <View key={`lens-${name}`} style={[styles.navLiquidMirrorItem, { width: slotWidth }]}>
-                  <View style={styles.navIconWrap}>
-                    <Ionicons name={active ? activeIcon : icon} size={active ? 24 : 23} color={active ? '#9b5658' : 'rgba(63, 57, 53, 0.82)'} />
+                <View key={`lens-${name}`} style={[styles.navLiquidMirrorItem, androidNav && styles.navLiquidMirrorItemAndroid, { width: slotWidth }]}>
+                  <View style={[styles.navIconWrap, androidNav && styles.navIconWrapAndroid]}>
+                    <Ionicons name={activeIcon} size={androidNav ? 21 : 24} color="#9b5658" />
                   </View>
-                  <Text numberOfLines={1} allowFontScaling={false} style={[styles.navText, navTextSize, styles.navLiquidMirrorText, active && styles.navTextActive]}>{displayLabel}</Text>
+                  <Text numberOfLines={1} allowFontScaling={false} style={[styles.navText, navTextSize, styles.navLiquidMirrorText, styles.navTextActive]}>{displayLabel}</Text>
                 </View>
               );
             })}
           </Animated.View>
-          <View style={styles.navLiquidInnerRing} />
+          {!androidNav ? <View style={styles.navLiquidInnerRing} /> : null}
         </Animated.View>
       ) : null}
       {items.map(([name, icon, activeIcon, label]) => {
-        const active = activeRoute === name;
+        const selected = activeRoute === name;
         const displayLabel = compactNav ? ({ shop: 'Shop', closet: 'Closet', stylebot: 'Stylist' }[name] || label) : label;
         return (
           <TouchableOpacity
             key={name}
-            activeOpacity={0.82}
+            activeOpacity={0.66}
+            delayPressIn={0}
+            hitSlop={{ top: 5, bottom: 5, left: 0, right: 0 }}
+            pressRetentionOffset={{ top: 14, bottom: 14, left: 8, right: 8 }}
             accessibilityRole="tab"
             accessibilityLabel={label}
-            accessibilityState={{ selected: active }}
-            style={styles.navItem}
+            accessibilityState={{ selected }}
+            style={[styles.navItem, androidNav && styles.navItemAndroid, { minHeight: Math.max(48, responsiveNavHeight - 6) }]}
+            onPressIn={() => {
+              navDragConsumedPressRef.current = false;
+              if (selected) expandLiquidCapsule();
+            }}
+            onPressOut={() => {
+              if (selected && !navDragActiveRef.current) releaseLiquidCapsule();
+            }}
             onPress={() => {
+              if (navDragConsumedPressRef.current) {
+                navDragConsumedPressRef.current = false;
+                return;
+              }
+              if (pagerManaged && name === activeRoute) return;
               Keyboard.dismiss();
               const nextIndex = items.findIndex(([itemName]) => itemName === name);
               if (nextIndex !== previousActiveIndex.current) {
-                setLiquidPreviewIndex(nextIndex);
                 previousActiveIndex.current = nextIndex;
                 if (!pagerManaged) animateLiquidTo(nextIndex);
               }
               const didNavigate = onNavigate(name);
               if (didNavigate === false) {
-                setLiquidPreviewIndex(activeIndex);
                 previousActiveIndex.current = activeIndex;
-                animateLiquidTo(activeIndex);
+                if (!pagerManaged) animateLiquidTo(activeIndex);
               }
             }}
           >
-            <View style={styles.navIconWrap}>
-              <Ionicons name={active ? activeIcon : icon} size={active ? 23 : 22} color={active ? '#9b5658' : 'rgba(63, 57, 53, 0.72)'} />
+            <View style={[styles.navIconWrap, androidNav && styles.navIconWrapAndroid]}>
+              <Ionicons name={icon} size={androidNav ? 20 : 22} color="rgba(63, 57, 53, 0.72)" />
             </View>
-            <Text numberOfLines={1} allowFontScaling={false} style={[styles.navText, navTextSize, active && styles.navTextActive]}>{displayLabel}</Text>
+            <Text numberOfLines={1} allowFontScaling={false} style={[styles.navText, navTextSize]}>{displayLabel}</Text>
           </TouchableOpacity>
         );
       })}
@@ -2682,7 +2857,7 @@ function ReportContentAction({ content }) {
         <Text style={styles.releaseReportText}>Report content</Text>
       </TouchableOpacity>
       <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
-        <SafeAreaView style={styles.releaseConsentOverlay}>
+        <InsetSafeAreaView style={styles.releaseConsentOverlay}>
           <View style={styles.releaseConsentCard} accessibilityViewIsModal>
             <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={styles.releaseConsentBody}>
               <Text accessibilityRole="header" style={styles.releaseConsentTitle}>Report AI content</Text>
@@ -2699,7 +2874,7 @@ function ReportContentAction({ content }) {
               <AppButton label="Close reporting" variant="secondary" disabled={state === 'submitting'} onPress={close} style={styles.releaseConsentButton} />
             </View>
           </View>
-        </SafeAreaView>
+        </InsetSafeAreaView>
       </Modal>
     </View>
   );
@@ -3151,10 +3326,10 @@ function PageBackRow({ onBack, children }) {
   );
 }
 
-function ShopTopBar({ onNavigate, user, onBack }) {
+function ShopTopBar({ onNavigate, user, onBack, hideHeader = false }) {
   return (
     <>
-      <AppHeader onNavigate={onNavigate} user={user} compact showSearch={false} />
+      {!hideHeader ? <AppHeader onNavigate={onNavigate} user={user} compact showSearch={false} /> : null}
       <PageBackRow onBack={onBack} />
     </>
   );
@@ -3190,7 +3365,7 @@ function CategoryBubble({ item, size = 'large', active = false, tablet = false }
   );
 }
 
-function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate, onOpenFromPress, onBack, user, initialScrollY = 0, onScrollPositionChange }) {
+function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate, onOpenFromPress, onBack, user, initialScrollY = 0, onScrollPositionChange, hideHeader = false }) {
   const layout = useResponsiveLayout();
   const categoryMainScrollRef = useRef(null);
   const categoryRailScrollRef = useRef(null);
@@ -3304,7 +3479,7 @@ function CategoryLandingScreen({ selectedCategory, onSelectCategory, onNavigate,
 
   return (
     <View style={styles.categoryScreen}>
-      <AppHeader onNavigate={onNavigate} user={user} compact />
+      {!hideHeader ? <AppHeader onNavigate={onNavigate} user={user} compact /> : null}
       <PageBackRow onBack={onBack}>
         <View style={styles.categorySearchDock}>
           <View style={[styles.categorySearchBox, categorySearchFocused && styles.categorySearchBoxFocused]}>
@@ -3963,10 +4138,10 @@ function HomeBeforeAfterSlider() {
   );
 }
 
-function ProductTopBar({ onNavigate, user, onBack, showSearch = true, preserveWordmarkOnNarrow = false, children }) {
+function ProductTopBar({ onNavigate, user, onBack, showSearch = true, preserveWordmarkOnNarrow = false, hideHeader = false, children }) {
   return (
     <>
-      <AppHeader onNavigate={onNavigate} user={user} compact showSearch={showSearch} preserveWordmarkOnNarrow={preserveWordmarkOnNarrow} />
+      {!hideHeader ? <AppHeader onNavigate={onNavigate} user={user} compact showSearch={showSearch} preserveWordmarkOnNarrow={preserveWordmarkOnNarrow} /> : null}
       <PageBackRow onBack={onBack}>{children}</PageBackRow>
     </>
   );
@@ -4070,7 +4245,7 @@ function AiStudioOutfitCard({ outfit, onSelect, onCompare }) {
   );
 }
 
-function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, registerTourTarget, tourFocusRequest, initialScrollY = 0, onScrollPositionChange }) {
+function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, registerTourTarget, tourFocusRequest, initialScrollY = 0, onScrollPositionChange, hideHeader = false }) {
   const layout = useResponsiveLayout();
   const homeScrollRef = useRef(null);
   const homeScrollMetricsRef = useRef({ offset: 0, viewport: 0, content: 0 });
@@ -4249,7 +4424,7 @@ function HomeScreen({ onNavigate, user, token, onAddToWishlist, wishlistIds, reg
 
   return (
     <View style={styles.homeScreen}>
-      <AppHeader onNavigate={onNavigate} user={user} compact showSearch={false} />
+      {!hideHeader ? <AppHeader onNavigate={onNavigate} user={user} compact showSearch={false} /> : null}
       <FlatList
         ref={homeScrollRef}
         style={styles.homeScroll}
@@ -4690,9 +4865,9 @@ function SearchScreen({ initial = {}, user, token, onNavigate, onBack, onAddToWi
   );
 }
 
-function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate, onOpenFromPress, onBack, onRequireAuth, onAuthExpired, onAddToWishlist, wishlistIds, initialScrollY = 0, onScrollPositionChange }) {
+function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate, onOpenFromPress, onBack, onRequireAuth, onAuthExpired, onAddToWishlist, wishlistIds, initialScrollY = 0, onScrollPositionChange, hideHeader = false }) {
   if (tryOnMode) {
-    return <StyleBotScreen user={user} setUser={setUser} token={token} onNavigate={onNavigate} onRequireAuth={onRequireAuth} />;
+    return <StyleBotScreen user={user} setUser={setUser} token={token} onNavigate={onNavigate} onRequireAuth={onRequireAuth} hideHeader={hideHeader} />;
   }
 
   const layout = useResponsiveLayout();
@@ -4865,6 +5040,19 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
     }
   }, [user, tryOnLoading, tryOnVideoLoading, tryOns, onRequireAuth, onAuthExpired]);
 
+  const openProduct = useCallback((product, event) => {
+    if (!product?.id) return;
+    const open = () => onNavigate('product', { id: product.id });
+    if (!onOpenFromPress) {
+      open();
+      return;
+    }
+    const estimatedCardWidth = layout.isTablet
+      ? 260
+      : Math.max(140, Math.floor((layout.contentWidth - 24) / Math.max(1, layout.productColumns)));
+    onOpenFromPress(event, open, { width: estimatedCardWidth, height: layout.isTablet ? 420 : 360 });
+  }, [layout.contentWidth, layout.isTablet, layout.productColumns, onNavigate, onOpenFromPress]);
+
   if (showStorefront) {
     return (
       <CategoryLandingScreen
@@ -4876,13 +5064,14 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
         user={user}
         initialScrollY={initialScrollY}
         onScrollPositionChange={onScrollPositionChange}
+        hideHeader={hideHeader}
       />
     );
   }
 
   return (
     <View style={styles.shopScreen}>
-      <ShopTopBar onNavigate={onNavigate} user={user} onBack={onBack} />
+      <ShopTopBar onNavigate={onNavigate} user={user} onBack={onBack} hideHeader={hideHeader} />
       <FlatList
         key={layout.productColumns}
         ref={shopScrollRef}
@@ -4898,7 +5087,7 @@ function ShopScreen({ initial = {}, tryOnMode, user, setUser, token, onNavigate,
             videoLoading={Boolean(tryOnVideoLoading[product.id])}
             error={tryOnErrors[product.id]}
             videoError={tryOnVideoErrors[product.id]}
-            onPress={() => onNavigate('product', { id: product.id })}
+            onPress={(event) => openProduct(product, event)}
             onAddToWishlist={onAddToWishlist}
             isWishlisted={wishlistIds?.has(product.id)}
             onTryOn={() => generateTryOn(product)}
@@ -6347,7 +6536,8 @@ function mergeWardrobeSuggestions(primary = [], secondary = []) {
   }).slice(0, 6);
 }
 
-function WardrobeTopBar({ user, onNavigate }) {
+function WardrobeTopBar({ user, onNavigate, hideHeader = false }) {
+  if (hideHeader) return null;
   return (
     <AppHeader onNavigate={onNavigate} user={user} compact showSearch={false} />
   );
@@ -6529,7 +6719,7 @@ function ClosetDetectionCard({ detection, fields, compact = false }) {
   );
 }
 
-function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, initial = {}, registerTourTarget, tourFocusRequest }) {
+function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, initial = {}, registerTourTarget, tourFocusRequest, hideHeader = false }) {
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
@@ -7178,7 +7368,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
     return (
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.addStudioScreen}>
         <ScrollView ref={addStudioScrollRef} style={styles.flex} contentContainerStyle={[styles.addStudioContent, layout.isTablet && styles.addStudioContentTablet]} {...screenScrollProps}>
-          <WardrobeTopBar user={user} onNavigate={onNavigate} />
+          <WardrobeTopBar user={user} onNavigate={onNavigate} hideHeader={hideHeader} />
 
           <Pressable accessibilityRole="button" accessibilityLabel="Back to previous page" disabled={busy === 'add'} style={[styles.addStudioBackButton, layout.isTablet && styles.addStudioBackButtonTablet, busy === 'add' && styles.disabledButton]} onPress={discardAddDraft}>
             <Ionicons name="chevron-back" size={20} color="#211f1d" />
@@ -7303,7 +7493,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
         <Modal visible={itemCategoryPickerOpen} transparent animationType="slide" onRequestClose={() => setItemCategoryPickerOpen(false)}>
           <View style={styles.wardrobePickerOverlay}>
             <Pressable accessibilityLabel="Close category picker" style={styles.wardrobePickerBackdrop} onPress={() => setItemCategoryPickerOpen(false)} />
-            <SafeAreaView style={[styles.wardrobePickerSheet, layout.isTablet && styles.wardrobePickerSheetTablet]}>
+            <InsetSafeAreaView style={[styles.wardrobePickerSheet, layout.isTablet && styles.wardrobePickerSheetTablet]}>
               <View style={styles.wardrobePickerHeader}>
                 <View style={styles.wardrobePickerHeaderCopy}>
                   <Text style={styles.wardrobePickerEyebrow}>ARCHIVE ENTRY</Text>
@@ -7329,7 +7519,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
                   })}
                 </View>
               </ScrollView>
-            </SafeAreaView>
+            </InsetSafeAreaView>
           </View>
         </Modal>
       </KeyboardAvoidingView>
@@ -7338,7 +7528,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.wardrobeScreen}>
-      <WardrobeTopBar user={user} onNavigate={onNavigate} />
+      <WardrobeTopBar user={user} onNavigate={onNavigate} hideHeader={hideHeader} />
       <ScrollView ref={wardrobeScrollRef} style={styles.flex} onLayout={(event) => measureWardrobePart('viewport', event.nativeEvent.layout.height)} contentContainerStyle={[styles.wardrobeContent, !layout.isTablet && { paddingBottom: wardrobeBottomClearance }, layout.isTablet && styles.wardrobeContentTablet]} {...screenScrollProps}>
         <View onLayout={(event) => measureWardrobePart('header', event.nativeEvent.layout.height)} style={[styles.wardrobeHeroHead, compactWardrobePreview && styles.wardrobeHeroHeadCompact, layout.isTablet && styles.wardrobeHeroHeadTablet]}>
           <View style={styles.wardrobeHeroCopy}>
@@ -7700,7 +7890,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
       <Modal visible={Boolean(wardrobePickerTab)} transparent animationType="slide" onRequestClose={() => setWardrobePickerTab(null)}>
         <View style={styles.wardrobePickerOverlay}>
           <Pressable accessibilityLabel="Close clothing picker" style={styles.wardrobePickerBackdrop} onPress={() => setWardrobePickerTab(null)} />
-          <SafeAreaView style={[styles.wardrobePickerSheet, layout.isTablet && styles.wardrobePickerSheetTablet]}>
+          <InsetSafeAreaView style={[styles.wardrobePickerSheet, layout.isTablet && styles.wardrobePickerSheetTablet]}>
             <View style={styles.wardrobePickerHeader}>
               <View style={styles.wardrobePickerHeaderCopy}>
                 <Text style={styles.wardrobePickerEyebrow}>MY WARDROBE</Text>
@@ -7729,7 +7919,7 @@ function ClosetScreen({ user, setUser, setToken, token, onNavigate, onBack, init
                 </Pressable>
               </View>}
             </ScrollView>
-          </SafeAreaView>
+          </InsetSafeAreaView>
         </View>
       </Modal>
       <ImageLightbox uri={lightbox} onClose={() => setLightbox(null)} />
@@ -8036,7 +8226,8 @@ function StyleBotScreen({
   aiStudioTryOns = {},
   setAiStudioTryOns = () => {},
   aiStudioTryOnErrors = {},
-  setAiStudioTryOnErrors = () => {}
+  setAiStudioTryOnErrors = () => {},
+  hideHeader = false
 }) {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -8389,7 +8580,7 @@ function StyleBotScreen({
 
   return (
     <View style={styles.aiStudioScreen}>
-      <ProductTopBar onNavigate={onNavigate} user={user} preserveWordmarkOnNarrow>
+      <ProductTopBar onNavigate={onNavigate} user={user} preserveWordmarkOnNarrow hideHeader={hideHeader}>
         {!isTabletLayout ? (
           <View style={styles.aiStudioMobileToolbar}>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to previous page" style={styles.aiStudioBackButton} activeOpacity={0.82} onPress={() => onBack ? onBack() : onNavigate('home')}>
@@ -11831,7 +12022,8 @@ function ImageLightbox({ uri, onClose }) {
 }
 
 function RouteTransition({ direction, width, height, origin, reduceMotion, swipeBackEnabled = false, onSwipeBack, preview, children }) {
-  const motion = routeTransitionSpec(direction, width, reduceMotion);
+  const androidMotion = Platform.OS === 'android';
+  const motion = routeTransitionSpec(direction, width, reduceMotion, Platform.OS);
   const translateX = useRef(new Animated.Value(motion.offset)).current;
   const popProgress = useRef(new Animated.Value(direction === 'pop' && !reduceMotion ? 0 : 1)).current;
   const swipingBackRef = useRef(false);
@@ -11842,10 +12034,12 @@ function RouteTransition({ direction, width, height, origin, reduceMotion, swipe
   const originDeltaY = originY - viewportHeight / 2;
   const originWidth = Math.max(36, Number(origin?.width) || 56);
   const originHeight = Math.max(36, Number(origin?.height) || 56);
-  const popStartScale = Math.max(
-    0.04,
-    Math.min(0.28, Math.sqrt((originWidth * originHeight) / (Math.max(1, width) * viewportHeight)) * 0.96)
-  );
+  const popStartScale = androidMotion
+    ? 0.82
+    : Math.max(
+        0.04,
+        Math.min(0.28, Math.sqrt((originWidth * originHeight) / (Math.max(1, width) * viewportHeight)) * 0.96)
+      );
   const popMidScale = popStartScale + (1 - popStartScale) * 0.34;
   const previewTranslateX = translateX.interpolate({
     inputRange: [0, Math.max(1, width)],
@@ -11955,8 +12149,8 @@ function RouteTransition({ direction, width, height, origin, reduceMotion, swipe
     }
     const animation = Animated.timing(popProgress, {
       toValue: 1,
-      duration: 620,
-      easing: Easing.bezier(0.18, 0.74, 0.22, 1),
+      duration: androidMotion ? 290 : 620,
+      easing: androidMotion ? Easing.bezier(0.2, 0.82, 0.25, 1) : Easing.bezier(0.18, 0.74, 0.22, 1),
       isInteraction: false,
       useNativeDriver: true
     });
@@ -11965,7 +12159,7 @@ function RouteTransition({ direction, width, height, origin, reduceMotion, swipe
       cancelAnimationFrame(frame);
       animation.stop();
     };
-  }, [direction, popProgress, reduceMotion]);
+  }, [androidMotion, direction, popProgress, reduceMotion]);
 
   const routeAnimationStyle = direction === 'pop'
     ? {
@@ -12010,9 +12204,309 @@ const LOOKMEFY_ROOT_TAB_LABELS = {
   stylebot: 'AI Stylist'
 };
 
-function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entryDirection = 'replace', entryOrigin, reduceMotion = false }) {
+const RootPagerRenderedPage = memo(function RootPagerRenderedPage({ tab, isActive, renderTab }) {
+  return (
+    <RootPagerPageContext.Provider value>
+      {renderTab(tab, { isActive })}
+    </RootPagerPageContext.Provider>
+  );
+}, (previous, next) => previous.tab === next.tab && previous.renderTab === next.renderTab);
+
+function NativeRootTabs({ activeTab, onNavigate, renderTab, tabProgress, tabPosition, tabOffset, pagerControlRef, reduceMotion = false }) {
+  const activeIndex = Math.max(0, LOOKMEFY_ROOT_TAB_ORDER.indexOf(activeTab));
+  const pagerRef = useRef(null);
+  const navigateRef = useRef(onNavigate);
+  const activeIndexRef = useRef(activeIndex);
+  const selectedIndexRef = useRef(activeIndex);
+  const nativeSelectedIndexRef = useRef(activeIndex);
+  const visualProgressRef = useRef(activeIndex);
+  const scrollOriginRef = useRef(activeIndex);
+  const programmaticTargetRef = useRef(null);
+  const programmaticCommandEpochRef = useRef(0);
+  const programmaticCommandFrameRef = useRef(null);
+  const pageScrollStateRef = useRef('idle');
+  const selectionCommitTimerRef = useRef(null);
+
+  useEffect(() => {
+    navigateRef.current = onNavigate;
+  }, [onNavigate]);
+
+  const setVisualProgress = useCallback((index) => {
+    const nextIndex = Math.max(0, Math.min(LOOKMEFY_ROOT_TAB_ORDER.length - 1, Number(index) || 0));
+    visualProgressRef.current = nextIndex;
+    scrollOriginRef.current = nextIndex;
+    tabProgress.stopAnimation();
+    tabProgress.setValue(nextIndex);
+    tabPosition?.stopAnimation?.();
+    tabOffset?.stopAnimation?.();
+    tabPosition?.setValue?.(nextIndex);
+    tabOffset?.setValue?.(0);
+  }, [tabOffset, tabPosition, tabProgress]);
+
+  const navigatePagerToIndex = useCallback((targetIndex) => {
+    const nextIndex = Math.max(0, Math.min(LOOKMEFY_ROOT_TAB_ORDER.length - 1, Number(targetIndex) || 0));
+    const nativeSelectedIndex = nativeSelectedIndexRef.current;
+    const pendingTarget = programmaticTargetRef.current;
+    const pagerIsMoving = pageScrollStateRef.current !== 'idle';
+    if (nativeSelectedIndex === nextIndex && !pagerIsMoving && (pendingTarget == null || pendingTarget === nextIndex)) {
+      setVisualProgress(nextIndex);
+      programmaticTargetRef.current = null;
+      return;
+    }
+    if (selectionCommitTimerRef.current) {
+      clearTimeout(selectionCommitTimerRef.current);
+      selectionCommitTimerRef.current = null;
+    }
+    scrollOriginRef.current = visualProgressRef.current;
+    programmaticTargetRef.current = nextIndex;
+    // Retarget rapid adjacent taps from the latest intended page. ViewPager2
+    // can reverse/continue that one-page motion cleanly without introducing
+    // the hard cut caused by setPageWithoutAnimation during an interruption.
+    const motionOriginIndex = pendingTarget == null ? nativeSelectedIndex : pendingTarget;
+    const animateAdjacentPage = !reduceMotion
+      && Math.abs(nextIndex - motionOriginIndex) === 1;
+    programmaticCommandEpochRef.current += 1;
+    if (programmaticCommandFrameRef.current) cancelAnimationFrame(programmaticCommandFrameRef.current);
+    programmaticCommandFrameRef.current = null;
+    // Send the page command in the same turn as the tap. The capsule is updated
+    // only from native pager events, so it can never visually outrun the page.
+    if (animateAdjacentPage) pagerRef.current?.setPage(nextIndex);
+    else pagerRef.current?.setPageWithoutAnimation(nextIndex);
+  }, [reduceMotion, setVisualProgress]);
+
+  useLayoutEffect(() => {
+    if (!pagerControlRef) return undefined;
+    const control = {
+      navigateToTab: (targetTab) => {
+        const targetIndex = LOOKMEFY_ROOT_TAB_ORDER.indexOf(targetTab);
+        if (targetIndex >= 0) navigatePagerToIndex(targetIndex);
+      }
+    };
+    pagerControlRef.current = control;
+    return () => {
+      if (pagerControlRef.current === control) pagerControlRef.current = null;
+    };
+  }, [navigatePagerToIndex, pagerControlRef]);
+
+  useLayoutEffect(() => {
+    activeIndexRef.current = activeIndex;
+    if (selectionCommitTimerRef.current) {
+      clearTimeout(selectionCommitTimerRef.current);
+      selectionCommitTimerRef.current = null;
+    }
+    const selectedIndex = nativeSelectedIndexRef.current;
+    if (selectedIndex === activeIndex && pageScrollStateRef.current === 'idle') {
+      setVisualProgress(activeIndex);
+      programmaticTargetRef.current = null;
+      return undefined;
+    }
+    if (programmaticTargetRef.current === activeIndex) return undefined;
+    const frame = requestAnimationFrame(() => {
+      navigatePagerToIndex(activeIndex);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeIndex, navigatePagerToIndex, setVisualProgress]);
+
+  useEffect(() => () => {
+    if (selectionCommitTimerRef.current) clearTimeout(selectionCommitTimerRef.current);
+    if (programmaticCommandFrameRef.current) cancelAnimationFrame(programmaticCommandFrameRef.current);
+  }, []);
+
+  const restoreSelectedPage = useCallback(() => {
+    const restoreIndex = activeIndexRef.current;
+    programmaticTargetRef.current = restoreIndex;
+    requestAnimationFrame(() => {
+      pagerRef.current?.setPage(restoreIndex);
+    });
+  }, []);
+
+  const commitSelectedPage = useCallback((selectedIndex) => {
+    if (selectedIndex !== selectedIndexRef.current || pageScrollStateRef.current !== 'idle') return;
+    if (selectedIndex === activeIndexRef.current) {
+      programmaticTargetRef.current = null;
+      return;
+    }
+    const targetTab = LOOKMEFY_ROOT_TAB_ORDER[selectedIndex];
+    const canNavigate = navigateRef.current?.(targetTab, { validateOnly: true });
+    if (canNavigate === false) {
+      navigateRef.current?.(targetTab);
+      restoreSelectedPage();
+      return;
+    }
+    const didNavigate = navigateRef.current?.(targetTab, { fromPager: true });
+    if (didNavigate === false) {
+      restoreSelectedPage();
+      return;
+    }
+    programmaticTargetRef.current = null;
+    AccessibilityInfo.announceForAccessibility(`${LOOKMEFY_ROOT_TAB_LABELS[targetTab]} tab`);
+  }, [restoreSelectedPage]);
+
+  const scheduleSelectedPageCommit = useCallback((selectedIndex) => {
+    if (selectionCommitTimerRef.current) clearTimeout(selectionCommitTimerRef.current);
+    // One high-refresh frame is enough now that inactive pages are memoized.
+    selectionCommitTimerRef.current = setTimeout(() => {
+      selectionCommitTimerRef.current = null;
+      commitSelectedPage(selectedIndex);
+    }, 12);
+  }, [commitSelectedPage]);
+
+  const handlePageSelected = useCallback((event) => {
+    const selectedIndex = Math.max(0, Math.min(
+      LOOKMEFY_ROOT_TAB_ORDER.length - 1,
+      Number(event?.nativeEvent?.position) || 0
+    ));
+    const programmaticTarget = programmaticTargetRef.current;
+    const selectionOrigin = Math.max(0, Math.min(
+      LOOKMEFY_ROOT_TAB_ORDER.length - 1,
+      Number(scrollOriginRef.current) || 0
+    ));
+    // The same iOS PagerView race can also produce a stale selected=0 event.
+    // A direct command must land on its requested target and a finger swipe can
+    // only settle on the origin or an adjacent page, so discard impossible
+    // selections before they overwrite the capsule's stable position.
+    if (
+      Platform.OS === 'ios'
+      && programmaticTarget == null
+      && pageScrollStateRef.current !== 'idle'
+      && Math.abs(selectedIndex - selectionOrigin) > 1.08
+    ) return;
+    nativeSelectedIndexRef.current = selectedIndex;
+    if (programmaticTarget != null && selectedIndex !== programmaticTarget) {
+      // ViewPager can emit the selection from an interrupted tap after a newer
+      // tap has already won. Never let that stale event replace the latest tab.
+      const commandEpoch = programmaticCommandEpochRef.current + 1;
+      programmaticCommandEpochRef.current = commandEpoch;
+      if (programmaticCommandFrameRef.current) cancelAnimationFrame(programmaticCommandFrameRef.current);
+      programmaticCommandFrameRef.current = requestAnimationFrame(() => {
+        programmaticCommandFrameRef.current = null;
+        if (programmaticCommandEpochRef.current !== commandEpoch || programmaticTargetRef.current !== programmaticTarget) return;
+        const animateCorrection = !reduceMotion && Math.abs(programmaticTarget - selectedIndex) === 1;
+        if (animateCorrection) pagerRef.current?.setPage(programmaticTarget);
+        else pagerRef.current?.setPageWithoutAnimation(programmaticTarget);
+      });
+      return;
+    }
+    setVisualProgress(selectedIndex);
+    selectedIndexRef.current = selectedIndex;
+    if (selectedIndex === activeIndexRef.current) programmaticTargetRef.current = null;
+    if (pageScrollStateRef.current === 'idle') scheduleSelectedPageCommit(selectedIndex);
+  }, [reduceMotion, scheduleSelectedPageCommit, setVisualProgress]);
+
+  const handleNativePageScroll = useMemo(() => Animated.event([
+    {
+      nativeEvent: {
+        position: tabPosition,
+        offset: tabOffset
+      }
+    }
+  ], { useNativeDriver: true }), [tabOffset, tabPosition]);
+
+  const handleIOSPageScroll = useCallback((event) => {
+    const position = Number(event?.nativeEvent?.position);
+    const offset = Number(event?.nativeEvent?.offset);
+    if (!Number.isFinite(position) || !Number.isFinite(offset)) return;
+
+    const lastIndex = LOOKMEFY_ROOT_TAB_ORDER.length - 1;
+    const nextProgress = Math.max(0, Math.min(lastIndex, position + offset));
+    const origin = Math.max(0, Math.min(lastIndex, Number(scrollOriginRef.current) || 0));
+    const target = programmaticTargetRef.current;
+    // PagerView 8's SwiftUI implementation can briefly emit position=0 when
+    // an iOS gesture or setPage animation is interrupted. Keep the capsule on
+    // the physically possible path instead of letting that bad sample flash it
+    // back to Home. A finger-driven pager can move at most one page per drag;
+    // a programmatic transition may move anywhere between its origin/target.
+    const expectedMin = target == null
+      ? Math.max(0, origin - 1.08)
+      : Math.max(0, Math.min(origin, target) - 0.12);
+    const expectedMax = target == null
+      ? Math.min(lastIndex, origin + 1.08)
+      : Math.min(lastIndex, Math.max(origin, target) + 0.12);
+    if (nextProgress < expectedMin || nextProgress > expectedMax) return;
+
+    visualProgressRef.current = nextProgress;
+    tabProgress.setValue(nextProgress);
+  }, [tabProgress]);
+
+  const handlePageScroll = Platform.OS === 'ios'
+    ? handleIOSPageScroll
+    : handleNativePageScroll;
+
+  const handlePageScrollStateChanged = useCallback((event) => {
+    const state = event?.nativeEvent?.pageScrollState;
+    pageScrollStateRef.current = state;
+    if (state === 'dragging') {
+      if (Platform.OS === 'ios') scrollOriginRef.current = visualProgressRef.current;
+      if (selectionCommitTimerRef.current) {
+        clearTimeout(selectionCommitTimerRef.current);
+        selectionCommitTimerRef.current = null;
+      }
+      programmaticTargetRef.current = null;
+      Keyboard.dismiss();
+    } else if (state === 'idle') {
+      const programmaticTarget = programmaticTargetRef.current;
+      const nativeSelectedIndex = nativeSelectedIndexRef.current;
+      if (programmaticTarget != null && nativeSelectedIndex !== programmaticTarget) {
+        const animateCorrection = !reduceMotion && Math.abs(programmaticTarget - nativeSelectedIndex) === 1;
+        if (animateCorrection) pagerRef.current?.setPage(programmaticTarget);
+        else pagerRef.current?.setPageWithoutAnimation(programmaticTarget);
+        return;
+      }
+      const selectedIndex = nativeSelectedIndex;
+      selectedIndexRef.current = selectedIndex;
+      setVisualProgress(selectedIndex);
+      scheduleSelectedPageCommit(selectedIndex);
+    }
+  }, [reduceMotion, scheduleSelectedPageCommit, setVisualProgress]);
+
+  if (!AnimatedNativePagerView) return null;
+  return (
+    <View style={styles.androidNativePagerFrame}>
+      <AnimatedNativePagerView
+        ref={pagerRef}
+        style={styles.androidNativePager}
+        initialPage={activeIndex}
+        orientation="horizontal"
+        layoutDirection="ltr"
+        keyboardDismissMode="on-drag"
+        overScrollMode="never"
+        offscreenPageLimit={LOOKMEFY_ROOT_TAB_ORDER.length - 1}
+        scrollEnabled
+        onPageScroll={handlePageScroll}
+        onPageSelected={handlePageSelected}
+        onPageScrollStateChanged={handlePageScrollStateChanged}
+      >
+        {LOOKMEFY_ROOT_TAB_ORDER.map((tab) => {
+          const isInteractive = tab === activeTab;
+          return (
+            <View
+              key={tab}
+              collapsable={false}
+              pointerEvents={isInteractive ? 'auto' : 'none'}
+              accessibilityElementsHidden={!isInteractive || undefined}
+              importantForAccessibility={!isInteractive ? 'no-hide-descendants' : 'auto'}
+              style={styles.androidNativePagerPage}
+            >
+              <RootPagerRenderedPage tab={tab} isActive={isInteractive} renderTab={renderTab} />
+            </View>
+          );
+        })}
+      </AnimatedNativePagerView>
+    </View>
+  );
+}
+
+function SwipeableRootTabs(props) {
+  if (AnimatedNativePagerView) {
+    return <NativeRootTabs {...props} />;
+  }
+  return <LegacySwipeableRootTabs {...props} />;
+}
+
+function LegacySwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entryDirection = 'replace', entryOrigin, reduceMotion = false }) {
   const { width, height: windowHeight } = useWindowDimensions();
-  const pageGap = 10;
+  const androidPager = Platform.OS === 'android';
+  const pageGap = androidPager ? 0 : 10;
   const pageStride = width + pageGap;
   const activeIndex = LOOKMEFY_ROOT_TAB_ORDER.indexOf(activeTab);
   const trackX = useRef(new Animated.Value(-Math.max(activeIndex, 0) * pageStride)).current;
@@ -12026,14 +12520,18 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
   const animationEpochRef = useRef(0);
   const gestureStartTrackRef = useRef(-Math.max(activeIndex, 0) * pageStride);
   const gestureStartProgressRef = useRef(Math.max(activeIndex, 0));
+  const currentTrackRef = useRef(-Math.max(activeIndex, 0) * pageStride);
+  const currentProgressRef = useRef(Math.max(activeIndex, 0));
   const entryOriginX = Math.max(18, Math.min(Math.max(18, width - 18), Number(entryOrigin?.x) || width / 2));
   const entryOriginY = Math.max(18, Math.min(Math.max(18, windowHeight - 18), Number(entryOrigin?.y) || windowHeight * 0.72));
   const entryOriginWidth = Math.max(36, Number(entryOrigin?.width) || 56);
   const entryOriginHeight = Math.max(36, Number(entryOrigin?.height) || 56);
-  const entryStartScale = Math.max(
-    0.04,
-    Math.min(0.28, Math.sqrt((entryOriginWidth * entryOriginHeight) / (Math.max(1, width) * Math.max(1, windowHeight))) * 0.96)
-  );
+  const entryStartScale = androidPager
+    ? 0.9
+    : Math.max(
+        0.04,
+        Math.min(0.28, Math.sqrt((entryOriginWidth * entryOriginHeight) / (Math.max(1, width) * Math.max(1, windowHeight))) * 0.96)
+      );
   const entryMidScale = entryStartScale + (1 - entryStartScale) * 0.34;
   const entryScale = entryProgress.interpolate({
     inputRange: [0, 0.32, 0.74, 1],
@@ -12070,8 +12568,61 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
   )));
 
   useEffect(() => {
+    if (!androidPager) return undefined;
+    let cancelled = false;
+    let preloadTimer = null;
+    const preloadOrder = LOOKMEFY_ROOT_TAB_ORDER
+      .map((tab, index) => ({ tab, distance: Math.abs(index - activeIndex) }))
+      .sort((left, right) => left.distance - right.distance)
+      .map(({ tab }) => tab);
+    let preloadIndex = 0;
+    const preloadNext = () => {
+      if (cancelled || preloadIndex >= preloadOrder.length) return;
+      const tab = preloadOrder[preloadIndex];
+      preloadIndex += 1;
+      setMountedTabs((current) => {
+        if (current.includes(tab)) return current;
+        const next = new Set(current);
+        next.add(tab);
+        return LOOKMEFY_ROOT_TAB_ORDER.filter((candidate) => next.has(candidate));
+      });
+      preloadTimer = setTimeout(preloadNext, 90);
+    };
+    const canUseIdleCallback = typeof globalThis.requestIdleCallback === 'function';
+    const preloadTask = canUseIdleCallback
+      ? globalThis.requestIdleCallback(() => {
+          preloadTimer = setTimeout(preloadNext, 80);
+        }, { timeout: 600 })
+      : setTimeout(() => {
+          preloadTimer = setTimeout(preloadNext, 140);
+        }, 180);
+    return () => {
+      cancelled = true;
+      if (canUseIdleCallback && typeof globalThis.cancelIdleCallback === 'function') {
+        globalThis.cancelIdleCallback(preloadTask);
+      } else {
+        clearTimeout(preloadTask);
+      }
+      if (preloadTimer) clearTimeout(preloadTimer);
+    };
+  }, [activeIndex, androidPager]);
+
+  useEffect(() => {
     navigateRef.current = onNavigate;
   }, [onNavigate]);
+
+  useEffect(() => {
+    const trackListener = trackX.addListener(({ value }) => {
+      if (Number.isFinite(value)) currentTrackRef.current = value;
+    });
+    const progressListener = tabProgress.addListener(({ value }) => {
+      if (Number.isFinite(value)) currentProgressRef.current = value;
+    });
+    return () => {
+      trackX.removeListener(trackListener);
+      tabProgress.removeListener(progressListener);
+    };
+  }, [tabProgress, trackX]);
 
   const retainNeighborhood = useCallback((centerIndex) => {
     if (centerIndex < 0) return;
@@ -12127,14 +12678,14 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
       const entryAnimation = Animated.parallel([
         Animated.timing(entryProgress, {
           toValue: 1,
-          duration: 620,
-          easing: Easing.bezier(0.18, 0.74, 0.22, 1),
+          duration: androidPager ? 290 : 620,
+          easing: androidPager ? Easing.bezier(0.2, 0.82, 0.25, 1) : Easing.bezier(0.18, 0.74, 0.22, 1),
           isInteraction: false,
           useNativeDriver: true
         }),
         Animated.timing(tabProgress, {
           toValue: activeIndex,
-          duration: 210,
+          duration: androidPager ? 145 : 210,
           easing: Easing.bezier(0.22, 0.72, 0.22, 1),
           isInteraction: false,
           useNativeDriver: true
@@ -12160,14 +12711,14 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
       const jumpAnimation = Animated.parallel([
         Animated.timing(directJumpProgress, {
           toValue: 1,
-          duration: 210,
+          duration: androidPager ? 145 : 210,
           easing: Easing.bezier(0.2, 0.82, 0.25, 1),
           isInteraction: false,
           useNativeDriver: true
         }),
         Animated.timing(tabProgress, {
           toValue: activeIndex,
-          duration: 180,
+          duration: androidPager ? 130 : 180,
           easing: Easing.bezier(0.2, 0.82, 0.25, 1),
           isInteraction: false,
           useNativeDriver: true
@@ -12191,7 +12742,7 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
       pageChrome.setValue(0);
       transitionInProgressRef.current = false;
     } else {
-      const duration = 186;
+      const duration = androidPager ? 150 : 186;
       const easing = Easing.bezier(0.2, 0.82, 0.25, 1);
       transitionInProgressRef.current = true;
       pageChrome.setValue(0);
@@ -12216,7 +12767,7 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
     }
     previousActiveIndexRef.current = activeIndex;
     pendingIndexRef.current = null;
-  }, [activeIndex, directJumpProgress, entryDirection, entryProgress, pageChrome, pageStride, reduceMotion, retainNeighborhood, retainRange, tabProgress, trackX]);
+  }, [activeIndex, androidPager, directJumpProgress, entryDirection, entryProgress, pageChrome, pageStride, reduceMotion, retainNeighborhood, retainRange, tabProgress, trackX]);
 
   const returnToActive = useCallback((releaseProgress = 0.25) => {
     if (activeIndex < 0) return;
@@ -12240,7 +12791,7 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
     const normalizedProgress = Number.isFinite(releaseProgress)
       ? Math.max(0, Math.min(1, releaseProgress))
       : 0.25;
-    const duration = Math.round(140 + normalizedProgress * 45);
+    const duration = Math.round((androidPager ? 105 : 140) + normalizedProgress * (androidPager ? 35 : 45));
     const easing = Easing.bezier(0.22, 0.72, 0.22, 1);
     transitionInProgressRef.current = true;
     pageChrome.setValue(0);
@@ -12262,13 +12813,22 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
     ]).start(({ finished }) => {
       if (animationEpochRef.current === animationEpoch && finished) transitionInProgressRef.current = false;
     });
-  }, [activeIndex, directJumpProgress, entryProgress, pageChrome, pageStride, reduceMotion, tabProgress, trackX]);
+  }, [activeIndex, androidPager, directJumpProgress, entryProgress, pageChrome, pageStride, reduceMotion, tabProgress, trackX]);
 
-  const navigateByDirection = useCallback((direction, releaseProgress = 0, releaseVelocity = 0) => {
+  const navigateByDirection = useCallback((direction, releaseProgress = 0, releaseVelocity = 0, visualTargetIndex = null, visualReleaseIndex = null) => {
     if (activeIndex < 0) return;
-    const targetIndex = activeIndex + direction;
+    const targetIndex = Number.isInteger(visualTargetIndex)
+      ? visualTargetIndex
+      : activeIndex + direction;
     const targetTab = LOOKMEFY_ROOT_TAB_ORDER[targetIndex];
     if (!targetTab) return;
+    if (targetIndex === activeIndex) {
+      const visualDistance = Number.isFinite(visualReleaseIndex)
+        ? Math.abs(visualReleaseIndex - activeIndex)
+        : releaseProgress;
+      returnToActive(Math.min(1, visualDistance));
+      return;
+    }
 
     const animationEpoch = ++animationEpochRef.current;
     transitionInProgressRef.current = true;
@@ -12308,11 +12868,12 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
 
     const normalizedProgress = Math.max(0, Math.min(1, Number(releaseProgress) || 0));
     const normalizedVelocity = Math.max(0, Math.min(1.5, Number(releaseVelocity) || 0));
-    const remainingDistance = 1 - normalizedProgress;
-    const duration = Math.round(Math.max(
-      165,
-      Math.min(225, 150 + remainingDistance * 90 - normalizedVelocity * 20)
-    ));
+    const remainingDistance = androidPager && Number.isFinite(visualReleaseIndex)
+      ? Math.max(0, Math.min(1, Math.abs(targetIndex - visualReleaseIndex)))
+      : 1 - normalizedProgress;
+    const duration = Math.round(androidPager
+      ? Math.max(105, Math.min(155, 88 + remainingDistance * 76 - normalizedVelocity * 14))
+      : Math.max(165, Math.min(225, 150 + remainingDistance * 90 - normalizedVelocity * 20)));
     const easing = Easing.bezier(0.22, 0.72, 0.22, 1);
     pageChrome.setValue(0);
     Animated.parallel([
@@ -12337,7 +12898,7 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
       retainNeighborhood(targetIndex);
     });
     commitNavigation();
-  }, [activeIndex, directJumpProgress, entryProgress, pageChrome, pageStride, reduceMotion, retainNeighborhood, returnToActive, tabProgress, trackX]);
+  }, [activeIndex, androidPager, directJumpProgress, entryProgress, pageChrome, pageStride, reduceMotion, retainNeighborhood, returnToActive, tabProgress, trackX]);
 
   const panResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => false,
@@ -12355,14 +12916,18 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
       animationEpochRef.current += 1;
       transitionInProgressRef.current = false;
       pendingIndexRef.current = null;
-      gestureStartTrackRef.current = -activeIndex * pageStride;
-      gestureStartProgressRef.current = activeIndex;
-      trackX.stopAnimation((value) => {
-        if (Number.isFinite(value)) gestureStartTrackRef.current = value;
-      });
-      tabProgress.stopAnimation((value) => {
-        if (Number.isFinite(value)) gestureStartProgressRef.current = value;
-      });
+      const frozenTrack = Number.isFinite(currentTrackRef.current)
+        ? currentTrackRef.current
+        : -activeIndex * pageStride;
+      const frozenProgress = Number.isFinite(currentProgressRef.current)
+        ? currentProgressRef.current
+        : activeIndex;
+      trackX.stopAnimation();
+      tabProgress.stopAnimation();
+      trackX.setValue(frozenTrack);
+      tabProgress.setValue(frozenProgress);
+      gestureStartTrackRef.current = frozenTrack;
+      gestureStartProgressRef.current = frozenProgress;
       pageChrome.stopAnimation();
       entryProgress.stopAnimation();
       directJumpProgress.stopAnimation();
@@ -12386,21 +12951,33 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
       const crossedDistance = Math.abs(gesture.dx) >= distanceThreshold;
       const quickFlick = Math.abs(gesture.vx) >= 0.42 && Math.abs(gesture.dx) >= 18;
       const direction = gesture.dx < 0 ? 1 : -1;
-      const hasTarget = Boolean(LOOKMEFY_ROOT_TAB_ORDER[activeIndex + direction]);
+      const clampedDistance = Math.max(-pageStride, Math.min(pageStride, gesture.dx));
+      const visualReleaseIndex = Math.max(0, Math.min(
+        LOOKMEFY_ROOT_TAB_ORDER.length - 1,
+        gestureStartProgressRef.current - (clampedDistance / pageStride)
+      ));
+      const visualTargetIndex = androidPager
+        ? direction > 0
+          ? Math.ceil(visualReleaseIndex - 0.001)
+          : Math.floor(visualReleaseIndex + 0.001)
+        : activeIndex + direction;
+      const hasTarget = Boolean(LOOKMEFY_ROOT_TAB_ORDER[visualTargetIndex]);
       if (!hasTarget || (!crossedDistance && !quickFlick)) {
-        returnToActive(Math.min(1, Math.abs(gesture.dx) / pageStride));
+        returnToActive(Math.min(1, Math.abs(visualReleaseIndex - activeIndex)));
         return;
       }
       navigateByDirection(
         direction,
         Math.min(1, Math.abs(gesture.dx) / pageStride),
-        Math.abs(gesture.vx)
+        Math.abs(gesture.vx),
+        visualTargetIndex,
+        visualReleaseIndex
       );
     },
     onPanResponderTerminate: () => returnToActive(0.25),
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => false
-  }), [activeIndex, directJumpProgress, entryProgress, navigateByDirection, pageChrome, pageStride, returnToActive, tabProgress, trackX, width]);
+  }), [activeIndex, androidPager, directJumpProgress, entryProgress, navigateByDirection, pageChrome, pageStride, returnToActive, tabProgress, trackX, width]);
 
   const renderStartIndex = previousActiveIndexRef.current;
   const firstRenderIndex = Math.min(renderStartIndex, activeIndex);
@@ -12411,7 +12988,7 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
   const renderedTabs = LOOKMEFY_ROOT_TAB_ORDER.filter((tab) => mountedTabs.includes(tab) || transitionTabs.includes(tab) || tab === activeTab);
   const pageCornerRadius = pageChrome.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 28],
+    outputRange: [0, androidPager ? 0 : 28],
     extrapolate: 'clamp'
   });
 
@@ -12453,9 +13030,7 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
                 }
               ]}
             >
-              <RootPagerPageContext.Provider value>
-                {renderTab(tab, { isActive: isInteractive })}
-              </RootPagerPageContext.Provider>
+              <RootPagerRenderedPage tab={tab} isActive={isInteractive} renderTab={renderTab} />
             </Animated.View>
           );
         })}
@@ -12468,14 +13043,26 @@ function SwipeableRootTabs({ activeTab, onNavigate, renderTab, tabProgress, entr
 function LookmefyApp() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
-  const responsiveLayout = useMemo(() => responsiveLayoutForWindow(width), [width]);
+  const responsiveLayout = useMemo(() => responsiveLayoutForWindow(width, height), [height, width]);
   const [fontsLoaded, fontLoadError] = useFonts(fontAssets);
   const [routeStack, setRouteStack] = useState([{ name: 'home', params: {} }]);
   const rootTabProgress = useRef(new Animated.Value(0)).current;
+  const rootTabPosition = useRef(new Animated.Value(0)).current;
+  const rootTabOffset = useRef(new Animated.Value(0)).current;
+  const rootTabVisualProgress = useMemo(
+    () => NativePagerViewAvailable && Platform.OS !== 'ios'
+      ? Animated.add(rootTabPosition, rootTabOffset)
+      : rootTabProgress,
+    [rootTabOffset, rootTabPosition, rootTabProgress]
+  );
+  const rootPagerControlRef = useRef(null);
   const routeDirection = useRef('replace');
   const routeTransitionOriginRef = useRef({ x: width / 2, y: height * 0.72, width: 56, height: 56 });
   const authBackHandlerRef = useRef(null);
-  const [reduceMotion, setReduceMotion] = useState(true);
+  // Start with motion enabled so the first interaction cannot hard-cut while
+  // the async accessibility preference is loading. The resolved preference
+  // still takes over immediately for users who request reduced motion.
+  const [reduceMotion, setReduceMotion] = useState(false);
   useEffect(() => {
     let active = true;
     AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
@@ -12537,17 +13124,22 @@ function LookmefyApp() {
   const currentRoute = normalizeRoute(routeStack[routeStack.length - 1]?.name, routeStack[routeStack.length - 1]?.params);
   const routeParamsKey = JSON.stringify(currentRoute.params || {});
   const currentRouteKey = `${currentRoute.name}:${routeParamsKey}`;
+  const routeStackRef = useRef(routeStack);
+  const currentRouteRef = useRef(currentRoute);
+  routeStackRef.current = routeStack;
+  currentRouteRef.current = currentRoute;
   const rememberCurrentScrollY = useCallback((y) => {
     scrollPositionsRef.current[currentRouteKey] = Math.max(0, Number(y) || 0);
   }, [currentRouteKey]);
   const registerTourTarget = useCallback((key, rect) => {
     if (!key || !rect) return;
+    const activeRoute = currentRouteRef.current;
     const nextRect = {
       x: Number(rect.x) || 0,
       y: Number(rect.y) || 0,
       width: Number(rect.width) || 0,
       height: Number(rect.height) || 0,
-      route: currentRoute.name
+      route: activeRoute.name
     };
     if (nextRect.width <= 0 || nextRect.height <= 0) return;
     setTourTargetRects((current) => {
@@ -12564,20 +13156,22 @@ function LookmefyApp() {
       }
       return { ...current, [key]: nextRect };
     });
-  }, [currentRoute.name, routeParamsKey]);
+  }, []);
   const navigate = useCallback((name, params = {}, navigationOptions = {}) => {
     Keyboard.dismiss();
     const next = normalizeRoute(name, params);
-    const sourceIsRootTab = LOOKMEFY_ROOT_TAB_ORDER.includes(currentRoute.name)
-      && Object.keys(currentRoute.params || {}).length === 0;
-    const useButtonPop = sourceIsRootTab && navigationOptions.transition !== 'header';
+    const sourceRoute = currentRouteRef.current;
+    const sourceIsRootTab = LOOKMEFY_ROOT_TAB_ORDER.includes(sourceRoute.name)
+      && Object.keys(sourceRoute.params || {}).length === 0;
+    const opensProduct = next.name === 'product' && Boolean(next.params?.id);
+    const useButtonPop = (sourceIsRootTab || opensProduct) && navigationOptions.transition !== 'header';
     routeDirection.current = useButtonPop ? 'pop' : 'forward';
     setRouteStack((current) => {
       const active = normalizeRoute(current[current.length - 1]?.name, current[current.length - 1]?.params);
       if (active.name === next.name && JSON.stringify(active.params || {}) === JSON.stringify(next.params || {})) return current;
       return [...current, next];
     });
-  }, [currentRoute.name, routeParamsKey]);
+  }, []);
   const openRouteFromPress = useCallback((event, open, fallbackBounds = {}) => {
     if (typeof open !== 'function') return;
     const nativeEvent = event?.nativeEvent || {};
@@ -12682,12 +13276,23 @@ function LookmefyApp() {
       return false;
     }
     if (options.validateOnly) return true;
+    const activeRoute = currentRouteRef.current;
+    const currentIsRootTab = LOOKMEFY_ROOT_TAB_ORDER.includes(activeRoute.name)
+      && Object.keys(activeRoute.params || {}).length === 0;
+    if (NativePagerViewAvailable && currentIsRootTab && !options.fromPager) {
+      // The native pager owns root-tab selection. Committing the route before
+      // onPageSelected makes heavy pages and the capsule visibly desynchronise.
+      rootPagerControlRef.current?.navigateToTab?.(targetTab);
+      return true;
+    }
+    if (!options.fromPager) rootPagerControlRef.current?.navigateToTab?.(targetTab);
     replaceRoute(targetTab);
     return true;
   }, [replaceRoute, requestAuth, user]);
   const goBack = useCallback(() => {
     Keyboard.dismiss();
-    if (routeStack.length > 1) {
+    const activeStack = routeStackRef.current;
+    if (activeStack.length > 1) {
       routeDirection.current = 'back';
       setRouteStack((current) => {
         if (current.length <= 1) return current;
@@ -12695,14 +13300,14 @@ function LookmefyApp() {
       });
       return true;
     }
-    const active = normalizeRoute(routeStack[0]?.name, routeStack[0]?.params);
+    const active = normalizeRoute(activeStack[0]?.name, activeStack[0]?.params);
     if (active.name !== 'home') {
       routeDirection.current = 'back';
       setRouteStack([normalizeRoute('home')]);
       return true;
     }
     return false;
-  }, [routeStack]);
+  }, []);
   const completeSwipeBack = useCallback(() => {
     const didGoBack = goBack();
     if (didGoBack) routeDirection.current = 'replace';
@@ -13006,25 +13611,33 @@ function LookmefyApp() {
     showOnboardingStep(onboardingStep - 1);
   }, [onboardingStep, showOnboardingStep]);
 
-  const renderRootTab = useCallback((tab, { isActive = false } = {}) => {
+  const renderRootTab = useCallback((tab) => {
     const tabRouteKey = `${tab}:{}`;
     const initialScrollY = scrollPositionsRef.current[tabRouteKey] || 0;
     const onScrollPositionChange = (y) => {
       scrollPositionsRef.current[tabRouteKey] = Math.max(0, Number(y) || 0);
     };
-    const activeTourTarget = isActive ? registerTourTarget : () => {};
-    const activeTourFocus = isActive ? tourFocusRequest : null;
+    const activeTourTarget = (key, rect) => {
+      const activeRoute = currentRouteRef.current;
+      if (activeRoute.name !== tab || Object.keys(activeRoute.params || {}).length > 0) return;
+      registerTourTarget(key, rect);
+    };
+    const activeRouteAtRender = currentRouteRef.current;
+    const activeTourFocus = activeRouteAtRender.name === tab
+      && Object.keys(activeRouteAtRender.params || {}).length === 0
+      ? tourFocusRequest
+      : null;
     switch (tab) {
       case 'home':
-        return <HomeScreen onNavigate={guardedNavigate} user={user} token={token} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} initialScrollY={initialScrollY} onScrollPositionChange={onScrollPositionChange} />;
+        return <HomeScreen onNavigate={guardedNavigate} user={user} token={token} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} initialScrollY={initialScrollY} onScrollPositionChange={onScrollPositionChange} hideHeader />;
       case 'shop':
-        return <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onOpenFromPress={openRouteFromPress} onBack={null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={initialScrollY} onScrollPositionChange={onScrollPositionChange} />;
+        return <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onOpenFromPress={openRouteFromPress} onBack={null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={initialScrollY} onScrollPositionChange={onScrollPositionChange} hideHeader />;
       case 'tryon':
         return <CustomTryOnScreen initial={{}} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={null} refreshUser={refreshUser} />;
       case 'closet':
-        return <ClosetScreen initial={{}} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={null} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} />;
+        return <ClosetScreen initial={{}} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={null} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} hideHeader />;
       case 'stylebot':
-        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={goBack} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioActiveChatId={aiStudioActiveChatId} setAiStudioActiveChatId={setAiStudioActiveChatId} aiStudioChatHistory={aiStudioChatHistory} setAiStudioChatHistory={setAiStudioChatHistory} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} />;
+        return <StyleBotScreen user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={goBack} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} aiStudioConversationId={aiStudioConversationId} setAiStudioConversationId={setAiStudioConversationId} aiStudioMessages={aiStudioMessages} setAiStudioMessages={setAiStudioMessages} aiStudioActiveChatId={aiStudioActiveChatId} setAiStudioActiveChatId={setAiStudioActiveChatId} aiStudioChatHistory={aiStudioChatHistory} setAiStudioChatHistory={setAiStudioChatHistory} aiStudioTryOns={aiStudioTryOns} setAiStudioTryOns={setAiStudioTryOns} aiStudioTryOnErrors={aiStudioTryOnErrors} setAiStudioTryOnErrors={setAiStudioTryOnErrors} hideHeader />;
       default:
         return null;
     }
@@ -13038,7 +13651,7 @@ function LookmefyApp() {
       case 'home':
         return <HomeScreen onNavigate={guardedNavigate} user={user} token={token} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} registerTourTarget={registerTourTarget} tourFocusRequest={tourFocusRequest} initialScrollY={scrollPositionsRef.current[currentRouteKey] || 0} onScrollPositionChange={rememberCurrentScrollY} />;
       case 'shop':
-        return <ShopScreen initial={routeParams} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={scrollPositionsRef.current[currentRouteKey] || 0} onScrollPositionChange={rememberCurrentScrollY} />;
+        return <ShopScreen initial={routeParams} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onOpenFromPress={openRouteFromPress} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={scrollPositionsRef.current[currentRouteKey] || 0} onScrollPositionChange={rememberCurrentScrollY} />;
       case 'search':
         return <SearchScreen initial={routeParams} user={user} token={token} onNavigate={guardedNavigate} onBack={goBack} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'tryon':
@@ -13062,7 +13675,7 @@ function LookmefyApp() {
       case 'orders':
         return user ? <OrdersScreen onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} token={token} user={user} /> : <AuthScreen mode="login" setUser={setUser} setToken={setToken} onNavigate={navigate} onBack={goBack} onExit={exitAuthToHome} registerBackHandler={registerAuthBackHandler} />;
       case 'product':
-        return routeParams.id ? <ProductScreen id={routeParams.id} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={scrollPositionsRef.current[currentRouteKey] || 0} onScrollPositionChange={rememberCurrentScrollY} />;
+        return routeParams.id ? <ProductScreen id={routeParams.id} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onOpenFromPress={openRouteFromPress} onBack={routeStack.length > 1 ? goBack : null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={scrollPositionsRef.current[currentRouteKey] || 0} onScrollPositionChange={rememberCurrentScrollY} />;
       case 'checkout':
         return user && routeParams.productId ? <CheckoutScreen productId={routeParams.productId} user={user} onNavigate={guardedNavigate} onBack={goBack} /> : <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onBack={goBack} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'signup':
@@ -13076,7 +13689,7 @@ function LookmefyApp() {
       default:
         return <InfoScreen page="missing" user={user} onNavigate={navigate} onBack={routeStack.length > 1 ? goBack : null} />;
     }
-  }, [currentRoute.name, routeParamsKey, currentRouteKey, user, token, navigate, replaceRoute, guardedNavigate, requestAuth, requireFreshLogin, addToWishlist, removeFromWishlist, collections, wishlistIds, wishlistProducts, wishlistReady, wishlistLoadError, wishlistMutatingId, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioActiveChatId, aiStudioChatHistory, aiStudioTryOns, aiStudioTryOnErrors, refreshUser, routeStack.length, goBack, exitAuthToHome, registerAuthBackHandler, rememberCurrentScrollY]);
+  }, [currentRoute.name, routeParamsKey, currentRouteKey, user, token, navigate, replaceRoute, guardedNavigate, openRouteFromPress, requestAuth, requireFreshLogin, addToWishlist, removeFromWishlist, collections, wishlistIds, wishlistProducts, wishlistReady, wishlistLoadError, wishlistMutatingId, registerTourTarget, tourFocusRequest, aiStudioConversationId, aiStudioMessages, aiStudioActiveChatId, aiStudioChatHistory, aiStudioTryOns, aiStudioTryOnErrors, refreshUser, routeStack.length, goBack, exitAuthToHome, registerAuthBackHandler, rememberCurrentScrollY]);
 
   const latestScreenRef = useRef({ key: currentRouteKey, routeName: currentRoute.name, screen });
   const previousScreenPreviewRef = useRef(null);
@@ -13092,12 +13705,12 @@ function LookmefyApp() {
 
   if (!ready || (!fontsLoaded && !fontLoadError)) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <InsetSafeAreaView style={styles.safe}>
         <View style={styles.boot}>
           <ActivityIndicator size="small" color="#9b5658" />
           <Text style={styles.bootText}>Loading Lookmefy</Text>
         </View>
-      </SafeAreaView>
+      </InsetSafeAreaView>
     );
   }
 
@@ -13146,18 +13759,11 @@ function LookmefyApp() {
     <ResponsiveLayoutContext.Provider value={responsiveLayout}>
     <PrivateMediaSessionContext.Provider key={String(user?.id || user?._id || 'guest')} value={user ? token || '' : ''}>
     <ContentReportingContext.Provider value={String(user?.id || user?._id || '')}>
-<<<<<<< HEAD
-    <InsetSafeAreaView edges={showBottomNav ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']} style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, checkoutRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe, !welcomeRoute && styles.surfaceRoot]} onAccessibilityEscape={handleBack}>
-      {!welcomeRoute ? <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, aiStudioRoute && styles.aiStudioBackdrop]}>
-=======
     <InsetSafeAreaView
       edges={showBottomNav ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']}
       style={[styles.safe, welcomeRoute && styles.authEntrySafe, signupRoute && styles.signupSafe, loginRoute && styles.loginSafe, homeRoute && styles.homeSafe, shopRoute && styles.shopSafe, searchRoute && styles.shopSafe, closetRoute && styles.wardrobeSafe, productRoute && styles.productSafe, checkoutRoute && styles.productSafe, aiStudioRoute && styles.aiStudioSafe, tokensRoute && styles.creditsSafe, profileRoute && styles.profileSafe, accountChildRoute && styles.profileSafe, !welcomeRoute && styles.surfaceRoot]}
       onAccessibilityEscape={handleBack}
       onTouchStart={(event) => {
-        const capturesRootButton = LOOKMEFY_ROOT_TAB_ORDER.includes(currentRoute.name)
-          && Object.keys(currentRoute.params || {}).length === 0;
-        if (!capturesRootButton) return;
         const pageX = Number(event?.nativeEvent?.pageX);
         const pageY = Number(event?.nativeEvent?.pageY);
         routeTransitionOriginRef.current = {
@@ -13179,19 +13785,23 @@ function LookmefyApp() {
         });
       }}
     >
-      {!welcomeRoute ? <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
->>>>>>> edfa2871443bfac26006fdc914c02cbe72cd2805
+      {!welcomeRoute ? <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, aiStudioRoute && styles.aiStudioBackdrop]}>
         <View style={styles.surfaceGlowTop} />
         <View style={styles.surfaceGlowBottom} />
       </View> : null}
       <StatusBar style={welcomeRoute ? 'light' : 'dark'} />
-      {rootTabRoute ? (
-        <View style={[styles.rootPagerHeaderFrame, responsiveLayout.contentFrameStyle]}>
-          <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={false} />
-        </View>
-      ) : authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || checkoutRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : (
-        <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={!tryOnRoute} />
-      )}
+      {Platform.OS === 'ios' ? (!authOnlyRoute ? (
+          <View style={[styles.rootPagerHeaderFrame, responsiveLayout.contentFrameStyle]}>
+            <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={false} />
+          </View>
+        ) : null) : rootTabRoute ? (
+          <View style={[styles.rootPagerHeaderFrame, responsiveLayout.contentFrameStyle]}>
+            <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={false} />
+          </View>
+        ) : authOnlyRoute || homeRoute || shopRoute || searchRoute || closetRoute || productRoute || checkoutRoute || aiStudioRoute || tokensRoute || profileRoute || accountChildRoute ? null : (
+          <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={!tryOnRoute} />
+        )}
+      <PersistentAppHeaderContext.Provider value={Platform.OS === 'ios'}>
       <View style={[styles.content, styles.surfaceTransparent, responsiveLayout.contentFrameStyle]}>
         {retainedRootRoute ? (
           <View
@@ -13200,13 +13810,8 @@ function LookmefyApp() {
             importantForAccessibility={rootTabRoute ? 'auto' : 'no-hide-descendants'}
             style={rootTabRoute ? styles.retainedRootTabsActive : styles.retainedRootTabsParked}
           >
-            {!rootTabRoute ? (
-              <View style={styles.rootPagerHeaderFrame}>
-                <AppHeader onNavigate={guardedNavigate} user={user} compact showSearch={false} />
-              </View>
-            ) : null}
             <View style={styles.flex}>
-              <SwipeableRootTabs activeTab={retainedRootRoute.name} onNavigate={navigateRootTab} renderTab={renderRootTab} tabProgress={rootTabProgress} entryDirection={routeDirection.current} entryOrigin={routeTransitionOriginRef.current} reduceMotion={reduceMotion} />
+              <SwipeableRootTabs activeTab={retainedRootRoute.name} onNavigate={navigateRootTab} renderTab={renderRootTab} tabProgress={rootTabProgress} tabPosition={rootTabPosition} tabOffset={rootTabOffset} pagerControlRef={rootPagerControlRef} entryDirection={routeDirection.current} entryOrigin={routeTransitionOriginRef.current} reduceMotion={reduceMotion} />
             </View>
           </View>
         ) : null}
@@ -13232,26 +13837,38 @@ function LookmefyApp() {
           </RouteTransition>
         ) : null}
       </View>
+      </PersistentAppHeaderContext.Provider>
       {/* Preserve the tab labels across full-screen routes and keyboard transitions. */}
       <View
         pointerEvents={showBottomNav ? 'auto' : 'none'}
         accessibilityElementsHidden={!showBottomNav}
         importantForAccessibility={showBottomNav ? 'auto' : 'no-hide-descendants'}
-        style={[styles.bottomNavFrame, { display: showBottomNav ? 'flex' : 'none', bottom: Platform.OS === 'ios' ? Math.max(insets.bottom - 10, 10) : Math.max(insets.bottom, 10) }]}
+        style={[
+          styles.bottomNavFrame,
+          Platform.OS === 'android' && styles.bottomNavFrameAndroid,
+          {
+            display: showBottomNav ? 'flex' : 'none',
+            bottom: Platform.OS === 'ios' ? Math.max(insets.bottom - 10, 10) : Math.max(insets.bottom, 8),
+            paddingHorizontal: responsiveLayout.isTablet ? 18 : responsiveLayout.isNarrowPhone ? 6 : responsiveLayout.isWidePhone ? 16 : 10
+          }
+        ]}
       >
-        <View style={styles.bottomNavGlass}>
-          <View style={styles.bottomNavGlassClip}>
-            <BlurView
-              pointerEvents="none"
-              intensity={Platform.OS === 'ios' ? 78 : 38}
-              tint={Platform.OS === 'ios' ? 'systemUltraThinMaterialLight' : 'dark'}
-              blurReductionFactor={2.5}
-              experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : 'none'}
-              style={StyleSheet.absoluteFillObject}
-            />
+        <View style={[styles.bottomNavGlass, Platform.OS === 'android' && styles.bottomNavGlassAndroid]}>
+          <View pointerEvents="none" style={[styles.bottomNavGlassClip, styles.bottomNavGlassBackdropClip, Platform.OS === 'android' && styles.bottomNavGlassClipAndroid]}>
+            {Platform.OS === 'ios' ? (
+              <BlurView
+                pointerEvents="none"
+                intensity={78}
+                tint="systemUltraThinMaterialLight"
+                blurReductionFactor={2.5}
+                style={StyleSheet.absoluteFillObject}
+              />
+            ) : (
+              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, styles.bottomNavAndroidBackdrop]} />
+            )}
             <View pointerEvents="none" style={styles.bottomNavGlassTint} />
-            <BottomNav route={bottomNavRoute} onNavigate={navigateRootTab} tabProgress={rootTabProgress} pagerManaged={rootTabRoute} />
           </View>
+          <BottomNav route={bottomNavRoute} onNavigate={navigateRootTab} tabProgress={rootTabRoute ? rootTabVisualProgress : rootTabProgress} pagerManaged={rootTabRoute} />
         </View>
       </View>
       <AuthPromptModal
@@ -13282,6 +13899,10 @@ function LookmefyApp() {
 }
 
 export default function App() {
+  if (androidSafeArea?.SafeAreaProvider) {
+    const AndroidSafeAreaProvider = androidSafeArea.SafeAreaProvider;
+    return <AndroidSafeAreaProvider><LookmefyApp /></AndroidSafeAreaProvider>;
+  }
   return <LookmefyApp />;
 }
 
@@ -13370,6 +13991,9 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     borderRadius: 18,
     overflow: 'hidden'
   },
+  surfaceBackdropAndroid: {
+    backgroundColor: 'rgba(255, 252, 250, 0.94)'
+  },
   surfaceCard: {
     borderColor: 'rgba(255, 255, 255, 0.78)',
     borderWidth: 1,
@@ -13451,6 +14075,23 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     width: '100%',
     alignSelf: 'center',
     backgroundColor: '#fbf7f6'
+  },
+  androidNativePagerFrame: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#fbf7f6',
+    overflow: 'hidden'
+  },
+  androidNativePager: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#fbf7f6'
+  },
+  androidNativePagerPage: {
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#fbf7f6',
+    overflow: 'hidden'
   },
   swipePagerViewport: {
     flex: 1,
@@ -13658,6 +14299,15 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   appHeaderNarrow: {
     paddingHorizontal: 10
   },
+  appHeaderAndroid: {
+    minHeight: 52,
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 4,
+    justifyContent: 'flex-start',
+    backgroundColor: 'rgba(255, 252, 250, 0.96)',
+    borderBottomColor: 'rgba(226, 218, 212, 0.72)'
+  },
   appHeaderAction: {
     width: 48,
     height: 48,
@@ -13665,6 +14315,11 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center'
+  },
+  appHeaderActionAndroid: {
+    width: 40,
+    height: 40,
+    borderRadius: 20
   },
   appHeaderCreditAction: {
     width: 'auto',
@@ -13689,6 +14344,14 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     letterSpacing: 0,
     flexShrink: 0
   },
+  appHeaderCreditActionAndroid: {
+    minWidth: 40,
+    minHeight: 40,
+    height: 40,
+    borderRadius: 20,
+    paddingHorizontal: 7,
+    paddingVertical: 5
+  },
   appHeaderSide: {
     width: 'auto',
     minHeight: 48,
@@ -13697,11 +14360,18 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     alignItems: 'center',
     gap: 2
   },
+  appHeaderSideAndroid: {
+    minHeight: 40,
+    gap: 0
+  },
   appHeaderLeftSide: {
     justifyContent: 'flex-start'
   },
   appHeaderRightSide: {
     justifyContent: 'flex-end'
+  },
+  appHeaderRightSideAndroid: {
+    marginLeft: 'auto'
   },
   appHeaderRightSideNarrow: {
     gap: 0
@@ -13713,6 +14383,9 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     alignItems: 'center',
     flex: 1
   },
+  appHeaderBrandWrapAndroid: {
+    minHeight: 40
+  },
   appHeaderBrandWrapLeft: {
     alignItems: 'flex-start'
   },
@@ -13723,6 +14396,10 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   appHeaderNarrowLogo: {
     width: 30,
     height: 30
+  },
+  appHeaderNarrowLogoAndroid: {
+    width: 26,
+    height: 26
   },
   aiStudioHeaderBrandLogo: {
     maxWidth: 118,
@@ -13790,6 +14467,11 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#e4ddd8'
+  },
+  appHeaderAvatarAndroid: {
+    width: 28,
+    height: 28,
+    borderRadius: 14
   },
   appHeaderAvatarInitials: {
     fontSize: 12,
@@ -13860,15 +14542,24 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     paddingHorizontal: 12,
     backgroundColor: 'transparent'
   },
+  bottomNavFrameAndroid: {
+    paddingHorizontal: 10
+  },
   bottomNavGlass: {
     width: '100%',
     maxWidth: 560,
     borderRadius: 36,
     shadowColor: '#5c4238',
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
+    shadowOpacity: 0.21,
+    shadowRadius: 26,
     shadowOffset: { width: 0, height: 12 },
     elevation: 14
+  },
+  bottomNavGlassAndroid: {
+    borderRadius: 29,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 6
   },
   bottomNavGlassClip: {
     width: '100%',
@@ -13876,11 +14567,26 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255, 255, 255, 0.90)',
-    backgroundColor: 'rgba(248, 243, 237, 0.86)'
+    backgroundColor: 'rgba(248, 243, 237, 0.92)'
+  },
+  bottomNavGlassBackdropClip: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0
+  },
+  bottomNavGlassClipAndroid: {
+    borderRadius: 29,
+    borderColor: 'rgba(223, 214, 207, 0.9)',
+    backgroundColor: 'rgba(250, 247, 243, 0.995)'
+  },
+  bottomNavAndroidBackdrop: {
+    backgroundColor: 'rgba(250, 247, 243, 0.995)'
   },
   bottomNavGlassTint: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(250, 245, 239, 0.78)'
+    backgroundColor: 'rgba(250, 245, 239, 0.84)'
   },
   bottomNav: {
     width: '100%',
@@ -13893,6 +14599,11 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     paddingVertical: 5,
     paddingHorizontal: 0,
     backgroundColor: 'transparent'
+  },
+  bottomNavAndroid: {
+    minHeight: 58,
+    borderRadius: 29,
+    paddingVertical: 3
   },
   bottomNavCompact: {
     paddingHorizontal: 0
@@ -13909,6 +14620,10 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     minHeight: 60,
     zIndex: 2
   },
+  navItemAndroid: {
+    minHeight: 52,
+    gap: 1
+  },
   navIconWrap: {
     width: 40,
     height: 32,
@@ -13916,6 +14631,11 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent'
+  },
+  navIconWrapAndroid: {
+    width: 34,
+    height: 27,
+    borderRadius: 14
   },
   navLiquidIndicator: {
     position: 'absolute',
@@ -13932,6 +14652,25 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 5 },
     zIndex: 4
+  },
+  navLiquidIndicatorAndroid: {
+    top: 3,
+    bottom: 3,
+    borderRadius: 26,
+    borderColor: 'rgba(155, 86, 88, 0.32)',
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 2
+  },
+  navLiquidAndroidGlass: {
+    backgroundColor: 'rgba(255, 250, 247, 1)'
+  },
+  navLiquidDynamicGlow: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 31,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.94)',
+    backgroundColor: 'rgba(202, 139, 133, 0.28)'
   },
   navLiquidTint: {
     ...StyleSheet.absoluteFillObject,
@@ -13951,6 +14690,10 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     justifyContent: 'center',
     gap: 2,
     transform: [{ scale: 1.04 }]
+  },
+  navLiquidMirrorItemAndroid: {
+    gap: 1,
+    transform: [{ scale: 1 }]
   },
   navLiquidMirrorText: {
     color: 'rgba(63, 57, 53, 0.82)'

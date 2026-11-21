@@ -6,6 +6,10 @@
   "scripts": {
     "start": "expo start --clear",
     "android": "expo start --android --port 8081 --clear",
+    "android:prebuild": "expo prebuild --platform android",
+    "android:build": "eas build --platform android --profile production",
+    "android:apk": "eas build --platform android --profile production-apk",
+    "android:submit": "eas submit --platform android --profile production --latest",
     "ios": "expo start --ios --port 8081 --clear",
     "ios:prebuild": "expo prebuild --platform ios",
     "ios:build": "eas build --platform ios --profile production",
@@ -31,6 +35,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-pager-view": "8.0.2",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-web": "^0.21.0"
   },
