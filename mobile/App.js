@@ -27,6 +27,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  requireNativeComponent,
   ScrollView,
   StyleSheet,
   Text,
@@ -60,6 +61,18 @@ const NativePagerViewAvailable = Boolean(
 );
 const AnimatedNativePagerView = NativePagerViewAvailable
   ? Animated.createAnimatedComponent(NativePagerView)
+  : null;
+const iosMajorVersion = Platform.OS === 'ios'
+  ? Number.parseInt(String(Platform.Version || '0').split('.')[0], 10) || 0
+  : 0;
+const NativeLiquidTabBarAvailable = Boolean(
+  Platform.OS === 'ios'
+  && Platform.isPad !== true
+  && iosMajorVersion >= 26
+  && UIManager.getViewManagerConfig?.('NativeLiquidTabBar')
+);
+const NativeLiquidTabBarView = NativeLiquidTabBarAvailable
+  ? requireNativeComponent('NativeLiquidTabBar')
   : null;
 const LegacySafeAreaView = Platform.OS === 'ios'
   ? require('react-native').SafeAreaView
@@ -2563,6 +2576,43 @@ function BottomNav({ route = { name: 'home' }, onNavigate = () => {}, tabProgres
   );
 }
 
+function NativeLiquidBottomNav({ route = { name: 'home' }, user, visible, onNavigateRoot }) {
+  const routeName = route?.name || 'home';
+  const [pendingRoute, setPendingRoute] = useState('');
+  const routeToIndex = useMemo(() => Object.fromEntries(
+    IOS_SYSTEM_TAB_ITEMS.map((item, index) => [item.route, index])
+  ), []);
+  const nativeItems = useMemo(() => IOS_SYSTEM_TAB_ITEMS.map((item) => ({
+    ...item,
+    enabled: !['stylebot', 'closet'].includes(item.route) || Boolean(user)
+  })), [user]);
+
+  useEffect(() => {
+    if (pendingRoute && routeName === pendingRoute) setPendingRoute('');
+  }, [pendingRoute, routeName]);
+
+  const handleNativeSelect = useCallback((event) => {
+    const selectedRoute = String(event?.nativeEvent?.route || '');
+    if (!routeToIndex.hasOwnProperty(selectedRoute)) return;
+    setPendingRoute(selectedRoute);
+    const didNavigate = onNavigateRoot?.(selectedRoute);
+    if (didNavigate === false) setPendingRoute('');
+  }, [onNavigateRoot, routeToIndex]);
+
+  if (!NativeLiquidTabBarView) return null;
+  const selectedRoute = pendingRoute || routeName;
+  const selectedIndex = routeToIndex[selectedRoute] ?? routeToIndex.home;
+  return (
+    <NativeLiquidTabBarView
+      items={nativeItems}
+      selectedIndex={selectedIndex}
+      barHidden={!visible}
+      onSelect={handleNativeSelect}
+      style={styles.nativeLiquidTabHost}
+    />
+  );
+}
+
 function Hero({ compact, onNavigate }) {
   return (
     <View style={[styles.hero, compact && styles.heroCompact]}>
@@ -2921,7 +2971,7 @@ const ProductCard = memo(function ProductCard({ product, tryOn, loading, videoLo
         {locked ? <View style={styles.lockOverlay}><Ionicons name="lock-closed" size={22} color="#fff" /></View> : null}
         {hasTryOnImage ? <Text style={styles.badge}>{tryOnLabel}</Text> : product?.isNew ? <Text style={styles.badge}>New</Text> : product?.badge ? <Text style={styles.badge}>{product.badge}</Text> : null}
         {onAddToWishlist && !locked ? <WishlistDoneButton saved={isWishlisted} compact={variant === 'carousel'} onPress={() => onAddToWishlist(product)} /> : null}
-        {loading || videoLoading ? <TryOnLoading text={videoLoading ? 'Video' : 'Generating'} /> : null}
+        {loading || videoLoading ? <TryOnLoading text={videoLoading ? 'Generating video' : 'Generating try-on'} /> : null}
       </View>
       <View style={[styles.productBody, useStableGridBody && styles.productGridCardBody]}>
         <Text style={styles.productTitle} numberOfLines={2}>{product?.title || product?.name || 'Untitled product'}</Text>
@@ -5434,7 +5484,11 @@ function ProductScreen({ id, user, setUser, token, onNavigate, onBack, onRequire
             <Text style={styles.productSwipeText}>Slide to compare</Text>
           </View>
         ) : null}
-        {tryOnLoading || tryOnVideoLoading ? <TryOnLoading text={tryOnVideoLoading ? 'Generating video' : 'Generating try-on'} large /> : null}
+        <TryOnLoading
+          active={Boolean(tryOnLoading || tryOnVideoLoading)}
+          text={tryOnVideoLoading ? 'Generating video' : 'Generating try-on'}
+          large
+        />
       </View>
 
       <View style={styles.productSummary}>
@@ -11718,12 +11772,137 @@ function InfoCard({ title, text }) {
   );
 }
 
-function TryOnLoading({ text = 'Generating', large }) {
+const tryOnShaderParticles = Object.freeze(Array.from({ length: 72 }, (_, index) => {
+  const band = index % 3;
+  const angle = (index * 137.508 * Math.PI) / 180;
+  const radius = 10 + ((index * 29) % 86) * 0.44;
+  return {
+    key: `shader-dot-${index}`,
+    band,
+    left: 50 + Math.cos(angle) * radius,
+    top: 50 + Math.sin(angle) * radius,
+    size: 1.2 + ((index * 7) % 8) * 0.42,
+    opacity: 0.32 + ((index * 11) % 10) * 0.06
+  };
+}));
+
+function TryOnLoading({ text = 'Try-on is being generated', active = true }) {
+  const [visible, setVisible] = useState(Boolean(active));
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const orbit = useRef(new Animated.Value(0)).current;
+  const completion = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    let mounted = true;
+    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) setReduceMotion(Boolean(enabled));
+    });
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription?.remove?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!visible || reduceMotion) {
+      orbit.stopAnimation();
+      orbit.setValue(0);
+      return undefined;
+    }
+    const animation = Animated.loop(Animated.timing(orbit, {
+      toValue: 1,
+      duration: 5200,
+      easing: Easing.linear,
+      useNativeDriver: true
+    }));
+    animation.start();
+    return () => animation.stop();
+  }, [orbit, reduceMotion, visible]);
+
+  useEffect(() => {
+    let hideTimer;
+    completion.stopAnimation();
+    if (active) {
+      completion.setValue(0);
+      setVisible(true);
+      return undefined;
+    }
+    if (!visible) return undefined;
+    const animation = Animated.timing(completion, {
+      toValue: 1,
+      duration: reduceMotion ? 1 : 2000,
+      easing: Easing.bezier(0.16, 1, 0.3, 1),
+      useNativeDriver: true
+    });
+    animation.start();
+    hideTimer = setTimeout(() => setVisible(false), reduceMotion ? 30 : 2200);
+    return () => {
+      animation.stop();
+      if (hideTimer) clearTimeout(hideTimer);
+    };
+  }, [active, completion, reduceMotion, visible]);
+
+  if (!visible) return null;
+
+  const clockwise = orbit.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const counterClockwise = orbit.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '-360deg'] });
+  const tunnelScale = orbit.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.72, 1.12, 0.72] });
+  const reverseScale = orbit.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1.08, 0.64, 1.08] });
+  const overlayOpacity = completion.interpolate({ inputRange: [0, 0.78, 1], outputRange: [1, 1, 0] });
+  const bloomOpacity = completion.interpolate({ inputRange: [0, 0.35, 0.72, 1], outputRange: [0, 0.05, 1, 1] });
+  const bloomScale = completion.interpolate({ inputRange: [0, 1], outputRange: [0.08, 3.2] });
+
   return (
-    <View pointerEvents="none" style={[styles.tryOnLoading, large && styles.tryOnLoadingLarge]}>
-      <ActivityIndicator size="small" color="#ffffff" />
-      <Text style={styles.tryOnLoadingText}>{text}</Text>
-    </View>
+    <Animated.View
+      pointerEvents="none"
+      accessibilityRole="progressbar"
+      accessibilityLabel={text}
+      accessibilityLiveRegion="polite"
+      style={[styles.tryOnLoading, { opacity: overlayOpacity }]}
+    >
+      <Animated.View style={[styles.tryOnShaderOrbit, { transform: [{ rotate: clockwise }, { scale: tunnelScale }] }]}>
+        {tryOnShaderParticles.filter((particle) => particle.band !== 2).map((particle) => (
+          <View
+            key={particle.key}
+            style={[
+              styles.tryOnShaderParticle,
+              {
+                left: `${particle.left}%`,
+                top: `${particle.top}%`,
+                width: particle.size,
+                height: particle.size,
+                borderRadius: particle.size / 2,
+                opacity: particle.opacity
+              }
+            ]}
+          />
+        ))}
+      </Animated.View>
+      <Animated.View style={[styles.tryOnShaderOrbit, { transform: [{ rotate: counterClockwise }, { scale: reverseScale }] }]}>
+        {tryOnShaderParticles.filter((particle) => particle.band === 2).map((particle) => (
+          <View
+            key={particle.key}
+            style={[
+              styles.tryOnShaderParticle,
+              styles.tryOnShaderParticleSoft,
+              {
+                left: `${particle.left}%`,
+                top: `${particle.top}%`,
+                width: particle.size * 1.4,
+                height: particle.size * 1.4,
+                borderRadius: particle.size,
+                opacity: particle.opacity * 0.72
+              }
+            ]}
+          />
+        ))}
+      </Animated.View>
+      <View style={styles.tryOnShaderGlowOuter} />
+      <View style={styles.tryOnShaderGlowMiddle} />
+      <View style={styles.tryOnShaderCore} />
+      <Animated.View style={[styles.tryOnShaderBloom, { opacity: bloomOpacity, transform: [{ scale: bloomScale }] }]} />
+    </Animated.View>
   );
 }
 
@@ -12195,13 +12374,23 @@ function RouteTransition({ direction, width, height, origin, reduceMotion, swipe
   );
 }
 
-const LOOKMEFY_ROOT_TAB_ORDER = ['home', 'shop', 'tryon', 'closet', 'stylebot'];
+const IOS_SYSTEM_TAB_ITEMS = Object.freeze([
+  { route: 'home', title: 'Home', symbol: 'house.fill' },
+  { route: 'shop', title: 'Courses', symbol: 'safari.fill' },
+  { route: 'search', title: 'Search', symbol: 'magnifyingglass' },
+  { route: 'stylebot', title: 'Nex AI', symbol: 'sparkles' },
+  { route: 'closet', title: 'Downloads', symbol: 'arrow.down.to.line' }
+]);
+const LOOKMEFY_ROOT_TAB_ORDER = NativeLiquidTabBarAvailable
+  ? ['home', 'shop', 'search', 'stylebot', 'closet']
+  : ['home', 'shop', 'tryon', 'closet', 'stylebot'];
 const LOOKMEFY_ROOT_TAB_LABELS = {
   home: 'Home',
-  shop: 'Categories',
+  shop: NativeLiquidTabBarAvailable ? 'Courses' : 'Categories',
+  search: 'Search',
   tryon: 'Try-On',
-  closet: 'Wardrobe',
-  stylebot: 'AI Stylist'
+  closet: NativeLiquidTabBarAvailable ? 'Downloads' : 'Wardrobe',
+  stylebot: NativeLiquidTabBarAvailable ? 'Nex AI' : 'AI Stylist'
 };
 
 const RootPagerRenderedPage = memo(function RootPagerRenderedPage({ tab, isActive, renderTab }) {
@@ -13632,6 +13821,8 @@ function LookmefyApp() {
         return <HomeScreen onNavigate={guardedNavigate} user={user} token={token} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} registerTourTarget={activeTourTarget} tourFocusRequest={activeTourFocus} initialScrollY={initialScrollY} onScrollPositionChange={onScrollPositionChange} hideHeader />;
       case 'shop':
         return <ShopScreen initial={{}} user={user} setUser={setUser} token={token} onNavigate={guardedNavigate} onOpenFromPress={openRouteFromPress} onBack={null} onRequireAuth={requestAuth} onAuthExpired={requireFreshLogin} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} initialScrollY={initialScrollY} onScrollPositionChange={onScrollPositionChange} hideHeader />;
+      case 'search':
+        return <SearchScreen initial={{}} user={user} token={token} onNavigate={guardedNavigate} onBack={null} onAddToWishlist={addToWishlist} wishlistIds={wishlistIds} />;
       case 'tryon':
         return <CustomTryOnScreen initial={{}} user={user} setUser={setUser} setToken={setToken} token={token} onNavigate={guardedNavigate} onBack={null} refreshUser={refreshUser} />;
       case 'closet':
@@ -13746,14 +13937,22 @@ function LookmefyApp() {
     LOOKMEFY_ROOT_TAB_ORDER.includes(route?.name)
     && Object.keys(route?.params || {}).length === 0
   ));
-  const bottomNavRoute = rootTabRoute ? currentRoute : (sourceRootRoute || currentRoute);
+  const bottomNavRoute = rootTabRoute || (searchRoute && NativeLiquidTabBarAvailable)
+    ? currentRoute
+    : (sourceRootRoute || currentRoute);
   const retainedRootRoute = rootTabRoute ? currentRoute : sourceRootRoute;
   const iPhoneSwipeBackEnabled = Platform.OS === 'ios'
     && Platform.isPad !== true
     && !authOnlyRoute
     && !rootTabRoute
     && (routeStack.length > 1 || currentRoute.name !== 'home');
-  const showBottomNav = !(authOnlyRoute || searchRoute || closetAddRoute || tokensRoute || checkoutRoute);
+  const showBottomNav = !(
+    authOnlyRoute
+    || closetAddRoute
+    || tokensRoute
+    || checkoutRoute
+    || (searchRoute && !NativeLiquidTabBarAvailable)
+  );
 
   return (
     <ResponsiveLayoutContext.Provider value={responsiveLayout}>
@@ -13838,39 +14037,48 @@ function LookmefyApp() {
         ) : null}
       </View>
       </PersistentAppHeaderContext.Provider>
-      {/* Preserve the tab labels across full-screen routes and keyboard transitions. */}
-      <View
-        pointerEvents={showBottomNav ? 'auto' : 'none'}
-        accessibilityElementsHidden={!showBottomNav}
-        importantForAccessibility={showBottomNav ? 'auto' : 'no-hide-descendants'}
-        style={[
-          styles.bottomNavFrame,
-          Platform.OS === 'android' && styles.bottomNavFrameAndroid,
-          {
-            display: showBottomNav ? 'flex' : 'none',
-            bottom: Platform.OS === 'ios' ? Math.max(insets.bottom - 10, 10) : Math.max(insets.bottom, 8),
-            paddingHorizontal: responsiveLayout.isTablet ? 18 : responsiveLayout.isNarrowPhone ? 6 : responsiveLayout.isWidePhone ? 16 : 10
-          }
-        ]}
-      >
-        <View style={[styles.bottomNavGlass, Platform.OS === 'android' && styles.bottomNavGlassAndroid]}>
-          <View pointerEvents="none" style={[styles.bottomNavGlassClip, styles.bottomNavGlassBackdropClip, Platform.OS === 'android' && styles.bottomNavGlassClipAndroid]}>
-            {Platform.OS === 'ios' ? (
-              <BlurView
-                pointerEvents="none"
-                intensity={78}
-                tint="systemUltraThinMaterialLight"
-                blurReductionFactor={2.5}
-                style={StyleSheet.absoluteFillObject}
-              />
-            ) : (
-              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, styles.bottomNavAndroidBackdrop]} />
-            )}
-            <View pointerEvents="none" style={styles.bottomNavGlassTint} />
+      {NativeLiquidTabBarAvailable ? (
+        <NativeLiquidBottomNav
+          route={bottomNavRoute}
+          user={user}
+          visible={showBottomNav}
+          onNavigateRoot={navigateRootTab}
+        />
+      ) : (
+        /* Preserve the fallback labels across full-screen routes and keyboard transitions. */
+        <View
+          pointerEvents={showBottomNav ? 'auto' : 'none'}
+          accessibilityElementsHidden={!showBottomNav}
+          importantForAccessibility={showBottomNav ? 'auto' : 'no-hide-descendants'}
+          style={[
+            styles.bottomNavFrame,
+            Platform.OS === 'android' && styles.bottomNavFrameAndroid,
+            {
+              display: showBottomNav ? 'flex' : 'none',
+              bottom: Platform.OS === 'ios' ? Math.max(insets.bottom - 10, 10) : Math.max(insets.bottom, 8),
+              paddingHorizontal: responsiveLayout.isTablet ? 18 : responsiveLayout.isNarrowPhone ? 6 : responsiveLayout.isWidePhone ? 16 : 10
+            }
+          ]}
+        >
+          <View style={[styles.bottomNavGlass, Platform.OS === 'android' && styles.bottomNavGlassAndroid]}>
+            <View pointerEvents="none" style={[styles.bottomNavGlassClip, styles.bottomNavGlassBackdropClip, Platform.OS === 'android' && styles.bottomNavGlassClipAndroid]}>
+              {Platform.OS === 'ios' ? (
+                <BlurView
+                  pointerEvents="none"
+                  intensity={78}
+                  tint="systemUltraThinMaterialLight"
+                  blurReductionFactor={2.5}
+                  style={StyleSheet.absoluteFillObject}
+                />
+              ) : (
+                <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, styles.bottomNavAndroidBackdrop]} />
+              )}
+              <View pointerEvents="none" style={styles.bottomNavGlassTint} />
+            </View>
+            <BottomNav route={bottomNavRoute} onNavigate={navigateRootTab} tabProgress={rootTabRoute ? rootTabVisualProgress : rootTabProgress} pagerManaged={rootTabRoute} />
           </View>
-          <BottomNav route={bottomNavRoute} onNavigate={navigateRootTab} tabProgress={rootTabRoute ? rootTabVisualProgress : rootTabProgress} pagerManaged={rootTabRoute} />
         </View>
-      </View>
+      )}
       <AuthPromptModal
         visible={Boolean(authPrompt)}
         message={authPrompt?.message}
@@ -14532,6 +14740,11 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   headerAvatarInitials: {
     fontSize: 12,
     lineHeight: 16
+  },
+  nativeLiquidTabHost: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 60,
+    backgroundColor: 'transparent'
   },
   bottomNavFrame: {
     position: 'absolute',
@@ -19756,6 +19969,7 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
     fontWeight: '700'
   },
   productHeroMedia: {
+    position: 'relative',
     marginHorizontal: 14,
     borderRadius: 16,
     overflow: 'hidden',
@@ -26869,70 +27083,74 @@ const styles = StyleSheet.create(nativeAppearanceStyles({
   },
   tryOnLoading: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(17, 24, 39, 0.72)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 22
-  },
-  tryOnLoadingLarge: {
-    position: 'absolute'
-  },
-  tryOnLoadingPill: {
-    minHeight: 34,
-    maxWidth: '84%',
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: '#eaded9',
-    backgroundColor: 'rgba(255, 253, 251, 0.94)',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    shadowColor: '#2a211d',
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3
-  },
-  tryOnLoadingPillLarge: {
-    minHeight: 38,
-    borderRadius: 19,
-    paddingHorizontal: 15
-  },
-  tryOnLoadingText: {
-    color: '#fff',
-    fontWeight: '700',
-    textAlign: 'center'
-  },
-  tryOnProgressMark: {
-    flexDirection: 'row',
-    gap: 6
-  },
-  tryOnProgressDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#ffffff'
-  },
-  tryOnProgressDotMuted: {
-    opacity: 0.48
-  },
-  tryOnProgressTrack: {
-    width: '58%',
-    maxWidth: 120,
-    height: 4,
-    borderRadius: 2,
+    zIndex: 40,
+    elevation: 40,
     overflow: 'hidden',
-    backgroundColor: 'rgba(255, 255, 255, 0.28)'
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
-  tryOnProgressFill: {
-    width: '62%',
-    height: '100%',
-    borderRadius: 2,
-    backgroundColor: '#ffffff'
+  tryOnShaderOrbit: {
+    ...StyleSheet.absoluteFillObject
+  },
+  tryOnShaderParticle: {
+    position: 'absolute',
+    marginLeft: -2,
+    marginTop: -2,
+    backgroundColor: '#ffffff',
+    shadowColor: '#ffffff',
+    shadowOpacity: 0.78,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 0 }
+  },
+  tryOnShaderParticleSoft: {
+    backgroundColor: '#ecece8',
+    shadowOpacity: 0.42,
+    shadowRadius: 8
+  },
+  tryOnShaderGlowOuter: {
+    position: 'absolute',
+    width: '48%',
+    aspectRatio: 1,
+    borderRadius: 999,
+    backgroundColor: 'rgba(190, 190, 184, 0.13)',
+    shadowColor: '#ffffff',
+    shadowOpacity: 0.34,
+    shadowRadius: 34,
+    shadowOffset: { width: 0, height: 0 }
+  },
+  tryOnShaderGlowMiddle: {
+    position: 'absolute',
+    width: '27%',
+    aspectRatio: 1,
+    borderRadius: 999,
+    backgroundColor: 'rgba(236, 236, 232, 0.32)',
+    shadowColor: '#ffffff',
+    shadowOpacity: 0.56,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 0 }
+  },
+  tryOnShaderCore: {
+    position: 'absolute',
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#ffffff',
+    shadowColor: '#ffffff',
+    shadowOpacity: 1,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 0 }
+  },
+  tryOnShaderBloom: {
+    position: 'absolute',
+    width: '46%',
+    aspectRatio: 1,
+    borderRadius: 999,
+    backgroundColor: '#eeeeec',
+    shadowColor: '#ffffff',
+    shadowOpacity: 1,
+    shadowRadius: 36,
+    shadowOffset: { width: 0, height: 0 }
   },
   tourOverlay: {
     flex: 1,

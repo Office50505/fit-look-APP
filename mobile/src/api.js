@@ -293,7 +293,13 @@ export async function api(path, options = {}) {
   const isForm = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData;
   const headers = isForm ? {} : { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (isDevelopmentRuntime && /^\/tryons(?:\/|$)/i.test(path)) headers['x-fitlook-sync'] = '1';
+  // Inline generation is useful while exercising a local backend, but it must
+  // never be forced against production. Production try-ons are intentionally
+  // queued so the request can survive long provider runtimes and the client
+  // can poll the job instead of holding one fragile HTTP connection open.
+  if (isDevelopmentRuntime && isLocalApiUrl(activeApiUrl) && /^\/tryons(?:\/|$)/i.test(path)) {
+    headers['x-fitlook-sync'] = '1';
+  }
   const bypassCache = shouldBypassCache(path, noCache);
   const requestPath = bypassCache ? cacheBustedPath(path) : path;
   if (bypassCache) {
